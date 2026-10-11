@@ -13,9 +13,12 @@ use uuid::Uuid;
 
 use crate::geography::{
     parse_seed, Discovery, GeographyState, MaterializedRegion, RegionIdentity, Structure, Terrain,
-    TerrainMod, WorldConnection, WorldId,
+    TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC,
 };
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
+use crate::social::{
+    Friendship, FriendshipStatus, IgnoreEdge, NoticePost, SocialState, StructureGrant,
+};
 use crate::undernet::{ExitDef, LocationDef};
 
 #[derive(Debug, Error)]
@@ -36,6 +39,7 @@ pub struct LoadedWorld {
     pub operators: Vec<Operator>,
     pub log: Vec<LogEntry>,
     pub geography: GeographyState,
+    pub social: SocialState,
 }
 
 impl Store {
@@ -97,7 +101,8 @@ impl Store {
         let operators = self.load_operators().await?;
         let log = self.load_log().await?;
         let geography = self.load_geography().await?;
-        Ok(LoadedWorld { operators, log, geography })
+        let social = self.load_social().await?;
+        Ok(LoadedWorld { operators, log, geography, social })
     }
 
     pub async fn create_account(
@@ -119,8 +124,8 @@ impl Store {
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen, bio, status)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )
         .bind(operator.id.to_string())
         .bind(operator.account_id.to_string())
@@ -128,6 +133,8 @@ impl Store {
         .bind(&operator.location_id)
         .bind(created_at as i64)
         .bind(created_at as i64)
+        .bind(&operator.bio)
+        .bind(&operator.status)
         .execute(&mut *tx)
         .await?;
         for item in &operator.items {
@@ -259,6 +266,14 @@ impl Store {
                     .execute(&mut *tx)
                     .await?;
                 }
+                PersistOp::Profile { operator_id, bio, status } => {
+                    sqlx::query("UPDATE operators SET bio = ?1, status = ?2 WHERE id = ?3")
+                        .bind(bio)
+                        .bind(status)
+                        .bind(operator_id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
                 PersistOp::Structure {
                     id,
                     region_id,
@@ -267,12 +282,15 @@ impl Store {
                     kind,
                     name,
                     owner_id,
+                    access,
+                    interior_place,
                     created_at,
                 } => {
                     sqlx::query(
                         "INSERT INTO world_structures (
-                            id, region_id, local_x, local_y, kind, name, owner_id, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            id, region_id, local_x, local_y, kind, name, owner_id, access,
+                            interior_place, created_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     )
                     .bind(id.to_string())
                     .bind(region_id.to_string())
@@ -281,9 +299,33 @@ impl Store {
                     .bind(kind)
                     .bind(name)
                     .bind(owner_id.map(|id| id.to_string()))
+                    .bind(access)
+                    .bind(interior_place)
                     .bind(*created_at as i64)
                     .execute(&mut *tx)
                     .await?;
+                }
+                PersistOp::UpdateStructure { id, name, access, interior_place } => {
+                    sqlx::query(
+                        "UPDATE world_structures
+                         SET name = ?1, access = ?2, interior_place = ?3 WHERE id = ?4",
+                    )
+                    .bind(name)
+                    .bind(access)
+                    .bind(interior_place)
+                    .bind(id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::DeleteStructure { id } => {
+                    sqlx::query("DELETE FROM structure_grants WHERE structure_id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("DELETE FROM world_structures WHERE id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
                 }
                 PersistOp::TerrainMod {
                     region_id,
@@ -366,6 +408,113 @@ impl Store {
                     .execute(&mut *tx)
                     .await?;
                 }
+                PersistOp::DeleteConnection { id } => {
+                    sqlx::query("DELETE FROM world_connections WHERE id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                PersistOp::FriendshipUpsert {
+                    requester_id,
+                    recipient_id,
+                    status,
+                    created_at,
+                    updated_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO friendships (
+                            requester_id, recipient_id, status, created_at, updated_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT (requester_id, recipient_id) DO UPDATE SET
+                            status = excluded.status,
+                            updated_at = excluded.updated_at",
+                    )
+                    .bind(requester_id.to_string())
+                    .bind(recipient_id.to_string())
+                    .bind(status.as_str())
+                    .bind(*created_at as i64)
+                    .bind(*updated_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::FriendshipDelete { requester_id, recipient_id } => {
+                    sqlx::query(
+                        "DELETE FROM friendships WHERE requester_id = ?1 AND recipient_id = ?2",
+                    )
+                    .bind(requester_id.to_string())
+                    .bind(recipient_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::IgnoreUpsert { operator_id, ignored_id, created_at } => {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO ignores (operator_id, ignored_id, created_at)
+                         VALUES (?1, ?2, ?3)",
+                    )
+                    .bind(operator_id.to_string())
+                    .bind(ignored_id.to_string())
+                    .bind(*created_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::IgnoreDelete { operator_id, ignored_id } => {
+                    sqlx::query("DELETE FROM ignores WHERE operator_id = ?1 AND ignored_id = ?2")
+                        .bind(operator_id.to_string())
+                        .bind(ignored_id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                PersistOp::StructureGrantUpsert { structure_id, grantee_id, created_at } => {
+                    sqlx::query(
+                        "INSERT OR IGNORE INTO structure_grants (structure_id, grantee_id, created_at)
+                         VALUES (?1, ?2, ?3)",
+                    )
+                    .bind(structure_id.to_string())
+                    .bind(grantee_id.to_string())
+                    .bind(*created_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::StructureGrantDelete { structure_id, grantee_id } => {
+                    sqlx::query(
+                        "DELETE FROM structure_grants WHERE structure_id = ?1 AND grantee_id = ?2",
+                    )
+                    .bind(structure_id.to_string())
+                    .bind(grantee_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::NoticeUpsert {
+                    id,
+                    place_id,
+                    author_id,
+                    body,
+                    created_at,
+                    expires_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO noticeboard_posts (
+                            id, place_id, author_id, body, created_at, expires_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                         ON CONFLICT(id) DO UPDATE SET
+                            body = excluded.body,
+                            expires_at = excluded.expires_at",
+                    )
+                    .bind(id.to_string())
+                    .bind(place_id)
+                    .bind(author_id.to_string())
+                    .bind(body)
+                    .bind(*created_at as i64)
+                    .bind(*expires_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::NoticeDelete { id } => {
+                    sqlx::query("DELETE FROM noticeboard_posts WHERE id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
         sqlx::query(
@@ -382,7 +531,7 @@ impl Store {
 
     async fn load_operators(&self) -> Result<Vec<Operator>, StoreError> {
         let rows = sqlx::query_as::<_, OpSql>(
-            "SELECT o.id, o.account_id, a.username, o.name, o.location_id
+            "SELECT o.id, o.account_id, a.username, o.name, o.location_id, o.bio, o.status
              FROM operators o
              JOIN accounts a ON a.id = o.account_id",
         )
@@ -415,6 +564,8 @@ impl Store {
                 username: row.username,
                 name: row.name,
                 location_id: row.location_id,
+                bio: row.bio,
+                status: row.status,
                 flags,
                 items,
             });
@@ -435,6 +586,7 @@ impl Store {
                 "system" => Channel::System,
                 "local" => Channel::Local,
                 "global" => Channel::Global,
+                "private" => Channel::Private,
                 _ => continue,
             };
             let audience = match row.audience.as_str() {
@@ -484,7 +636,7 @@ impl Store {
         }
 
         let structures = sqlx::query_as::<_, StructureSql>(
-            "SELECT id, region_id, local_x, local_y, kind, name, owner_id, created_at
+            "SELECT id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place, created_at
              FROM world_structures",
         )
         .fetch_all(&self.pool)
@@ -498,6 +650,8 @@ impl Store {
                 kind: row.kind,
                 name: row.name,
                 owner_id: optional_player(row.owner_id)?,
+                access: if row.access.is_empty() { ACCESS_PUBLIC.to_string() } else { row.access },
+                interior_place: row.interior_place,
                 created_at: u64_col(row.created_at)?,
             });
         }
@@ -558,6 +712,66 @@ impl Store {
             });
         }
         Ok(geography)
+    }
+
+    async fn load_social(&self) -> Result<SocialState, StoreError> {
+        let mut social = SocialState::default();
+        let friends = sqlx::query_as::<_, FriendshipSql>(
+            "SELECT requester_id, recipient_id, status, created_at, updated_at FROM friendships",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in friends {
+            social.friendships.push(Friendship {
+                requester_id: PlayerId::from_str(&row.requester_id)
+                    .map_err(|_| StoreError::Data)?,
+                recipient_id: PlayerId::from_str(&row.recipient_id)
+                    .map_err(|_| StoreError::Data)?,
+                status: FriendshipStatus::parse(&row.status).ok_or(StoreError::Data)?,
+                created_at: u64_col(row.created_at)?,
+                updated_at: u64_col(row.updated_at)?,
+            });
+        }
+        let ignores = sqlx::query_as::<_, IgnoreSql>(
+            "SELECT operator_id, ignored_id, created_at FROM ignores",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in ignores {
+            social.ignores.push(IgnoreEdge {
+                operator_id: PlayerId::from_str(&row.operator_id).map_err(|_| StoreError::Data)?,
+                ignored_id: PlayerId::from_str(&row.ignored_id).map_err(|_| StoreError::Data)?,
+                created_at: u64_col(row.created_at)?,
+            });
+        }
+        let grants = sqlx::query_as::<_, GrantSql>(
+            "SELECT structure_id, grantee_id, created_at FROM structure_grants",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in grants {
+            social.grants.push(StructureGrant {
+                structure_id: Uuid::from_str(&row.structure_id).map_err(|_| StoreError::Data)?,
+                grantee_id: PlayerId::from_str(&row.grantee_id).map_err(|_| StoreError::Data)?,
+                created_at: u64_col(row.created_at)?,
+            });
+        }
+        let notices = sqlx::query_as::<_, NoticeSql>(
+            "SELECT id, place_id, author_id, body, created_at, expires_at FROM noticeboard_posts",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in notices {
+            social.notices.push(NoticePost {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                place_id: row.place_id,
+                author_id: PlayerId::from_str(&row.author_id).map_err(|_| StoreError::Data)?,
+                body: row.body,
+                created_at: u64_col(row.created_at)?,
+                expires_at: u64_col(row.expires_at)?,
+            });
+        }
+        Ok(social)
     }
 }
 
@@ -620,6 +834,8 @@ struct OpSql {
     username: String,
     name: String,
     location_id: String,
+    bio: String,
+    status: String,
 }
 
 #[derive(sqlx::FromRow)]
@@ -678,7 +894,42 @@ struct StructureSql {
     kind: String,
     name: String,
     owner_id: Option<String>,
+    access: String,
+    interior_place: Option<String>,
     created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct FriendshipSql {
+    requester_id: String,
+    recipient_id: String,
+    status: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct IgnoreSql {
+    operator_id: String,
+    ignored_id: String,
+    created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct GrantSql {
+    structure_id: String,
+    grantee_id: String,
+    created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct NoticeSql {
+    id: String,
+    place_id: String,
+    author_id: String,
+    body: String,
+    created_at: i64,
+    expires_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -719,7 +970,7 @@ struct LinkSql {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geography::{gate_identity, generate_region, Terrain};
+    use crate::geography::{gate_identity, generate_region, Terrain, WildernessPos};
     use crate::model::STARTER_LOCATION;
     use crate::state::WorldState;
     use crate::undernet;
@@ -739,6 +990,8 @@ mod tests {
             username: "ada".into(),
             name: "ada".into(),
             location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
             flags: BTreeSet::new(),
             items: vec![Item::chip()],
         };
@@ -781,6 +1034,8 @@ mod tests {
             username: "ada".into(),
             name: "ada".into(),
             location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
             flags: BTreeSet::new(),
             items: vec![Item::chip()],
         };
@@ -855,6 +1110,7 @@ mod tests {
         let mut again = WorldState::for_tests();
         again.install_loaded(loaded.operators.clone(), loaded.log.clone());
         again.install_geography(loaded.geography.clone());
+        again.install_social(loaded.social.clone());
         let back = SessionIdentity::new(op_id, "ada", Permissions::player());
         let back_session = back.session_id;
         again.connect_player(back).unwrap();
@@ -871,5 +1127,135 @@ mod tests {
         let exits: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM exits").fetch_one(&store.pool).await.unwrap();
         assert!(exits >= 20);
+    }
+
+    #[tokio::test]
+    async fn social_cabin_and_notices_survive_reopen_and_reseed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+
+        let mut world = WorldState::for_tests();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada_account = Uuid::new_v4();
+        let bob_account = Uuid::new_v4();
+        let ada = Operator {
+            id: ada_id,
+            account_id: ada_account,
+            username: "ada".into(),
+            name: "ada".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        let bob = Operator {
+            id: bob_id,
+            account_id: bob_account,
+            username: "bob".into(),
+            name: "bob".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        store.create_account(ada_account, "ada", "hash", &ada, 10).await.unwrap();
+        store.create_account(bob_account, "bob", "hash", &bob, 11).await.unwrap();
+        world.insert_operator(ada);
+        world.insert_operator(bob);
+        let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let bob_ident = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        let bob_session = bob_ident.session_id;
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+        store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+        let mut ops = Vec::new();
+        ops.extend(world.apply(ada_session, "friend add bob").unwrap().ops);
+        ops.extend(world.apply(bob_session, "friend accept ada").unwrap().ops);
+        ops.extend(world.apply(ada_session, "profile bio Homesteader").unwrap().ops);
+        ops.extend(world.apply(ada_session, "board post Visit Haven").unwrap().ops);
+        for line in ["go up", "outskirts"] {
+            ops.extend(world.apply(ada_session, line).unwrap().ops);
+        }
+        let identity = gate_identity();
+        ops.push(world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "pad", ada_id).unwrap());
+        ops.extend(world.apply(ada_session, "north").unwrap().ops);
+        ops.extend(world.apply(ada_session, "build cabin Haven").unwrap().ops);
+        ops.extend(world.apply(ada_session, "sign Come visit").unwrap().ops);
+        store.commit(&ops).await.unwrap();
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.social.are_friends(ada_id, bob_id));
+        assert_eq!(loaded.operators.iter().find(|op| op.id == ada_id).unwrap().bio, "Homesteader");
+        assert_eq!(loaded.social.notices.len(), 1);
+        assert!(loaded.geography.structures.iter().any(|s| s.kind == "cabin" && s.name == "Haven"));
+        assert!(loaded.geography.structures.iter().any(|s| s.kind == "sign"));
+        assert_eq!(loaded.geography.connections.len(), 2);
+
+        let mut again = WorldState::for_tests();
+        again.install_loaded(loaded.operators, loaded.log);
+        again.install_geography(loaded.geography);
+        again.install_social(loaded.social);
+        let back = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let bob_back = back.session_id;
+        again.connect_player(back).unwrap();
+        // Place bob at the cabin exterior.
+        let cabin = again.geography.structures.iter().find(|s| s.kind == "cabin").unwrap();
+        let region = again.geography.region_by_id(cabin.region_id).unwrap();
+        let exterior = WildernessPos {
+            identity: region.identity,
+            local_x: cabin.local_x,
+            local_y: cabin.local_y,
+        }
+        .key();
+        again.operators.get_mut(&bob_id).unwrap().location_id = exterior;
+        again.apply(bob_back, "enter Haven").unwrap();
+        assert!(again.view(bob_back).unwrap().location_name.contains("Haven"));
+    }
+
+    #[tokio::test]
+    async fn migration_applies_to_fresh_and_preexisting_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let fresh = dir.path().join("fresh.sqlite");
+        let store = Store::open(&fresh).await.unwrap();
+        let tables: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
+                .fetch_all(&store.pool)
+                .await
+                .unwrap();
+        assert!(tables.iter().any(|name| name == "friendships"));
+        assert!(tables.iter().any(|name| name == "noticeboard_posts"));
+        assert!(tables.iter().any(|name| name == "ignores"));
+        let access_col: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(access_col, 1);
+        let bio_col: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('operators') WHERE name = 'bio'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(bio_col, 1);
+        drop(store);
+
+        // Re-open an already-migrated database (forward-only migrations stay idempotent).
+        let store = Store::open(&fresh).await.unwrap();
+        let friendships: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM friendships")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(friendships, 0);
     }
 }

@@ -31,21 +31,45 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto gener
 | `map` | | ASCII map |
 | `who` | | Operators in the world, and who is here |
 | `go <exit>` | `move` | Walk. A bare exit word works: `alley` |
-| `say <text>` | `'` | Speech heard in this room |
+| `say <text>` | `'` | Speech heard in this location |
 | `chat <text>` | `gsay` | Speech heard everywhere |
+| `whisper <player> <text>` | `tell` | Private message to one online operator |
+| `emote <action>` | `me`, `em` | Action text heard in this location |
+| `profile [player\|bio …\|status …]` | | View or edit a short public profile |
+| `friend <add\|accept\|decline\|remove> <player>` | | Mutual friendship requests |
+| `friends` | | List friends and pending requests |
+| `ignore <player>` / `unignore` / `ignores` | `block` | Filter say, chat, emote, whisper, and friend requests |
 | `status` | `st` | Your name and location |
 | `inventory` | `inv`, `i` | What you carry |
-| `inspect <thing>` | `examine`, `ex` | Read an object, person, or item |
-| `mark <name>` | | Leave a named marker on the outskirts tile you occupy |
+| `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, or item |
+| `mark <name>` | | Leave a named marker on the outskirts tile |
+| `build cabin <name>` | | Raise a cabin on walkable outskirts ground |
+| `enter <name>` / `leave` | | Enter or leave a cabin |
+| `home <access\|allow\|deny\|rename\|demolish> …` | | Owner cabin controls |
+| `sign <text>` / `sign read` / `sign remove` | | Persistent roadside notes |
+| `trail <name>` | | Leave a trail post |
+| `board [post <text>\|remove <id>]` | `notices` | Coffee Shop noticeboard |
 | `quit` | `q` | Disconnect |
 
 `exit` is not an alias of `quit`.
 
-In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Water and rock refuse the step. `say` is heard by people on the same tile. `chat` is still heard everywhere.
+In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Water and rock refuse the step. `say` is heard by people on the same tile (or cabin interior). `chat` is still heard everywhere. Whispers are never written to room or global feeds; offline recipients are refused (messages are not stored for later delivery).
 
-A marker name is 2–16 characters, starts with a letter, and may contain letters, digits, and hyphens. One marker per tile. The server records you as the owner. You cannot mark a city room, and you cannot mark a tile that already has one.
+### Social rules
 
-Spectators, if a future mode adds them, can look and read. They cannot move, inspect, speak, or mark. The server checks that. The client cannot grant it.
+- Friend requests need explicit acceptance. Identity is the operator id, not the display name.
+- `ignore` is directional. Ignored operators cannot whisper you or send friend requests, and their local/global/emote lines are hidden from your feed.
+- Profiles expose only display name, optional bio/status, and online/offline to friends. Email, passwords, and recovery material are never shown.
+- Friend lists show online/offline only. They do not reveal exact location.
+
+### Homesteads and traces
+
+- Cabins need walkable outskirts ground that is not the city gate. One cabin per tile; markers, signs, and trail posts may share that tile.
+- Cabins have an interior place (`i:<id>`) linked by validated `world_connections`. Access defaults to `public`; owners may set `private` or `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
+- Demolition removes connections and moves anyone inside to the exterior door tile. Reconnecting inside a demolished cabin relocates you safely.
+- Signs are short (≤80 chars). Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
+
+Spectators, if a future mode adds them, can look and read. They cannot move, inspect, speak, build, or mark. The server checks that. The client cannot grant it.
 
 ## A short discovery
 

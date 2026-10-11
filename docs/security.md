@@ -28,9 +28,19 @@ Tokens are random 128-bit values held in memory. A restart invalidates them. Ide
 
 ## Data
 
-State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator and log back. The server does not rewrite every location on each command.
+State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, and log back. The server does not rewrite every location on each command.
 
 Frames are capped at 32 KiB. Session and connection counts are capped. Push queues drop when a client falls behind.
+
+Player text (speech, bios, signs, notices, cabin names) is length-capped and stripped of control characters before storage or display. Building and noticeboard posting have soft rate limits beyond the global command bucket.
+
+## Privacy and abuse resistance
+
+- Private whispers use `Audience::Player` and `Channel::Private`. Their bodies are not published on location or global feeds. Offline whispers are refused; contents are not queued.
+- `ignore`/`block` is enforced server-side across say, chat, emote, whisper, and friend requests.
+- Friend lists expose online/offline only, never coordinates or account credentials.
+- Cabin access (`public` / `friends` / `private` + grants) is checked when entering an interior, including bare `go <cabin>` through a stored connection.
+- Noticeboard posts are bounded in length, rate, retained count, and lifetime.
 
 ## What you should still do
 
@@ -43,7 +53,10 @@ Frames are capped at 32 KiB. Session and connection counts are capped. Push queu
 ## Known prototype limits
 
 - No public-key login, second factor, or account recovery.
-- No audit log beyond the world message table.
+- No offline private-message mailbox; whispers require an online recipient.
+- Display-name collisions are refused at resolve time rather than prevented at registration.
+- No moderation console beyond owner-delete for notices and owner cabin controls.
+- No audit log beyond the world message table (which may retain recent private lines up to the log cap).
 - The SSH implementation is russh. Track its advisories.
 - Test builds of `coffee-world` use lighter Argon2 parameters. The server binary uses the crate defaults. Hashes produced by `cargo test` inside `coffee-world` are not interchangeable with the server.
 - This code has not had an external security review.

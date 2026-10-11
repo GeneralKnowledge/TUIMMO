@@ -561,6 +561,13 @@ fn feed_window(
                         None => format!("[all] {}", line.text),
                     },
                 ),
+                terminus_core::Channel::Private => (
+                    Style::default().fg(theme.private),
+                    match &line.speaker {
+                        Some(name) => format!("[whisper] {name}: {}", line.text),
+                        None => format!("[whisper] {}", line.text),
+                    },
+                ),
             };
             Line::from(vec![
                 Span::styled(format!("{stamp} "), Style::default().fg(theme.muted)),

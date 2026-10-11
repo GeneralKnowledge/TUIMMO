@@ -21,9 +21,9 @@ pub use identity::{
 };
 pub use records::{
     Discovery, GeographyState, MaterializedRegion, Structure, TerrainMod, WorldConnection,
-    MARKER_KIND,
+    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND,
 };
 pub use travel::{
-    describe_tile, effective_tile, is_reserved_word, marker_sights, step_origin,
-    validate_marker_name, Cardinal, EffectiveTile, MarkerSight, TileScene,
+    describe_tile, effective_tile, is_reserved_word, map_symbol_for_structures, marker_sights,
+    step_origin, validate_marker_name, Cardinal, EffectiveTile, MarkerSight, TileScene,
 };

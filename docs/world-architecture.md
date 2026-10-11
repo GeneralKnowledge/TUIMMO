@@ -113,7 +113,7 @@ The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoc
 | Table | What it stores |
 | --- | --- |
 | `world_regions` | Identity, version, audit seed, atlas placement, discovery time. Unique on `(world_id, epoch_id, origin_x, origin_y)`. |
-| `world_structures` | One structure per tile. `kind` is structured (`marker` today). `name` is the player's text. `owner_id` is attribution, not a foreign key, so history can outlive an account. |
+| `world_structures` | Structures per tile and kind (`marker`, `cabin`, `sign`, `trail`). Unique on `(region_id, local_x, local_y, kind)`. Cabins carry `access` and `interior_place`. `owner_id` is attribution, not a foreign key, so history can outlive an account. |
 | `terrain_modifications` | One override per tile. The baseline is not copied. |
 | `region_discoveries` | Visits and notes. Entering a region records an `entered` discovery. |
 | `world_connections` | Explicit links. Unique on `(from_place, keyword)`. |
@@ -159,25 +159,25 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 - overwrite a generated grid except through `apply_terrain_mod`, which records an override
 - open an operating-system shell (the SSH gateway still refuses `exec`)
 
+`0003_social_and_places.sql` adds operator bio/status, friendships, ignores, structure access/interior columns (relaxing the one-structure-per-tile unique key to per-kind), structure grants, and the Coffee Shop noticeboard. Player social rows and player-built places are never wiped by static Undernet reseeding.
+
 ## Current limitations
 
 - One epoch and one generation version.
 - No connected rivers or mountain ranges. Continuity is the absolute field.
 - Version boundaries are not blended.
-- The only player-facing structure is a marker. Cabins, homesteads, and settlements are not built yet.
-- Terrain modification, relocation, and player links are tested server APIs, not commands.
-- Wilderness chat is per tile, not per region.
-- `world_structures` allows one row per tile, which is right for a marker and too tight for a later tile that holds both a trail post and a cabin. That unique key should be revisited when structure kinds multiply.
+- Cabins, signs, trail posts, and markers exist; settlements and workshops do not.
+- Terrain modification and region relocation remain server APIs, not general player commands (building uses them only where needed).
+- Wilderness chat is per tile (or cabin interior), not per region.
+- Private messages are online-only; offline delivery is not stored.
 - Static exit reseeding still deletes and reinserts the hand-authored exit graph. Player links live in `world_connections` and are left alone.
 - Unknown generator versions stay in the database and fail closed for movement.
 
 ## Next milestone
 
-Player-built structures that other people can walk into.
+Settlements that group existing places without replacing them.
 
-1. A `cabin` (and then a workshop) as a `world_structures` kind with an owner, a structured footprint, and an interior place key that is not a terrain tile.
-2. `world_connections` from the door tile to that interior and back, created only by the owning player or someone they grant.
-3. Trails as `terrain_modifications` along a validated path, not as free coordinate claims.
-4. A settlement as a named grouping of structures in one or more regions, with membership separate from free-form description text.
-5. Region-scoped chat distinct from tile-local `say` and global `chat`.
-6. Permissions checked on the server for build, name, and demolish. Names and descriptions stay text fields. They never become the simulation.
+1. A named settlement with a founder, membership/invites, and a discoverable location.
+2. Shared building permissions scoped to settlement members.
+3. Region-scoped chat distinct from tile-local `say` and global `chat`.
+4. Optional trail segments as validated `terrain_modifications` along a path, still without a full terraforming sim.

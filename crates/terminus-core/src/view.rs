@@ -19,6 +19,8 @@ pub enum Channel {
     System,
     Local,
     Global,
+    /// Private speech between two operators. Never shown in room or global feeds.
+    Private,
 }
 
 /// One line in the world feed.

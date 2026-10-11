@@ -375,6 +375,7 @@ impl Actor {
         let snapshot = self.world.log_snapshot();
         let operator = self.world.operator(rec.player_id).cloned();
         let geography = self.world.geography_snapshot();
+        let social = self.world.social_snapshot();
         let transition = match self.world.apply(rec.session_id, &line) {
             Ok(transition) => transition,
             Err(err) => return Err(err),
@@ -383,6 +384,7 @@ impl Actor {
             tracing::error!(error = %err, "failed to persist command");
             self.world.replace_log(snapshot);
             self.world.restore_geography(geography);
+            self.world.restore_social(social);
             if let Some(operator) = operator {
                 self.world.insert_operator(operator);
             }

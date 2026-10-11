@@ -11,6 +11,7 @@ pub mod auth;
 pub mod catalog;
 pub mod geography;
 pub mod model;
+pub mod social;
 pub mod state;
 pub mod store;
 pub mod undernet;
@@ -20,5 +21,6 @@ pub use auth::{
     verify_password, AuthError,
 };
 pub use model::{Item, Operator, PersistOp, STARTER_LOCATION};
+pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
 pub use store::{AccountRow, Store, StoreError};

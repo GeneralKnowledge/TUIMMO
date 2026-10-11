@@ -89,6 +89,7 @@ pub async fn start(config: ServerConfig) -> anyhow::Result<Running> {
     let mut world = WorldState::new();
     world.install_loaded(loaded.operators, loaded.log);
     world.install_geography(loaded.geography);
+    world.install_social(loaded.social);
     let hub = Hub::spawn(world, store, config.allow_registration);
 
     let socket_path = config.data_dir.join("game.sock");
