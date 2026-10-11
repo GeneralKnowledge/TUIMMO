@@ -233,7 +233,7 @@ Operators treat the shop as neutral ground. The windows look onto wet neon, and 
     LocationDef {
         id: "roof-array",
         name: "Roof Array",
-        description: "The shop's roof. Antennae and a folding chair. The city is a circuit of wet light, and the stair back down smells like coffee.",
+        description: "The shop's roof. Antennae and a folding chair. The city is a circuit of wet light, and a break in the fencing opens onto the outskirts. The stair back down smells like coffee.",
         objects: &[ObjectDef {
             keyword: "antenna",
             aliases: &["array", "mast"],

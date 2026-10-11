@@ -32,7 +32,7 @@ The server creates `data/coffee.sqlite` on startup and applies migrations embedd
 
 You do not run a separate migration command. Opening the store applies pending migrations.
 
-World geography is code. Editing `undernet.rs` and restarting upserts names and replaces exits. Operator rows stay.
+Hand-authored geography is code. Editing `undernet.rs` and restarting upserts names and replaces the static exit rows. Operator rows stay. Procedural regions, markers, terrain modifications, discoveries, and world connections are not part of that reseed. See [world architecture](world-architecture.md).
 
 ## Adding a command
 

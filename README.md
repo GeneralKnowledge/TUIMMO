@@ -66,6 +66,7 @@ cargo run -p minimal-game -- --script
 Docs:
 
 - [Architecture](docs/architecture.md)
+- [World architecture](docs/world-architecture.md)
 - [Protocol](docs/protocol.md)
 - [Undernet](docs/game-design.md)
 - [Security](docs/security.md)
@@ -77,19 +78,20 @@ Docs:
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
 - Header, location, status, scrollable feed, and a command prompt with history and completion
-- `help`, `look`, `map`, `who`, `go`, `say`, `chat`, `status`, `inventory`, `inspect`, `quit`
+- `help`, `look`, `map`, `who`, `go`, `say`, `chat`, `status`, `inventory`, `inspect`, `mark`, `quit`
 - Ten linked Undernet locations, including a sealed Black Archive
+- A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
 - Local and global chat, join and leave notices, movement notices
-- SQLite persistence for accounts, operators, positions, geography, and a bounded message log
+- SQLite persistence for accounts, operators, positions, the hand-authored map, player markers, and a bounded message log
 - Two simultaneous sessions, tested with protocol clients and an SSH client
 
 ## What this version does not do
 
-No combat, economy, factions, crafting, quests, procedural maps, or generated NPCs. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character and position remain. See [security notes](docs/security.md).
+No combat, economy, factions, crafting, quests, homesteads, settlements, or generated NPCs. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, position, and anything they marked remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 
-1. Public-key authentication alongside passwords
-2. Closed registration with an invite flow
-3. Richer inspection and a handful of staffed locations
-4. Optional local PTY for clients that cannot run the in-process TUI
+1. Player-built cabins and homesteads as owned structures with interiors
+2. Trails, settlements, and permissions for shared building
+3. Public-key authentication alongside passwords
+4. Closed registration with an invite flow
