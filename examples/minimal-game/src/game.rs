@@ -225,7 +225,13 @@ impl Game for MiniGame {
         let feed = self
             .log
             .iter()
-            .filter(|entry| entry.visible_to(&occupant.room, occupant.identity.player_id))
+            .filter(|entry| {
+                entry.visible_to(&terminus_core::ViewerContext {
+                    player_id: occupant.identity.player_id,
+                    location_id: &occupant.room,
+                    region_key: &occupant.room,
+                })
+            })
             .map(LogEntry::to_feed)
             .collect::<Vec<FeedLine>>();
         Ok(GameView {

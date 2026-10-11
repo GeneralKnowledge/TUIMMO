@@ -12,6 +12,7 @@ pub fn coffee_theme(ascii: bool) -> Theme {
         warn: Color::Rgb(255, 150, 90),
         local: Color::Rgb(236, 226, 206),
         global: Color::Rgb(125, 214, 230),
+        region: Color::Rgb(150, 196, 140),
         private: Color::Rgb(196, 160, 220),
         system: Color::Rgb(150, 158, 166),
         ascii,

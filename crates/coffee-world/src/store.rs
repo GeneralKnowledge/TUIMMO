@@ -16,6 +16,10 @@ use crate::geography::{
     TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC,
 };
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
+use crate::settlement::{
+    InviteStatus, MemberRole, Settlement, SettlementInvite, SettlementMember, SettlementState,
+    SettlementVisibility,
+};
 use crate::social::{
     Friendship, FriendshipStatus, IgnoreEdge, NoticePost, SocialState, StructureGrant,
 };
@@ -40,6 +44,7 @@ pub struct LoadedWorld {
     pub log: Vec<LogEntry>,
     pub geography: GeographyState,
     pub social: SocialState,
+    pub settlements: SettlementState,
 }
 
 impl Store {
@@ -102,7 +107,8 @@ impl Store {
         let log = self.load_log().await?;
         let geography = self.load_geography().await?;
         let social = self.load_social().await?;
-        Ok(LoadedWorld { operators, log, geography, social })
+        let settlements = self.load_settlements().await?;
+        Ok(LoadedWorld { operators, log, geography, social, settlements })
     }
 
     pub async fn create_account(
@@ -284,13 +290,14 @@ impl Store {
                     owner_id,
                     access,
                     interior_place,
+                    settlement_id,
                     created_at,
                 } => {
                     sqlx::query(
                         "INSERT INTO world_structures (
                             id, region_id, local_x, local_y, kind, name, owner_id, access,
-                            interior_place, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                            interior_place, settlement_id, created_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     )
                     .bind(id.to_string())
                     .bind(region_id.to_string())
@@ -301,6 +308,7 @@ impl Store {
                     .bind(owner_id.map(|id| id.to_string()))
                     .bind(access)
                     .bind(interior_place)
+                    .bind(settlement_id.map(|id| id.to_string()))
                     .bind(*created_at as i64)
                     .execute(&mut *tx)
                     .await?;
@@ -316,6 +324,13 @@ impl Store {
                     .bind(id.to_string())
                     .execute(&mut *tx)
                     .await?;
+                }
+                PersistOp::LinkStructureSettlement { id, settlement_id } => {
+                    sqlx::query("UPDATE world_structures SET settlement_id = ?1 WHERE id = ?2")
+                        .bind(settlement_id.map(|id| id.to_string()))
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
                 }
                 PersistOp::DeleteStructure { id } => {
                     sqlx::query("DELETE FROM structure_grants WHERE structure_id = ?1")
@@ -515,6 +530,120 @@ impl Store {
                         .execute(&mut *tx)
                         .await?;
                 }
+                PersistOp::SettlementUpsert {
+                    id,
+                    name,
+                    name_key,
+                    description,
+                    visibility,
+                    anchor_place,
+                    owner_id,
+                    created_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO settlements (
+                            id, name, name_key, description, visibility, anchor_place, owner_id, created_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                         ON CONFLICT(id) DO UPDATE SET
+                            name = excluded.name,
+                            name_key = excluded.name_key,
+                            description = excluded.description,
+                            visibility = excluded.visibility,
+                            anchor_place = excluded.anchor_place,
+                            owner_id = excluded.owner_id",
+                    )
+                    .bind(id.to_string())
+                    .bind(name)
+                    .bind(name_key)
+                    .bind(description)
+                    .bind(visibility.as_str())
+                    .bind(anchor_place)
+                    .bind(owner_id.to_string())
+                    .bind(*created_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::SettlementDelete { id } => {
+                    sqlx::query(
+                        "UPDATE world_structures SET settlement_id = NULL WHERE settlement_id = ?1",
+                    )
+                    .bind(id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query("DELETE FROM noticeboard_posts WHERE place_id = ?1")
+                        .bind(format!("settle:{id}"))
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("DELETE FROM settlement_invites WHERE settlement_id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("DELETE FROM settlement_members WHERE settlement_id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                    sqlx::query("DELETE FROM settlements WHERE id = ?1")
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                PersistOp::SettlementMemberUpsert {
+                    settlement_id,
+                    operator_id,
+                    role,
+                    joined_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO settlement_members (
+                            settlement_id, operator_id, role, joined_at
+                         ) VALUES (?1, ?2, ?3, ?4)
+                         ON CONFLICT(settlement_id, operator_id) DO UPDATE SET
+                            role = excluded.role",
+                    )
+                    .bind(settlement_id.to_string())
+                    .bind(operator_id.to_string())
+                    .bind(role.as_str())
+                    .bind(*joined_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::SettlementMemberDelete { settlement_id, operator_id } => {
+                    sqlx::query(
+                        "DELETE FROM settlement_members
+                         WHERE settlement_id = ?1 AND operator_id = ?2",
+                    )
+                    .bind(settlement_id.to_string())
+                    .bind(operator_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::SettlementInviteUpsert {
+                    id,
+                    settlement_id,
+                    inviter_id,
+                    invitee_id,
+                    status,
+                    created_at,
+                    expires_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO settlement_invites (
+                            id, settlement_id, inviter_id, invitee_id, status, created_at, expires_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                         ON CONFLICT(id) DO UPDATE SET
+                            status = excluded.status,
+                            expires_at = excluded.expires_at",
+                    )
+                    .bind(id.to_string())
+                    .bind(settlement_id.to_string())
+                    .bind(inviter_id.to_string())
+                    .bind(invitee_id.to_string())
+                    .bind(status.as_str())
+                    .bind(*created_at as i64)
+                    .bind(*expires_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
             }
         }
         sqlx::query(
@@ -586,12 +715,14 @@ impl Store {
                 "system" => Channel::System,
                 "local" => Channel::Local,
                 "global" => Channel::Global,
+                "region" => Channel::Region,
                 "private" => Channel::Private,
                 _ => continue,
             };
             let audience = match row.audience.as_str() {
                 "everyone" => Audience::Everyone,
                 "location" => Audience::Location(row.audience_key),
+                "region" => Audience::Region(row.audience_key),
                 "player" => {
                     let id = PlayerId::from_str(&row.audience_key).map_err(|_| StoreError::Data)?;
                     Audience::Player(id)
@@ -636,7 +767,8 @@ impl Store {
         }
 
         let structures = sqlx::query_as::<_, StructureSql>(
-            "SELECT id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place, created_at
+            "SELECT id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
+                    settlement_id, created_at
              FROM world_structures",
         )
         .fetch_all(&self.pool)
@@ -652,6 +784,7 @@ impl Store {
                 owner_id: optional_player(row.owner_id)?,
                 access: if row.access.is_empty() { ACCESS_PUBLIC.to_string() } else { row.access },
                 interior_place: row.interior_place,
+                settlement_id: optional_uuid(row.settlement_id)?,
                 created_at: u64_col(row.created_at)?,
             });
         }
@@ -773,6 +906,59 @@ impl Store {
         }
         Ok(social)
     }
+
+    async fn load_settlements(&self) -> Result<SettlementState, StoreError> {
+        let mut state = SettlementState::default();
+        let settlements = sqlx::query_as::<_, SettlementSql>(
+            "SELECT id, name, name_key, description, visibility, anchor_place, owner_id, created_at
+             FROM settlements",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in settlements {
+            state.settlements.push(Settlement {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                name: row.name,
+                name_key: row.name_key,
+                description: row.description,
+                visibility: SettlementVisibility::parse(&row.visibility).ok_or(StoreError::Data)?,
+                anchor_place: row.anchor_place,
+                owner_id: PlayerId::from_str(&row.owner_id).map_err(|_| StoreError::Data)?,
+                created_at: u64_col(row.created_at)?,
+            });
+        }
+        let members = sqlx::query_as::<_, SettlementMemberSql>(
+            "SELECT settlement_id, operator_id, role, joined_at FROM settlement_members",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in members {
+            state.members.push(SettlementMember {
+                settlement_id: Uuid::from_str(&row.settlement_id).map_err(|_| StoreError::Data)?,
+                operator_id: PlayerId::from_str(&row.operator_id).map_err(|_| StoreError::Data)?,
+                role: MemberRole::parse(&row.role).ok_or(StoreError::Data)?,
+                joined_at: u64_col(row.joined_at)?,
+            });
+        }
+        let invites = sqlx::query_as::<_, SettlementInviteSql>(
+            "SELECT id, settlement_id, inviter_id, invitee_id, status, created_at, expires_at
+             FROM settlement_invites",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        for row in invites {
+            state.invites.push(SettlementInvite {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                settlement_id: Uuid::from_str(&row.settlement_id).map_err(|_| StoreError::Data)?,
+                inviter_id: PlayerId::from_str(&row.inviter_id).map_err(|_| StoreError::Data)?,
+                invitee_id: PlayerId::from_str(&row.invitee_id).map_err(|_| StoreError::Data)?,
+                status: InviteStatus::parse(&row.status).ok_or(StoreError::Data)?,
+                created_at: u64_col(row.created_at)?,
+                expires_at: u64_col(row.expires_at)?,
+            });
+        }
+        Ok(state)
+    }
 }
 
 fn i32_col(value: i64) -> Result<i32, StoreError> {
@@ -793,6 +979,10 @@ fn local_col(value: i64) -> Result<u8, StoreError> {
 
 fn optional_player(value: Option<String>) -> Result<Option<PlayerId>, StoreError> {
     value.map(|raw| PlayerId::from_str(&raw).map_err(|_| StoreError::Data)).transpose()
+}
+
+fn optional_uuid(value: Option<String>) -> Result<Option<Uuid>, StoreError> {
+    value.map(|raw| Uuid::from_str(&raw).map_err(|_| StoreError::Data)).transpose()
 }
 
 pub struct AccountRow {
@@ -896,7 +1086,39 @@ struct StructureSql {
     owner_id: Option<String>,
     access: String,
     interior_place: Option<String>,
+    settlement_id: Option<String>,
     created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct SettlementSql {
+    id: String,
+    name: String,
+    name_key: String,
+    description: String,
+    visibility: String,
+    anchor_place: String,
+    owner_id: String,
+    created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct SettlementMemberSql {
+    settlement_id: String,
+    operator_id: String,
+    role: String,
+    joined_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct SettlementInviteSql {
+    id: String,
+    settlement_id: String,
+    inviter_id: String,
+    invitee_id: String,
+    status: String,
+    created_at: i64,
+    expires_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1111,6 +1333,7 @@ mod tests {
         again.install_loaded(loaded.operators.clone(), loaded.log.clone());
         again.install_geography(loaded.geography.clone());
         again.install_social(loaded.social.clone());
+        again.install_settlements(loaded.settlements.clone());
         let back = SessionIdentity::new(op_id, "ada", Permissions::player());
         let back_session = back.session_id;
         again.connect_player(back).unwrap();
@@ -1204,6 +1427,7 @@ mod tests {
         again.install_loaded(loaded.operators, loaded.log);
         again.install_geography(loaded.geography);
         again.install_social(loaded.social);
+        again.install_settlements(loaded.settlements);
         let back = SessionIdentity::new(bob_id, "bob", Permissions::player());
         let bob_back = back.session_id;
         again.connect_player(back).unwrap();
@@ -1222,6 +1446,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn settlements_survive_reopen_and_reseed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+
+        let mut world = WorldState::for_tests();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada_account = Uuid::new_v4();
+        let bob_account = Uuid::new_v4();
+        let ada = Operator {
+            id: ada_id,
+            account_id: ada_account,
+            username: "ada".into(),
+            name: "ada".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        let bob = Operator {
+            id: bob_id,
+            account_id: bob_account,
+            username: "bob".into(),
+            name: "bob".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        store.create_account(ada_account, "ada", "hash", &ada, 10).await.unwrap();
+        store.create_account(bob_account, "bob", "hash", &bob, 11).await.unwrap();
+        world.insert_operator(ada);
+        world.insert_operator(bob);
+        let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let bob_ident = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        let bob_session = bob_ident.session_id;
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+        store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+        let mut ops = Vec::new();
+        for line in ["go up", "outskirts"] {
+            ops.extend(world.apply(ada_session, line).unwrap().ops);
+        }
+        let identity = gate_identity();
+        ops.push(world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "pad", ada_id).unwrap());
+        ops.extend(world.apply(ada_session, "north").unwrap().ops);
+        ops.extend(world.apply(ada_session, "build cabin Haven").unwrap().ops);
+        ops.extend(world.apply(ada_session, "settle create Havenhold").unwrap().ops);
+        ops.extend(world.apply(ada_session, "settle invite bob").unwrap().ops);
+        ops.extend(world.apply(bob_session, "settle accept Havenhold").unwrap().ops);
+        ops.extend(world.apply(ada_session, "settle board post Meet on the ridge").unwrap().ops);
+        store.commit(&ops).await.unwrap();
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.settlements.settlements.len(), 1);
+        assert_eq!(loaded.settlements.settlements[0].name, "Havenhold");
+        assert!(loaded.settlements.is_member(loaded.settlements.settlements[0].id, bob_id));
+        assert!(loaded.geography.structures.iter().any(|s| {
+            s.kind == "cabin" && s.settlement_id == Some(loaded.settlements.settlements[0].id)
+        }));
+        assert!(loaded.social.notices.iter().any(|n| n.place_id.starts_with("settle:")));
+    }
+
+    #[tokio::test]
     async fn migration_applies_to_fresh_and_preexisting_databases() {
         let dir = tempfile::tempdir().unwrap();
         let fresh = dir.path().join("fresh.sqlite");
@@ -1234,6 +1530,9 @@ mod tests {
         assert!(tables.iter().any(|name| name == "friendships"));
         assert!(tables.iter().any(|name| name == "noticeboard_posts"));
         assert!(tables.iter().any(|name| name == "ignores"));
+        assert!(tables.iter().any(|name| name == "settlements"));
+        assert!(tables.iter().any(|name| name == "settlement_members"));
+        assert!(tables.iter().any(|name| name == "settlement_invites"));
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -1241,6 +1540,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(access_col, 1);
+        let settle_col: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'settlement_id'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(settle_col, 1);
         let bio_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('operators') WHERE name = 'bio'",
         )

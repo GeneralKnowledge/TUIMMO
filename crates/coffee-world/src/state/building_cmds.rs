@@ -70,6 +70,7 @@ impl WorldState {
             owner_id: Some(player),
             access: ACCESS_PUBLIC.into(),
             interior_place: Some(interior.clone()),
+            settlement_id: None,
             created_at,
         };
         self.geography.structures.push(structure.clone());
@@ -83,6 +84,7 @@ impl WorldState {
             owner_id: Some(player),
             access: ACCESS_PUBLIC.into(),
             interior_place: Some(interior.clone()),
+            settlement_id: None,
             created_at,
         });
         let enter_kw = name.to_ascii_lowercase();
@@ -509,6 +511,7 @@ impl WorldState {
                 owner_id: Some(player),
                 access: ACCESS_PUBLIC.into(),
                 interior_place: None,
+                settlement_id: None,
                 created_at,
             });
             ops.push(PersistOp::Structure {
@@ -521,6 +524,7 @@ impl WorldState {
                 owner_id: Some(player),
                 access: ACCESS_PUBLIC.into(),
                 interior_place: None,
+                settlement_id: None,
                 created_at,
             });
         }
@@ -645,6 +649,7 @@ impl WorldState {
             owner_id: Some(player),
             access: ACCESS_PUBLIC.into(),
             interior_place: None,
+            settlement_id: None,
             created_at,
         });
         ops.push(PersistOp::Structure {
@@ -657,6 +662,7 @@ impl WorldState {
             owner_id: Some(player),
             access: ACCESS_PUBLIC.into(),
             interior_place: None,
+            settlement_id: None,
             created_at,
         });
         self.social.last_build_at.insert(player, self.now_ms);

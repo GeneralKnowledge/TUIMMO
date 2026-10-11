@@ -187,6 +187,27 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
+            name: "region",
+            aliases: &["rsay"],
+            summary: "Speak across this physical region",
+            usage: "region <message>",
+            args: ArgMode::Rest { required: true },
+        },
+        CommandSpec {
+            name: "settle",
+            aliases: &[],
+            summary: "Found, join, or manage a settlement",
+            usage: "settle <create|inspect|invite|…> …",
+            args: ArgMode::Rest { required: true },
+        },
+        CommandSpec {
+            name: "settlements",
+            aliases: &[],
+            summary: "List settlements visible from here",
+            usage: "settlements",
+            args: ArgMode::None,
+        },
+        CommandSpec {
             name: "quit",
             aliases: &["q"],
             summary: "Close this session",

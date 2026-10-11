@@ -28,7 +28,7 @@ Tokens are random 128-bit values held in memory. A restart invalidates them. Ide
 
 ## Data
 
-State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, and log back. The server does not rewrite every location on each command.
+State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, and log back. The server does not rewrite every location on each command.
 
 Frames are capped at 32 KiB. Session and connection counts are capped. Push queues drop when a client falls behind.
 
@@ -37,10 +37,12 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 ## Privacy and abuse resistance
 
 - Private whispers use `Audience::Player` and `Channel::Private`. Their bodies are not published on location or global feeds. Offline whispers are refused; contents are not queued.
-- `ignore`/`block` is enforced server-side across say, chat, emote, whisper, and friend requests.
+- Regional chat uses `Audience::Region` with a server-derived region key. Clients cannot subscribe to arbitrary regions.
+- `ignore`/`block` is enforced server-side across say, chat, region, emote, whisper, friend requests, and settlement invites.
 - Friend lists expose online/offline only, never coordinates or account credentials.
 - Cabin access (`public` / `friends` / `private` + grants) is checked when entering an interior, including bare `go <cabin>` through a stored connection.
-- Noticeboard posts are bounded in length, rate, retained count, and lifetime.
+- Settlement membership is one per player. Private settlements are not listed to outsiders. Disband never deletes cabins or signs.
+- Noticeboard posts (Coffee Shop and settlement) are bounded in length, rate, retained count, and lifetime.
 
 ## What you should still do
 

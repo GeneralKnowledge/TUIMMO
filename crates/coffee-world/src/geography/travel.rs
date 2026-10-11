@@ -107,6 +107,8 @@ pub struct MarkerSight {
     pub kind: String,
     pub name: String,
     pub owner_name: String,
+    /// Optional "Part of settlement X" line when the structure is linked and visible.
+    pub settlement_note: Option<String>,
 }
 
 pub struct TileScene {
@@ -135,7 +137,7 @@ pub fn describe_tile(
         lines.push(kind.prose().to_string());
     }
     for sight in markers_here {
-        lines.push(match sight.kind.as_str() {
+        let mut line = match sight.kind.as_str() {
             CABIN_KIND => {
                 format!(
                     "A cabin named \"{}\" stands here. {} built it.",
@@ -149,7 +151,12 @@ pub fn describe_tile(
                 format!("A trail post marks \"{}\". {} set it.", sight.name, sight.owner_name)
             }
             _ => format!("A marker reads \"{}\". {} left it.", sight.name, sight.owner_name),
-        });
+        };
+        if let Some(note) = &sight.settlement_note {
+            line.push(' ');
+            line.push_str(note);
+        }
+        lines.push(line);
     }
     let (placement_x, placement_y) = geo
         .region(pos.identity.coord_key())
@@ -318,6 +325,7 @@ pub fn is_reserved_word(word: &str) -> bool {
 pub fn marker_sights<'a>(
     structures: impl IntoIterator<Item = &'a Structure>,
     owner_name: impl Fn(Option<terminus_core::PlayerId>) -> String,
+    settlement_note: impl Fn(&Structure) -> Option<String>,
 ) -> Vec<MarkerSight> {
     structures
         .into_iter()
@@ -328,6 +336,7 @@ pub fn marker_sights<'a>(
             kind: item.kind.clone(),
             name: item.name.clone(),
             owner_name: owner_name(item.owner_id),
+            settlement_note: settlement_note(item),
         })
         .collect()
 }

@@ -130,7 +130,7 @@ The ten rooms and their exits are unchanged, including the sealed Black Archive.
 
 From the Roof Array, `outskirts` (or `go outskirts`) enters the gate tile. From that tile, `city` returns to the Roof Array. That seam is code. It is not a row in `exits`, because those rows have foreign keys to static location ids, and a wilderness key must not be forced into that table.
 
-Cardinal movement in the wilderness is `n`/`north`, `s`/`south`, `e`/`east`, `w`/`west`. Impassable directions are omitted from the exit list. A blocked step says which terrain stopped it. `say` is heard by operators on the same place key. `chat` is still global. `map` in the wilderness draws the current region:
+Cardinal movement in the wilderness is `n`/`north`, `s`/`south`, `e`/`east`, `w`/`west`. Impassable directions are omitted from the exit list. A blocked step says which terrain stopped it. `say` is heard by operators on the same place key. `region`/`rsay` is heard across the physical region (birth cell or Undernet room). `chat` is still global. `map` in the wilderness draws the current region:
 
 ```text
 @ you  + city gate  * landmark  M marker
@@ -161,23 +161,37 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 
 `0003_social_and_places.sql` adds operator bio/status, friendships, ignores, structure access/interior columns (relaxing the one-structure-per-tile unique key to per-kind), structure grants, and the Coffee Shop noticeboard. Player social rows and player-built places are never wiped by static Undernet reseeding.
 
+`0004_settlements.sql` adds settlements, membership (one per player), invites, and a nullable `world_structures.settlement_id` link. Disband clears membership, invites, settle notices, and structure links; it never deletes cabins, signs, trails, or discoveries. Hub rollback snapshots settlements alongside social/geography/log.
+
+### Region chat keys
+
+Regional speech uses physical proximity only. The server derives the key from the speaker's place; clients cannot subscribe to arbitrary regions.
+
+```text
+Wild tile       → r:<world>:<epoch>:<origin_x>:<origin_y>
+Cabin interior  → same key as the cabin's MaterializedRegion identity
+Static room     → u:<location_id>   (borders = room exits)
+```
+
+Settlement boards reuse `noticeboard_posts` with `place_id = settle:<uuid>`. Discovery lists public settlements whose anchor region matches the viewer's region key, or that have a linked structure on the current tile; private settlements are listed only to members. There is no omniscient global directory.
+
 ## Current limitations
 
 - One epoch and one generation version.
 - No connected rivers or mountain ranges. Continuity is the absolute field.
 - Version boundaries are not blended.
-- Cabins, signs, trail posts, and markers exist; settlements and workshops do not.
+- Settlements are membership groups with optional structure links, not map rectangles or guild ranks.
+- No settlement-wide remote chat (region chat is physical only).
+- Shared build rights / workshops are not implemented yet.
 - Terrain modification and region relocation remain server APIs, not general player commands (building uses them only where needed).
-- Wilderness chat is per tile (or cabin interior), not per region.
 - Private messages are online-only; offline delivery is not stored.
 - Static exit reseeding still deletes and reinserts the hand-authored exit graph. Player links live in `world_connections` and are left alone.
 - Unknown generator versions stay in the database and fail closed for movement.
 
 ## Next milestone
 
-Settlements that group existing places without replacing them.
+Shared build rights and workshops inside existing settlements.
 
-1. A named settlement with a founder, membership/invites, and a discoverable location.
-2. Shared building permissions scoped to settlement members.
-3. Region-scoped chat distinct from tile-local `say` and global `chat`.
-4. Optional trail segments as validated `terrain_modifications` along a path, still without a full terraforming sim.
+1. Member-scoped building permissions on settlement-linked tiles.
+2. Optional trail segments as validated `terrain_modifications` along a path, still without a full terraforming sim.
+3. Public-key authentication alongside passwords.

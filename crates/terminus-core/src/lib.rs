@@ -17,7 +17,7 @@ pub mod view;
 
 pub use command::{ArgMode, CommandHint, CommandRegistry, CommandSpec, ParsedCommand};
 pub use error::{GameError, ParseError};
-pub use event::{Audience, AudienceKind, GameEvent, LogEntry};
+pub use event::{Audience, AudienceKind, GameEvent, LogEntry, ViewerContext};
 pub use id::{PlayerId, SessionId};
 pub use input::{InputEvent, Key};
 pub use session::{Permissions, SessionIdentity};

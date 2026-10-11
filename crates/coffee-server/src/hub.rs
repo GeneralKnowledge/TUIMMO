@@ -376,6 +376,7 @@ impl Actor {
         let operator = self.world.operator(rec.player_id).cloned();
         let geography = self.world.geography_snapshot();
         let social = self.world.social_snapshot();
+        let settlements = self.world.settlement_snapshot();
         let transition = match self.world.apply(rec.session_id, &line) {
             Ok(transition) => transition,
             Err(err) => return Err(err),
@@ -385,6 +386,7 @@ impl Actor {
             self.world.replace_log(snapshot);
             self.world.restore_geography(geography);
             self.world.restore_social(social);
+            self.world.restore_settlements(settlements);
             if let Some(operator) = operator {
                 self.world.insert_operator(operator);
             }
@@ -437,10 +439,15 @@ impl Actor {
             };
             let player = self.world.player_of(session_id);
             let location = self.world.location_key(session_id).unwrap_or_default();
+            let region_key = self.world.region_key_for_location(&location);
             let lines = events
                 .iter()
                 .filter(|event| match player {
-                    Some(player_id) => event.entry.visible_to(&location, player_id),
+                    Some(player_id) => event.entry.visible_to(&terminus_core::ViewerContext {
+                        player_id,
+                        location_id: &location,
+                        region_key: &region_key,
+                    }),
                     None => false,
                 })
                 .map(|event| event.entry.to_feed())
