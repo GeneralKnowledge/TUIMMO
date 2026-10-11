@@ -44,6 +44,8 @@ pub struct Structure {
     pub access: String,
     /// Interior place key for enterable structures (`i:<structure-id>`).
     pub interior_place: Option<String>,
+    /// Optional link to a player settlement. Cleared on disband; never deletes the structure.
+    pub settlement_id: Option<Uuid>,
     pub created_at: u64,
 }
 

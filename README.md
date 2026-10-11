@@ -20,7 +20,7 @@ ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@127.0.0.1
 
 There is no operating-system shell. The first login creates an account when registration is open (the default). The password must be 8–128 characters. Usernames are 3–16 characters: a letter, then letters, digits, or `_`. A second login with the same name returns the same operator, including their last location.
 
-Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, and pin a Coffee Shop `board` notice. `help` lists the commands.
+Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `help` lists the commands.
 
 Stop the server with Ctrl-C and start it again. Both operators are still where they were.
 
@@ -78,21 +78,21 @@ Docs:
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
 - Header, location, status, scrollable feed, and a command prompt with history and completion
-- Social Undernet: local `say`, global `chat`, private `whisper`, `emote`, profiles, mutual friends, and ignore/block
+- Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, `emote`, profiles, mutual friends, and ignore/block
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts
-- Coffee Shop noticeboard (`board`) with bounded, expiring posts
+- Settlements: named membership groups anchored to outskirts tiles, invites, claim/unclaim of structures, discovery without a global directory
+- Coffee Shop and settlement noticeboards with bounded, expiring posts
 - Ten linked Undernet locations, including a sealed Black Archive
 - A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
-- SQLite persistence for accounts, operators, social graph, positions, structures, connections, notices, and a bounded message log
-- Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/notices
+- SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, and a bounded message log
+- Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices
 
 ## What this version does not do
 
-No combat, economy, factions, crafting, quests, settlements, or generated NPCs. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, guild ranks, crafting, quests, or generated NPCs. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 
-1. Settlements that group existing cabins and trails with membership and shared build rights
-2. Region-scoped chat distinct from tile-local speech and global Undernet chat
-3. Public-key authentication alongside passwords
-4. Closed registration with an invite flow
+1. Shared build rights / workshops inside settlements
+2. Public-key authentication alongside passwords
+3. Closed registration with an invite flow

@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use terminus_core::PlayerId;
 use uuid::Uuid;
 
+use crate::settlement::{InviteStatus, MemberRole, SettlementVisibility};
 use crate::social::FriendshipStatus;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -101,6 +102,7 @@ pub enum PersistOp {
         owner_id: Option<PlayerId>,
         access: String,
         interior_place: Option<String>,
+        settlement_id: Option<Uuid>,
         created_at: u64,
     },
     UpdateStructure {
@@ -108,6 +110,10 @@ pub enum PersistOp {
         name: String,
         access: String,
         interior_place: Option<String>,
+    },
+    LinkStructureSettlement {
+        id: Uuid,
+        settlement_id: Option<Uuid>,
     },
     DeleteStructure {
         id: Uuid,
@@ -183,6 +189,38 @@ pub enum PersistOp {
     },
     NoticeDelete {
         id: Uuid,
+    },
+    SettlementUpsert {
+        id: Uuid,
+        name: String,
+        name_key: String,
+        description: String,
+        visibility: SettlementVisibility,
+        anchor_place: String,
+        owner_id: PlayerId,
+        created_at: u64,
+    },
+    SettlementDelete {
+        id: Uuid,
+    },
+    SettlementMemberUpsert {
+        settlement_id: Uuid,
+        operator_id: PlayerId,
+        role: MemberRole,
+        joined_at: u64,
+    },
+    SettlementMemberDelete {
+        settlement_id: Uuid,
+        operator_id: PlayerId,
+    },
+    SettlementInviteUpsert {
+        id: Uuid,
+        settlement_id: Uuid,
+        inviter_id: PlayerId,
+        invitee_id: PlayerId,
+        status: InviteStatus,
+        created_at: u64,
+        expires_at: u64,
     },
 }
 

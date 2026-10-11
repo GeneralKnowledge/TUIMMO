@@ -19,6 +19,10 @@ path = "ssh_session.rs"
 name = "social_homestead"
 path = "social_homestead.rs"
 
+[[test]]
+name = "settlements"
+path = "settlements.rs"
+
 [dependencies]
 anyhow.workspace = true
 coffee-server.workspace = true

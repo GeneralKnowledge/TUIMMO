@@ -561,6 +561,13 @@ fn feed_window(
                         None => format!("[all] {}", line.text),
                     },
                 ),
+                terminus_core::Channel::Region => (
+                    Style::default().fg(theme.region),
+                    match &line.speaker {
+                        Some(name) => format!("[region] {name}: {}", line.text),
+                        None => format!("[region] {}", line.text),
+                    },
+                ),
                 terminus_core::Channel::Private => (
                     Style::default().fg(theme.private),
                     match &line.speaker {

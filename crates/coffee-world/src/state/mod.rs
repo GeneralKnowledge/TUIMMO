@@ -7,7 +7,7 @@ use terminus_core::text::{clean_line, MAX_SPEECH_CHARS};
 use terminus_core::{
     Audience, Channel, CommandOutcome, CommandRegistry, ConnectOutcome, ConnectionState, ExitView,
     FeedLine, Game, GameError, GameEvent, GameView, ItemView, LogEntry, ObjectView, ParseError,
-    ParsedCommand, Permissions, PlayerId, PresenceView, SessionId, SessionIdentity,
+    ParsedCommand, Permissions, PlayerId, PresenceView, SessionId, SessionIdentity, ViewerContext,
 };
 use uuid::Uuid;
 
@@ -24,6 +24,7 @@ use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATIO
 use crate::undernet::{self, ExitDef, ObjectDef};
 
 mod building_cmds;
+mod settlement_cmds;
 mod social_cmds;
 
 /// Result of a state transition, including the rows that must be committed.
@@ -51,6 +52,7 @@ pub struct WorldState {
     pub(crate) overlays: HashMap<SessionId, String>,
     pub(crate) geography: GeographyState,
     pub(crate) social: crate::social::SocialState,
+    pub(crate) settlements: crate::settlement::SettlementState,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
     pub(crate) now_ms: u64,
@@ -75,6 +77,7 @@ impl WorldState {
             overlays: HashMap::new(),
             geography: GeographyState::default(),
             social: crate::social::SocialState::default(),
+            settlements: crate::settlement::SettlementState::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -118,6 +121,37 @@ impl WorldState {
 
     pub fn restore_social(&mut self, social: crate::social::SocialState) {
         self.social = social;
+    }
+
+    pub fn install_settlements(&mut self, settlements: crate::settlement::SettlementState) {
+        self.settlements = settlements;
+    }
+
+    pub fn settlement_snapshot(&self) -> crate::settlement::SettlementState {
+        self.settlements.clone()
+    }
+
+    pub fn restore_settlements(&mut self, settlements: crate::settlement::SettlementState) {
+        self.settlements = settlements;
+    }
+
+    /// Physical region chat key for the player's current place.
+    pub fn region_key_for_location(&self, location_id: &str) -> String {
+        use crate::settlement::{region_key_for_identity, region_key_for_static};
+        if let Some(pos) = WildernessPos::parse(location_id) {
+            return region_key_for_identity(pos.identity);
+        }
+        if let Some(cabin) = self.geography.structure_by_interior(location_id) {
+            if let Some(region) = self.geography.region_by_id(cabin.region_id) {
+                return region_key_for_identity(region.identity);
+            }
+        }
+        region_key_for_static(location_id)
+    }
+
+    pub(crate) fn region_key_of(&self, session_id: SessionId) -> Result<String, GameError> {
+        let location = self.location_id(session_id)?;
+        Ok(self.region_key_for_location(&location))
     }
 
     pub fn insert_operator(&mut self, operator: Operator) {
@@ -394,7 +428,7 @@ impl WorldState {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
         if let Some(pos) = WildernessPos::parse(&location) {
-            let text = match self.wild_scene(pos) {
+            let text = match self.wild_scene(pos, Some(player)) {
                 Ok(scene) => scene.map,
                 Err(err) => unreadable_wilderness(&err),
             };
@@ -761,6 +795,7 @@ impl WorldState {
             owner_id: Some(player),
             access: crate::geography::ACCESS_PUBLIC.into(),
             interior_place: None,
+            settlement_id: None,
             created_at,
         });
         ops.push(PersistOp::Structure {
@@ -773,6 +808,7 @@ impl WorldState {
             owner_id: Some(player),
             access: crate::geography::ACCESS_PUBLIC.into(),
             interior_place: None,
+            settlement_id: None,
             created_at,
         });
         let (event, op) = self.emit(
@@ -1250,13 +1286,21 @@ impl WorldState {
             .unwrap_or_else(|| "someone".to_string())
     }
 
-    fn wild_scene(&self, pos: WildernessPos) -> Result<crate::geography::TileScene, GenerateError> {
+    fn wild_scene(
+        &self,
+        pos: WildernessPos,
+        viewer: Option<PlayerId>,
+    ) -> Result<crate::geography::TileScene, GenerateError> {
         let generated = self.generated(pos.identity)?;
         let region_id = self.geography.region(pos.identity.coord_key()).map(|region| region.id);
         let here = region_id
             .map(|id| self.geography.structures_at(id, pos.local_x, pos.local_y))
             .unwrap_or_default();
-        let sights = marker_sights(here, |id| self.owner_name(id));
+        let sights = marker_sights(
+            here,
+            |id| self.owner_name(id),
+            |structure| self.settlement_note_for_structure(structure, viewer),
+        );
         let marks = region_id
             .map(|id| {
                 let mut by_tile: std::collections::BTreeMap<(u8, u8), Vec<&Structure>> =
@@ -1275,6 +1319,27 @@ impl WorldState {
             })
             .unwrap_or_default();
         Ok(describe_tile(pos, &generated, &self.geography, &sights, &marks))
+    }
+
+    pub(crate) fn settlement_note_for_structure(
+        &self,
+        structure: &Structure,
+        viewer: Option<PlayerId>,
+    ) -> Option<String> {
+        use crate::settlement::SettlementVisibility;
+        let settle_id = structure.settlement_id?;
+        let settle = self.settlements.by_id(settle_id)?;
+        let can_see = match settle.visibility {
+            SettlementVisibility::Public => true,
+            SettlementVisibility::Private => {
+                viewer.is_some_and(|player| self.settlements.is_member(settle_id, player))
+            }
+        };
+        if can_see {
+            Some(format!("Part of settlement {}.", settle.name))
+        } else {
+            None
+        }
     }
 
     fn wilderness_view(
@@ -1305,22 +1370,23 @@ impl WorldState {
             .collect::<Vec<_>>();
         present.sort_by(|a, b| a.name.cmp(&b.name));
         let feed = self.visible_feed_lines(player, &location_id);
-        let (location_name, description, objects, mut status) = match self.wild_scene(pos) {
-            Ok(scene) => {
-                let objects = scene
-                    .objects
-                    .into_iter()
-                    .map(|(keyword, name)| ObjectView { keyword, name })
-                    .collect();
-                (scene.title, scene.description, objects, scene.status)
-            }
-            Err(err) => (
-                "Unreadable wilderness".to_string(),
-                unreadable_wilderness(&err),
-                Vec::new(),
-                vec![format!("generator v{}", pos.identity.generation_version)],
-            ),
-        };
+        let (location_name, description, objects, mut status) =
+            match self.wild_scene(pos, Some(player)) {
+                Ok(scene) => {
+                    let objects = scene
+                        .objects
+                        .into_iter()
+                        .map(|(keyword, name)| ObjectView { keyword, name })
+                        .collect();
+                    (scene.title, scene.description, objects, scene.status)
+                }
+                Err(err) => (
+                    "Unreadable wilderness".to_string(),
+                    unreadable_wilderness(&err),
+                    Vec::new(),
+                    vec![format!("generator v{}", pos.identity.generation_version)],
+                ),
+            };
         let mut lines = self.status_lines(session_id)?;
         lines.append(&mut status);
         Ok(GameView {
@@ -1347,8 +1413,9 @@ impl WorldState {
         pos: WildernessPos,
         target: &str,
     ) -> Result<Transition, GameError> {
-        let scene =
-            self.wild_scene(pos).map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
+        let scene = self
+            .wild_scene(pos, Some(player))
+            .map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
         let matched = scene.objects.iter().find(|(keyword, name)| {
             keyword.eq_ignore_ascii_case(target) || name.eq_ignore_ascii_case(target)
         });
@@ -1418,15 +1485,17 @@ impl WorldState {
             .iter()
             .filter_map(|id| self.operators.get(id).map(|op| op.name.clone()))
             .collect();
+        let region_key = self.region_key_for_location(location_id);
+        let viewer = ViewerContext { player_id: player, location_id, region_key: &region_key };
         let mut feed = self
             .log
             .iter()
             .filter(|entry| {
-                if !entry.visible_to(location_id, player) {
+                if !entry.visible_to(&viewer) {
                     return false;
                 }
                 match entry.channel {
-                    Channel::Local | Channel::Global | Channel::Private => {
+                    Channel::Local | Channel::Global | Channel::Region | Channel::Private => {
                         !matches!(&entry.speaker, Some(speaker) if ignored_names.contains(speaker))
                     }
                     Channel::System => true,
@@ -1495,10 +1564,14 @@ impl WorldState {
             })
             .collect();
         let feed = self.visible_feed_lines(player, &location_id);
-        let description = format!(
+        let mut description = format!(
             "Inside \"{}\", a small cabin. Light slips through the door cracks. {} keeps this place.",
             structure.name, owner
         );
+        if let Some(note) = self.settlement_note_for_structure(structure, Some(player)) {
+            description.push(' ');
+            description.push_str(&note);
+        }
         Ok(GameView {
             world_name: self.world_name.clone(),
             connection: ConnectionState::Connected,
@@ -1674,6 +1747,9 @@ fn handler(name: &str) -> Option<Handler> {
         "sign" => WorldState::cmd_sign,
         "trail" => WorldState::cmd_trail,
         "board" => WorldState::cmd_board,
+        "region" => WorldState::cmd_region,
+        "settle" => WorldState::cmd_settle,
+        "settlements" => WorldState::cmd_settlements,
         "quit" => WorldState::cmd_quit,
         _ => return None,
     })
@@ -1697,11 +1773,13 @@ fn needs_play(name: &str) -> bool {
             | "unignore"
             | "ignores"
             | "profile"
+            | "settle"
+            | "settlements"
     )
 }
 
 fn needs_speak(name: &str) -> bool {
-    matches!(name, "say" | "chat" | "whisper" | "emote")
+    matches!(name, "say" | "chat" | "whisper" | "emote" | "region")
 }
 
 pub(crate) fn quiet() -> Transition {
@@ -1726,6 +1804,7 @@ fn audience_parts(audience: &Audience) -> (&'static str, String) {
     match audience {
         Audience::Everyone => ("everyone", String::new()),
         Audience::Location(id) => ("location", id.clone()),
+        Audience::Region(key) => ("region", key.clone()),
         Audience::Player(id) => ("player", id.to_string()),
     }
 }
@@ -1735,6 +1814,7 @@ fn channel_name(channel: Channel) -> &'static str {
         Channel::System => "system",
         Channel::Local => "local",
         Channel::Global => "global",
+        Channel::Region => "region",
         Channel::Private => "private",
     }
 }
@@ -2243,5 +2323,163 @@ mod tests {
         assert!(feed.contains("exploring"));
         assert!(!feed.contains("password"));
         assert!(!feed.contains('@'));
+    }
+
+    #[test]
+    fn settlement_create_invite_accept_and_duplicate_name() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create Haven").unwrap();
+        assert!(world.settlements.settlement_of(ada_id).is_some());
+        let err = world.apply(ada, "settle create Other").unwrap_err();
+        assert!(err.to_string().contains("already belong"), "{err}");
+
+        // Bob on same tile tries duplicate name.
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        let err = world.apply(bob, "settle create Haven").unwrap_err();
+        assert!(err.to_string().contains("taken"), "{err}");
+
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle accept Haven").unwrap();
+        assert!(world
+            .settlements
+            .is_member(world.settlements.settlement_of(ada_id).unwrap().id, bob_id));
+        world.apply(ada, "settle members").unwrap();
+        let overlay = world.view(ada).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("bob"));
+    }
+
+    #[test]
+    fn settlement_invite_blocked_by_ignore_and_decline() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create Ridge").unwrap();
+        world.apply(bob, "ignore ada").unwrap();
+        let err = world.apply(ada, "settle invite bob").unwrap_err();
+        assert!(err.to_string().contains("blocked"), "{err}");
+        world.apply(bob, "unignore ada").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle decline Ridge").unwrap();
+        assert!(world.settlements.membership_of(bob_id).is_none());
+    }
+
+    #[test]
+    fn settlement_kick_transfer_leave_and_disband_preserve_structures() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Nest").unwrap();
+        world.apply(ada, "settle create Nestland").unwrap();
+        let settle_id = world.settlements.settlement_of(ada_id).unwrap().id;
+        assert!(world
+            .geography
+            .structures
+            .iter()
+            .any(|s| s.kind == "cabin" && s.settlement_id == Some(settle_id)));
+
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle accept Nestland").unwrap();
+
+        world.apply(ada, "settle kick bob").unwrap();
+        assert!(!world.settlements.is_member(settle_id, bob_id));
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle accept Nestland").unwrap();
+        world.apply(ada, "settle transfer bob").unwrap();
+        assert!(world.settlements.is_owner(settle_id, bob_id));
+        assert!(!world.settlements.is_owner(settle_id, ada_id));
+
+        // Former owner can leave as member.
+        world.apply(ada, "settle leave").unwrap();
+        assert!(world.settlements.membership_of(ada_id).is_none());
+
+        // Sole owner leave disbands; cabin remains.
+        world.apply(bob, "settle leave").unwrap();
+        assert!(world.settlements.settlements.is_empty());
+        assert!(world.geography.structures.iter().any(|s| s.kind == "cabin" && s.name == "Nest"));
+        assert!(world
+            .geography
+            .structures
+            .iter()
+            .filter(|s| s.kind == "cabin")
+            .all(|s| s.settlement_id.is_none()));
+    }
+
+    #[test]
+    fn regional_chat_shares_exterior_and_cabin_isolates_rooms() {
+        let (mut world, ada, bob, ada_id, _) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Lookout").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+
+        world.apply(ada, "region ridge-call").unwrap();
+        assert!(feed_text(&world, bob).contains("ridge-call"));
+        world.apply(ada, "enter Lookout").unwrap();
+        world.apply(ada, "region inside-call").unwrap();
+        assert!(feed_text(&world, bob).contains("inside-call"));
+
+        // Different Undernet rooms do not share region chat.
+        world.apply(bob, "south").unwrap();
+        let bob_loc = world.location_key(bob).unwrap();
+        assert!(bob_loc.contains(":8:8") || bob_loc.ends_with(":8:8"), "bob at {bob_loc}");
+        world.apply(bob, "city").unwrap();
+        world.apply(bob, "go down").unwrap();
+        world.apply(ada, "leave").unwrap();
+        world.apply(ada, "south").unwrap();
+        world.apply(ada, "city").unwrap();
+        world.apply(ada, "go down").unwrap();
+        world.apply(ada, "go alley").unwrap();
+        world.apply(ada, "region alley-only").unwrap();
+        let bob_feed = feed_text(&world, bob);
+        assert!(!bob_feed.contains("alley-only"), "{bob_feed}");
+        world.apply(bob, "region shop-only").unwrap();
+        assert!(!feed_text(&world, ada).contains("shop-only"));
+    }
+
+    #[test]
+    fn regional_chat_respects_ignore_and_leaves_global() {
+        let (mut world, ada, bob, _, _) = pair();
+        world.apply(ada, "ignore bob").unwrap();
+        world.apply(bob, "region ignored-region").unwrap();
+        assert!(!feed_text(&world, ada).contains("ignored-region"));
+        world.apply(bob, "chat still-global").unwrap();
+        assert!(!feed_text(&world, ada).contains("still-global"));
+        world.apply(ada, "unignore bob").unwrap();
+        world.apply(bob, "chat heard-global").unwrap();
+        assert!(feed_text(&world, ada).contains("heard-global"));
+    }
+
+    #[test]
+    fn settlement_discovery_and_board_permissions() {
+        let (mut world, ada, bob, ada_id, _) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create PublicHold").unwrap();
+        world.apply(ada, "settle describe A windy ridge").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(bob, "settlements").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("PublicHold"), "{overlay}");
+
+        world.apply(ada, "settle access private").unwrap();
+        world.apply(bob, "settlements").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(!overlay.contains("PublicHold"), "{overlay}");
+        let err = world.apply(bob, "settle inspect PublicHold").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+
+        world.apply(ada, "settle access public").unwrap();
+        world.apply(ada, "settle board post Meet at dusk").unwrap();
+        world.apply(bob, "settle board PublicHold").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("Meet at dusk"), "{overlay}");
+        let err = world.apply(bob, "settle board PublicHold post outsider").unwrap_err();
+        assert!(err.to_string().contains("members"), "{err}");
     }
 }

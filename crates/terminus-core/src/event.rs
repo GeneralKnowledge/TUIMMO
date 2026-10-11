@@ -11,6 +11,7 @@ use crate::view::{Channel, FeedLine};
 pub enum AudienceKind {
     Everyone,
     Location,
+    Region,
     Player,
 }
 
@@ -19,6 +20,8 @@ pub enum AudienceKind {
 pub enum Audience {
     Everyone,
     Location(String),
+    /// Physical region key (`r:…` or `u:…`). Eligibility is always server-derived.
+    Region(String),
     Player(PlayerId),
 }
 
@@ -27,6 +30,7 @@ impl Audience {
         match self {
             Self::Everyone => AudienceKind::Everyone,
             Self::Location(_) => AudienceKind::Location,
+            Self::Region(_) => AudienceKind::Region,
             Self::Player(_) => AudienceKind::Player,
         }
     }
@@ -35,9 +39,18 @@ impl Audience {
         match self {
             Self::Everyone => String::new(),
             Self::Location(id) => id.clone(),
+            Self::Region(key) => key.clone(),
             Self::Player(id) => id.to_string(),
         }
     }
+}
+
+/// Viewer position used when filtering the log for a feed or live push.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ViewerContext<'a> {
+    pub player_id: PlayerId,
+    pub location_id: &'a str,
+    pub region_key: &'a str,
 }
 
 /// A line recorded in the world log.
@@ -60,11 +73,12 @@ impl LogEntry {
         }
     }
 
-    pub fn visible_to(&self, location_id: &str, player_id: PlayerId) -> bool {
+    pub fn visible_to(&self, viewer: &ViewerContext<'_>) -> bool {
         match &self.audience {
             Audience::Everyone => true,
-            Audience::Location(id) => id == location_id,
-            Audience::Player(id) => *id == player_id,
+            Audience::Location(id) => id == viewer.location_id,
+            Audience::Region(key) => key == viewer.region_key,
+            Audience::Player(id) => *id == viewer.player_id,
         }
     }
 }

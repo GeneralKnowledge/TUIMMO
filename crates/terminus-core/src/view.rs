@@ -19,6 +19,8 @@ pub enum Channel {
     System,
     Local,
     Global,
+    /// Speech heard across a physical region (wilderness birth cell or Undernet room).
+    Region,
     /// Private speech between two operators. Never shown in room or global feeds.
     Private,
 }
