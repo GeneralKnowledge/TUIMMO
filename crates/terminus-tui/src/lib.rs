@@ -10,10 +10,11 @@ mod app;
 mod decode;
 mod editor;
 mod local;
+mod onboard;
 mod remote;
 mod theme;
 
-pub use app::{App, Effect, LoginForm, Screen};
+pub use app::{App, Effect, Screen};
 pub use decode::InputDecoder;
 pub use local::{run_local, spawn_crossterm_input};
 pub use remote::{run_remote, Input, StartMode};

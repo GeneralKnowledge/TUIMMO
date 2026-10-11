@@ -489,6 +489,7 @@ name = "coffee-world"
 version = "0.1.0"
 dependencies = [
  "argon2",
+ "rand 0.10.3",
  "sqlx",
  "tempfile",
  "terminus-core",

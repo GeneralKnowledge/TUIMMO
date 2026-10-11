@@ -9,53 +9,44 @@ use terminus_core::{CommandHint, ConnectionState, ExitView, FeedLine, GameView, 
 use unicode_width::UnicodeWidthStr;
 
 use crate::editor::LineEditor;
+use crate::onboard::{Gate, Onboard, OnboardEffect};
 use crate::theme::Theme;
 
 #[derive(Clone, Debug)]
-pub struct LoginForm {
-    pub username: String,
-    pub password: String,
-    pub operator_name: String,
-    pub field: LoginField,
-    pub register: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LoginField {
-    Username,
-    Password,
-    OperatorName,
-}
-
-impl LoginForm {
-    pub fn new() -> Self {
-        Self {
-            username: String::new(),
-            password: String::new(),
-            operator_name: String::new(),
-            field: LoginField::Username,
-            register: false,
-        }
-    }
-}
-
-impl Default for LoginForm {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[derive(Clone, Debug)]
 pub enum Screen {
-    Login(LoginForm),
+    Onboard(Onboard),
     Play,
 }
 
-#[derive(Clone, Debug)]
 pub enum Effect {
     None,
     SubmitCommand(String),
-    SubmitAuth { username: String, password: String, operator_name: String, register: bool },
+    SubmitGuest {
+        username: String,
+        operator_name: String,
+    },
+    SubmitLogin {
+        username: String,
+        password: String,
+    },
+    SubmitRegister {
+        username: String,
+        password: String,
+        operator_name: String,
+        email: Option<String>,
+    },
+    SubmitRecover {
+        username: String,
+        recovery_code: String,
+    },
+    SubmitSecret {
+        password: String,
+        upgrade: bool,
+        email: Option<String>,
+    },
+    RotateRecovery,
+    RevokeRecovery,
+    OpenAccount,
     Quit,
 }
 
@@ -84,8 +75,11 @@ impl App {
         }
     }
 
-    pub fn login() -> Self {
-        Self::new(Theme::neutral(), Screen::Login(LoginForm::new()))
+    pub fn welcome(theme: Theme) -> Self {
+        let mut app = Self::new(theme, Screen::Onboard(Onboard::welcome()));
+        app.view.world_name = "Terminus".into();
+        app.view.location_name = "The Undernet".into();
+        app
     }
 
     pub fn play(theme: Theme, view: GameView) -> Self {
@@ -131,9 +125,20 @@ impl App {
         self.editor.clear();
     }
 
+    pub fn show_recovery_code(&mut self, code: String, kind: String, view: GameView) {
+        self.view = view;
+        self.screen = Screen::Onboard(Onboard::code(code, kind));
+        self.notice = None;
+    }
+
+    pub fn show_account(&mut self, kind: String, message: String) {
+        self.screen = Screen::Onboard(Onboard::account(kind, message));
+        self.notice = None;
+    }
+
     pub fn handle_key(&mut self, key: Key) -> Effect {
         match &self.screen {
-            Screen::Login(_) => self.handle_login(key),
+            Screen::Onboard(_) => self.handle_onboard(key),
             Screen::Play => self.handle_play(key),
         }
     }
@@ -195,8 +200,8 @@ impl App {
     }
 
     fn render_location(&self, frame: &mut Frame, area: Rect) {
-        let text = if let Screen::Login(form) = &self.screen {
-            login_help(form)
+        let text = if let Screen::Onboard(onboard) = &self.screen {
+            onboard.body()
         } else if let Some(overlay) = &self.view.overlay {
             overlay.clone()
         } else {
@@ -281,13 +286,9 @@ impl App {
     fn prompt_parts(&self) -> (String, String, bool) {
         match &self.screen {
             Screen::Play => ("> ".into(), self.editor.text().to_string(), false),
-            Screen::Login(form) => {
-                let (label, value, secret) = match form.field {
-                    LoginField::Username => ("user> ", form.username.clone(), false),
-                    LoginField::Password => ("pass> ", form.password.clone(), true),
-                    LoginField::OperatorName => ("name> ", form.operator_name.clone(), false),
-                };
-                (label.into(), value, secret)
+            Screen::Onboard(onboard) => {
+                let (label, value, secret) = onboard.prompt();
+                (label.to_string(), value, secret)
             }
         }
     }
@@ -321,7 +322,9 @@ impl App {
             Key::Enter => {
                 let line = self.editor.take();
                 self.completion_note = None;
-                if line.is_empty() {
+                if line.trim() == "account" {
+                    Effect::OpenAccount
+                } else if line.is_empty() {
                     Effect::None
                 } else {
                     Effect::SubmitCommand(line)
@@ -380,61 +383,45 @@ impl App {
         }
     }
 
-    fn handle_login(&mut self, key: Key) -> Effect {
-        let Screen::Login(form) = &mut self.screen else {
+    fn handle_onboard(&mut self, key: Key) -> Effect {
+        let entering = matches!(key, Key::Enter);
+        let (effect, on_form) = {
+            let Screen::Onboard(onboard) = &mut self.screen else {
+                return Effect::None;
+            };
+            let on_form = matches!(onboard.gate, Gate::Form(_));
+            (onboard.handle(key), on_form)
+        };
+        if matches!(effect, OnboardEffect::EnterWorld) {
+            self.screen = Screen::Play;
+            self.notice = None;
             return Effect::None;
-        };
-        match key {
-            Key::CtrlC => return Effect::Quit,
-            Key::CtrlR => {
-                form.register = !form.register;
-                if !form.register && form.field == LoginField::OperatorName {
-                    form.field = LoginField::Username;
-                }
-                return Effect::None;
-            }
-            Key::Tab => {
-                form.field = next_field(form.field, form.register, true);
-                return Effect::None;
-            }
-            Key::BackTab => {
-                form.field = next_field(form.field, form.register, false);
-                return Effect::None;
-            }
-            Key::Enter => {
-                let username = form.username.trim().to_string();
-                let password = form.password.clone();
-                let operator_name = if form.operator_name.trim().is_empty() {
-                    username.clone()
-                } else {
-                    form.operator_name.trim().to_string()
-                };
-                let register = form.register;
-                if username.is_empty() || password.is_empty() {
-                    self.notice = Some("Username and password are required.".into());
-                    return Effect::None;
-                }
-                return Effect::SubmitAuth { username, password, operator_name, register };
-            }
-            _ => {}
         }
-        let Screen::Login(form) = &mut self.screen else {
-            return Effect::None;
-        };
-        let field = match form.field {
-            LoginField::Username => &mut form.username,
-            LoginField::Password => &mut form.password,
-            LoginField::OperatorName => &mut form.operator_name,
-        };
-        match key {
-            Key::Backspace => {
-                field.pop();
-            }
-            Key::CtrlU => field.clear(),
-            Key::Char(ch) if !ch.is_control() => field.push(ch),
-            _ => {}
+        if matches!(effect, OnboardEffect::None) && entering && on_form {
+            self.notice =
+                Some("Check the fields. A password and its confirmation must match.".into());
         }
-        Effect::None
+        match effect {
+            OnboardEffect::None | OnboardEffect::EnterWorld => Effect::None,
+            OnboardEffect::Quit => Effect::Quit,
+            OnboardEffect::SubmitGuest { username, operator_name } => {
+                Effect::SubmitGuest { username, operator_name }
+            }
+            OnboardEffect::SubmitLogin { username, password } => {
+                Effect::SubmitLogin { username, password }
+            }
+            OnboardEffect::SubmitRegister { username, password, operator_name, email } => {
+                Effect::SubmitRegister { username, password, operator_name, email }
+            }
+            OnboardEffect::SubmitRecover { username, recovery_code } => {
+                Effect::SubmitRecover { username, recovery_code }
+            }
+            OnboardEffect::SubmitSecret { password, upgrade, email } => {
+                Effect::SubmitSecret { password, upgrade, email }
+            }
+            OnboardEffect::Rotate => Effect::RotateRecovery,
+            OnboardEffect::Revoke => Effect::RevokeRecovery,
+        }
     }
 
     fn complete(&mut self) {
@@ -473,31 +460,6 @@ impl App {
             }
         }
     }
-}
-
-fn next_field(field: LoginField, register: bool, forward: bool) -> LoginField {
-    let fields = if register {
-        vec![LoginField::Username, LoginField::Password, LoginField::OperatorName]
-    } else {
-        vec![LoginField::Username, LoginField::Password]
-    };
-    let index = fields.iter().position(|item| *item == field).unwrap_or(0);
-    let len = fields.len();
-    let next = if forward { (index + 1) % len } else { (index + len - 1) % len };
-    fields[next]
-}
-
-fn login_help(form: &LoginForm) -> String {
-    let mode = if form.register { "register" } else { "log in" };
-    format!(
-        "Coffee.shop\n\n\
-{mode} to an operator.\n\
-Tab switches fields. Ctrl-R toggles registration.\n\
-Enter submits. Ctrl-C quits.\n\n\
-Usernames are lowercase, 3-16 characters.\n\
-Passwords are 8-128 characters and are not stored in the clear.\n\n\
-New accounts begin in the Coffee Shop."
-    )
 }
 
 fn location_body(view: &GameView) -> String {

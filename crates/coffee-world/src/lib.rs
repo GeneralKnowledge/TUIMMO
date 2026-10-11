@@ -16,9 +16,10 @@ pub mod store;
 pub mod undernet;
 
 pub use auth::{
-    canonical_username, dummy_hash, hash_password, validate_operator_name, validate_password,
-    verify_password, AuthError,
+    canonical_recovery_code, canonical_username, dummy_hash, generate_recovery_code, hash_password,
+    hash_recovery_code, hash_unusable_password, validate_email, validate_operator_name,
+    validate_password, verify_password, verify_recovery_code, AccountKind, AuthError,
 };
 pub use model::{Item, Operator, PersistOp, STARTER_LOCATION};
 pub use state::{starter_operator, Transition, WorldState};
-pub use store::{AccountRow, Store, StoreError};
+pub use store::{AccountRow, NewAccount, Store, StoreError};

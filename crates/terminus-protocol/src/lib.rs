@@ -23,7 +23,8 @@ mod message;
 pub use client::ProtocolClient;
 pub use codec::{decode_client, decode_server, encode_frame, FrameDecoder};
 pub use message::{
-    ClientFrame, ClientMessage, ServerFrame, ServerMessage, MAX_FRAME_BYTES, PROTOCOL_VERSION,
+    ClientFrame, ClientMessage, RevealedOnce, ServerFrame, ServerMessage, MAX_FRAME_BYTES,
+    PROTOCOL_VERSION,
 };
 
 use thiserror::Error;

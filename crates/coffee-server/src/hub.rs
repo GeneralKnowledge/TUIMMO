@@ -4,8 +4,10 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use coffee_world::{
-    canonical_username, hash_password, starter_operator, validate_operator_name, verify_password,
-    AuthError, Store, StoreError, WorldState,
+    canonical_recovery_code, canonical_username, generate_recovery_code, hash_password,
+    hash_recovery_code, hash_unusable_password, starter_operator, validate_email,
+    validate_operator_name, verify_password, verify_recovery_code, AccountKind, AuthError,
+    NewAccount, Store, StoreError, WorldState,
 };
 use terminus_core::{
     Game, GameError, GameEvent, GameView, Permissions, PlayerId, SessionId, SessionIdentity,
@@ -25,13 +27,36 @@ pub struct Hub {
 pub struct Grant {
     pub token: String,
     pub operator_name: String,
+    pub username: String,
+    pub kind: String,
     pub view: GameView,
+    /// Present only when a code was just created or rotated. Never log this.
+    pub recovery_code: Option<String>,
+}
+
+pub struct AccountNotice {
+    pub username: String,
+    pub kind: String,
+    pub has_recovery: bool,
+    pub has_email: bool,
+    pub message: String,
+    pub recovery_code: Option<String>,
 }
 
 struct TokenRec {
     session_id: SessionId,
     player_id: PlayerId,
     name: String,
+    username: String,
+    kind: String,
+}
+
+enum AccountAction {
+    Info,
+    SetPassword { password: String },
+    Upgrade { password: String, email: Option<String> },
+    Rotate,
+    Revoke,
 }
 
 struct Bucket {
@@ -69,8 +94,26 @@ enum Msg {
         username: String,
         password: String,
         operator_name: String,
+        email: Option<String>,
         events: Option<mpsc::Sender<ServerMessage>>,
         reply: oneshot::Sender<Result<Grant, AuthError>>,
+    },
+    Guest {
+        username: String,
+        operator_name: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+        reply: oneshot::Sender<Result<Grant, AuthError>>,
+    },
+    Recover {
+        username: String,
+        recovery_code: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+        reply: oneshot::Sender<Result<Grant, AuthError>>,
+    },
+    Account {
+        token: String,
+        action: AccountAction,
+        reply: oneshot::Sender<Result<AccountNotice, AuthError>>,
     },
     Resume {
         token: String,
@@ -98,6 +141,7 @@ struct Actor {
     subs: HashMap<SessionId, mpsc::Sender<ServerMessage>>,
     buckets: HashMap<SessionId, Bucket>,
     auth_failures: HashMap<String, Vec<Instant>>,
+    recovery_failures: HashMap<String, Vec<Instant>>,
     dummy_hash: String,
 }
 
@@ -114,6 +158,7 @@ impl Hub {
                 subs: HashMap::new(),
                 buckets: HashMap::new(),
                 auth_failures: HashMap::new(),
+                recovery_failures: HashMap::new(),
                 dummy_hash,
             };
             while let Some(msg) = rx.recv().await {
@@ -148,11 +193,82 @@ impl Hub {
         username: String,
         password: String,
         operator_name: String,
+        email: Option<String>,
         events: Option<mpsc::Sender<ServerMessage>>,
     ) -> Result<Grant, AuthError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Msg::Register { username, password, operator_name, events, reply })
+            .send(Msg::Register { username, password, operator_name, email, events, reply })
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        rx.await.map_err(|_| AuthError::Internal)?
+    }
+
+    pub async fn register_guest(
+        &self,
+        username: String,
+        operator_name: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+    ) -> Result<Grant, AuthError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Guest { username, operator_name, events, reply })
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        rx.await.map_err(|_| AuthError::Internal)?
+    }
+
+    pub async fn recover(
+        &self,
+        username: String,
+        recovery_code: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+    ) -> Result<Grant, AuthError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Recover { username, recovery_code, events, reply })
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        rx.await.map_err(|_| AuthError::Internal)?
+    }
+
+    pub async fn account_info(&self, token: String) -> Result<AccountNotice, AuthError> {
+        self.account_action(token, AccountAction::Info).await
+    }
+
+    pub async fn set_password(
+        &self,
+        token: String,
+        password: String,
+    ) -> Result<AccountNotice, AuthError> {
+        self.account_action(token, AccountAction::SetPassword { password }).await
+    }
+
+    pub async fn upgrade(
+        &self,
+        token: String,
+        password: String,
+        email: Option<String>,
+    ) -> Result<AccountNotice, AuthError> {
+        self.account_action(token, AccountAction::Upgrade { password, email }).await
+    }
+
+    pub async fn rotate_recovery(&self, token: String) -> Result<AccountNotice, AuthError> {
+        self.account_action(token, AccountAction::Rotate).await
+    }
+
+    pub async fn revoke_recovery(&self, token: String) -> Result<AccountNotice, AuthError> {
+        self.account_action(token, AccountAction::Revoke).await
+    }
+
+    async fn account_action(
+        &self,
+        token: String,
+        action: AccountAction,
+    ) -> Result<AccountNotice, AuthError> {
+        let (reply, rx) = oneshot::channel();
+        self.tx
+            .send(Msg::Account { token, action, reply })
             .await
             .map_err(|_| AuthError::Internal)?;
         rx.await.map_err(|_| AuthError::Internal)?
@@ -203,8 +319,20 @@ impl Actor {
                 let result = self.login(username, password, events).await;
                 let _ = reply.send(result);
             }
-            Msg::Register { username, password, operator_name, events, reply } => {
-                let result = self.register(username, password, operator_name, events).await;
+            Msg::Register { username, password, operator_name, email, events, reply } => {
+                let result = self.register(username, password, operator_name, email, events).await;
+                let _ = reply.send(result);
+            }
+            Msg::Guest { username, operator_name, events, reply } => {
+                let result = self.register_guest(username, operator_name, events).await;
+                let _ = reply.send(result);
+            }
+            Msg::Recover { username, recovery_code, events, reply } => {
+                let result = self.recover(username, recovery_code, events).await;
+                let _ = reply.send(result);
+            }
+            Msg::Account { token, action, reply } => {
+                let result = self.account(token, action).await;
                 let _ = reply.send(result);
             }
             Msg::Resume { token, events, reply } => {
@@ -249,10 +377,7 @@ impl Actor {
                     .operator(row.operator_id)
                     .map(|op| op.name.clone())
                     .unwrap_or(row.operator_name);
-                self.attach(row.operator_id, name, events).await
-            }
-            Ok(None) if self.allow_registration => {
-                self.register(username, password, String::new(), events).await
+                self.attach(row.operator_id, name, row.username, row.kind, None, events).await
             }
             Ok(None) => {
                 let dummy = self.dummy_hash.clone();
@@ -273,6 +398,7 @@ impl Actor {
         username: String,
         password: String,
         operator_name: String,
+        email: Option<String>,
         events: Option<mpsc::Sender<ServerMessage>>,
     ) -> Result<Grant, AuthError> {
         if !self.allow_registration {
@@ -287,6 +413,10 @@ impl Actor {
         } else {
             validate_operator_name(&operator_name)?
         };
+        let email = match email {
+            Some(raw) => validate_email(&raw)?,
+            None => None,
+        };
         if let Ok(Some(_)) = self.store.find_account(&username).await {
             return Err(AuthError::NameTaken);
         }
@@ -294,27 +424,314 @@ impl Actor {
         let encoded = tokio::task::spawn_blocking(move || hash_password(&password_for_hash))
             .await
             .map_err(|_| AuthError::Internal)??;
+        let (recovery, recovery_hash) = Self::fresh_recovery().await?;
         let account_id = Uuid::new_v4();
         let operator_id = PlayerId::new();
         let operator = starter_operator(operator_id, account_id, &username, &operator_name);
         let created = system_now_ms();
-        if let Err(err) =
-            self.store.create_account(account_id, &username, &encoded, &operator, created).await
+        if let Err(err) = self
+            .store
+            .create_identity(
+                NewAccount {
+                    id: account_id,
+                    username: &username,
+                    password_hash: &encoded,
+                    kind: AccountKind::Permanent,
+                    email: email.as_deref(),
+                    recovery_hash: Some(&recovery_hash),
+                    created_at: created,
+                },
+                &operator,
+            )
+            .await
         {
-            if is_unique(&err) {
-                return Err(AuthError::NameTaken);
-            }
-            tracing::error!(error = %err, "failed to create account");
-            return Err(AuthError::Internal);
+            return Err(map_create_error(err));
         }
         self.world.insert_operator(operator);
-        self.attach(operator_id, operator_name, events).await
+        match self
+            .attach(
+                operator_id,
+                operator_name,
+                username.clone(),
+                AccountKind::Permanent,
+                Some(recovery),
+                events,
+            )
+            .await
+        {
+            Ok(grant) => Ok(grant),
+            Err(err) => {
+                self.world.remove_operator(operator_id);
+                let _ = self.store.delete_unattached_account(account_id).await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn register_guest(
+        &mut self,
+        username: String,
+        operator_name: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+    ) -> Result<Grant, AuthError> {
+        if !self.allow_registration {
+            return Err(AuthError::RegistrationClosed);
+        }
+        let username = canonical_username(&username)?;
+        if self.auth_blocked(&username) {
+            return Err(AuthError::RateLimited);
+        }
+        let operator_name = validate_operator_name(&operator_name)?;
+        if let Ok(Some(_)) = self.store.find_account(&username).await {
+            return Err(AuthError::NameTaken);
+        }
+        let password_hash = tokio::task::spawn_blocking(hash_unusable_password)
+            .await
+            .map_err(|_| AuthError::Internal)??;
+        let (recovery, recovery_hash) = Self::fresh_recovery().await?;
+        let account_id = Uuid::new_v4();
+        let operator_id = PlayerId::new();
+        let operator = starter_operator(operator_id, account_id, &username, &operator_name);
+        let created = system_now_ms();
+        if let Err(err) = self
+            .store
+            .create_identity(
+                NewAccount {
+                    id: account_id,
+                    username: &username,
+                    password_hash: &password_hash,
+                    kind: AccountKind::Guest,
+                    email: None,
+                    recovery_hash: Some(&recovery_hash),
+                    created_at: created,
+                },
+                &operator,
+            )
+            .await
+        {
+            return Err(map_create_error(err));
+        }
+        self.world.insert_operator(operator);
+        match self
+            .attach(
+                operator_id,
+                operator_name,
+                username,
+                AccountKind::Guest,
+                Some(recovery),
+                events,
+            )
+            .await
+        {
+            Ok(grant) => Ok(grant),
+            Err(err) => {
+                self.world.remove_operator(operator_id);
+                let _ = self.store.delete_unattached_account(account_id).await;
+                Err(err)
+            }
+        }
+    }
+
+    async fn recover(
+        &mut self,
+        username: String,
+        recovery_code: String,
+        events: Option<mpsc::Sender<ServerMessage>>,
+    ) -> Result<Grant, AuthError> {
+        let username = match canonical_username(&username) {
+            Ok(username) => username,
+            Err(_) => {
+                self.note_recovery_failure("malformed");
+                self.burn_recovery(&recovery_code).await;
+                return Err(AuthError::InvalidRecovery);
+            }
+        };
+        if self.recovery_blocked(&username) {
+            return Err(AuthError::RateLimited);
+        }
+        let row = match self.store.find_account(&username).await {
+            Ok(row) => row,
+            Err(err) => {
+                tracing::error!(error = %err, "account lookup failed");
+                return Err(AuthError::Internal);
+            }
+        };
+        let Some(row) = row else {
+            self.burn_recovery(&recovery_code).await;
+            self.note_recovery_failure(&username);
+            return Err(AuthError::InvalidRecovery);
+        };
+        let Some(hash) = row.recovery_hash.clone() else {
+            self.burn_recovery(&recovery_code).await;
+            self.note_recovery_failure(&username);
+            return Err(AuthError::InvalidRecovery);
+        };
+        let code_check = recovery_code.clone();
+        let ok = tokio::task::spawn_blocking(move || verify_recovery_code(&code_check, &hash))
+            .await
+            .unwrap_or(false);
+        if !ok {
+            self.note_recovery_failure(&username);
+            return Err(AuthError::InvalidRecovery);
+        }
+        let (recovery, recovery_hash) = Self::fresh_recovery().await?;
+        self.store
+            .set_recovery(row.account_id, &recovery_hash, system_now_ms())
+            .await
+            .map_err(|_| AuthError::Internal)?;
+        self.recovery_failures.remove(&username);
+        self.ensure_operator(row.operator_id).await?;
+        let name = self
+            .world
+            .operator(row.operator_id)
+            .map(|op| op.name.clone())
+            .unwrap_or(row.operator_name);
+        self.attach(row.operator_id, name, row.username, row.kind, Some(recovery), events).await
+    }
+
+    async fn account(
+        &mut self,
+        token: String,
+        action: AccountAction,
+    ) -> Result<AccountNotice, AuthError> {
+        let player_id = self
+            .tokens
+            .get(&token)
+            .map(|rec| rec.player_id)
+            .ok_or(AuthError::InvalidCredentials)?;
+        let username = self
+            .world
+            .operator(player_id)
+            .map(|op| op.username.clone())
+            .ok_or(AuthError::Internal)?;
+        let account_id =
+            self.world.operator(player_id).map(|op| op.account_id).ok_or(AuthError::Internal)?;
+        match action {
+            AccountAction::Info => self.notice_for(&username, None, "Account").await,
+            AccountAction::SetPassword { password } => {
+                let row = self.live_account(&username).await?;
+                if row.kind != AccountKind::Permanent {
+                    return Err(AuthError::UpgradeRequired);
+                }
+                let encoded = tokio::task::spawn_blocking(move || hash_password(&password))
+                    .await
+                    .map_err(|_| AuthError::Internal)??;
+                self.store
+                    .set_password(account_id, &encoded, system_now_ms())
+                    .await
+                    .map_err(|_| AuthError::Internal)?;
+                self.notice_for(&username, None, "Password updated.").await
+            }
+            AccountAction::Upgrade { password, email } => {
+                let row = self.live_account(&username).await?;
+                if row.kind != AccountKind::Guest {
+                    return Err(AuthError::AlreadyPermanent);
+                }
+                let email = match email {
+                    Some(raw) => validate_email(&raw)?,
+                    None => None,
+                };
+                let encoded = tokio::task::spawn_blocking(move || hash_password(&password))
+                    .await
+                    .map_err(|_| AuthError::Internal)??;
+                if let Err(err) = self
+                    .store
+                    .upgrade_guest(account_id, &encoded, email.as_deref(), system_now_ms())
+                    .await
+                {
+                    return Err(map_create_error(err));
+                }
+                if let Some(rec) = self.tokens.get_mut(&token) {
+                    rec.kind = AccountKind::Permanent.as_str().to_string();
+                }
+                self.notice_for(&username, None, "This account is now permanent.").await
+            }
+            AccountAction::Rotate => {
+                let (recovery, recovery_hash) = Self::fresh_recovery().await?;
+                self.store
+                    .set_recovery(account_id, &recovery_hash, system_now_ms())
+                    .await
+                    .map_err(|_| AuthError::Internal)?;
+                self.notice_for(
+                    &username,
+                    Some(recovery),
+                    "Save this new recovery code. The previous one no longer works.",
+                )
+                .await
+            }
+            AccountAction::Revoke => {
+                let row = self.live_account(&username).await?;
+                if row.kind != AccountKind::Permanent {
+                    return Err(AuthError::RecoveryRequired);
+                }
+                self.store
+                    .clear_recovery(account_id, system_now_ms())
+                    .await
+                    .map_err(|_| AuthError::Internal)?;
+                self.notice_for(
+                    &username,
+                    None,
+                    "Recovery code revoked. A lost password cannot be restored without one.",
+                )
+                .await
+            }
+        }
+    }
+
+    async fn live_account(
+        &mut self,
+        username: &str,
+    ) -> Result<coffee_world::AccountRow, AuthError> {
+        match self.store.find_account(username).await {
+            Ok(Some(row)) => Ok(row),
+            Ok(None) => Err(AuthError::Internal),
+            Err(err) => {
+                tracing::error!(error = %err, "account lookup failed");
+                Err(AuthError::Internal)
+            }
+        }
+    }
+
+    async fn notice_for(
+        &mut self,
+        username: &str,
+        recovery_code: Option<String>,
+        message: &str,
+    ) -> Result<AccountNotice, AuthError> {
+        let row = self.live_account(username).await?;
+        Ok(AccountNotice {
+            username: row.username,
+            kind: row.kind.as_str().to_string(),
+            has_recovery: row.recovery_hash.is_some(),
+            has_email: row.email.is_some(),
+            message: message.to_string(),
+            recovery_code,
+        })
+    }
+
+    async fn fresh_recovery() -> Result<(String, String), AuthError> {
+        let code = generate_recovery_code()?;
+        let to_hash = code.clone();
+        let hash = tokio::task::spawn_blocking(move || hash_recovery_code(&to_hash))
+            .await
+            .map_err(|_| AuthError::Internal)??;
+        Ok((code, hash))
+    }
+
+    async fn burn_recovery(&mut self, code: &str) {
+        let dummy = self.dummy_hash.clone();
+        let attempt = canonical_recovery_code(code)
+            .unwrap_or_else(|_| "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA".to_string());
+        let _ = tokio::task::spawn_blocking(move || verify_password(&attempt, &dummy)).await;
     }
 
     async fn attach(
         &mut self,
         player_id: PlayerId,
         name: String,
+        username: String,
+        kind: AccountKind,
+        recovery_code: Option<String>,
         events: Option<mpsc::Sender<ServerMessage>>,
     ) -> Result<Grant, AuthError> {
         let identity = SessionIdentity::new(player_id, name.clone(), Permissions::player());
@@ -333,10 +750,26 @@ impl Actor {
             self.subs.insert(session_id, events);
         }
         let token = new_token();
-        self.tokens.insert(token.clone(), TokenRec { session_id, player_id, name: name.clone() });
+        self.tokens.insert(
+            token.clone(),
+            TokenRec {
+                session_id,
+                player_id,
+                name: name.clone(),
+                username: username.clone(),
+                kind: kind.as_str().to_string(),
+            },
+        );
         self.publish(session_id, &transition.outcome.events);
         let view = self.world.view(session_id).map_err(|_| AuthError::Internal)?;
-        Ok(Grant { token, operator_name: name, view })
+        Ok(Grant {
+            token,
+            operator_name: name,
+            username,
+            kind: kind.as_str().to_string(),
+            view,
+            recovery_code,
+        })
     }
 
     fn resume(
@@ -347,13 +780,15 @@ impl Actor {
         let rec = self.tokens.get(&token).ok_or(AuthError::InvalidCredentials)?;
         let session_id = rec.session_id;
         let name = rec.name.clone();
+        let username = rec.username.clone();
+        let kind = rec.kind.clone();
         if let Some(old) = self.subs.insert(session_id, events) {
             let _ = old.try_send(ServerMessage::Goodbye {
                 message: "This session resumed on another link.".into(),
             });
         }
         let view = self.world.view(session_id).map_err(|_| AuthError::Internal)?;
-        Ok(Grant { token, operator_name: name, view })
+        Ok(Grant { token, operator_name: name, username, kind, view, recovery_code: None })
     }
 
     async fn command(
@@ -365,6 +800,8 @@ impl Actor {
             session_id: rec.session_id,
             player_id: rec.player_id,
             name: rec.name.clone(),
+            username: rec.username.clone(),
+            kind: rec.kind.clone(),
         }) else {
             return Err(GameError::Rejected("session expired".into()));
         };
@@ -486,6 +923,46 @@ impl Actor {
         let window = self.auth_failures.entry(username.to_string()).or_default();
         window.push(Instant::now());
     }
+
+    fn recovery_blocked(&mut self, username: &str) -> bool {
+        self.attempt_blocked(&format!("recovery:{username}"), 5, Duration::from_secs(10 * 60))
+            || self.attempt_blocked("recovery:*", 30, Duration::from_secs(10 * 60))
+    }
+
+    fn note_recovery_failure(&mut self, username: &str) {
+        let now = Instant::now();
+        self.recovery_failures.entry(format!("recovery:{username}")).or_default().push(now);
+        self.recovery_failures.entry("recovery:*".to_string()).or_default().push(now);
+    }
+
+    fn attempt_blocked(&mut self, key: &str, max: usize, window: Duration) -> bool {
+        let now = Instant::now();
+        let hits = self.recovery_failures.entry(key.to_string()).or_default();
+        hits.retain(|at| now.saturating_duration_since(*at) < window);
+        hits.len() >= max
+    }
+}
+
+fn map_create_error(err: StoreError) -> AuthError {
+    let text = err.to_string();
+    let mut current: Option<&dyn std::error::Error> = Some(&err);
+    let mut blob = text;
+    while let Some(item) = current {
+        blob.push(' ');
+        blob.push_str(&item.to_string());
+        current = item.source();
+    }
+    if blob.contains("accounts.email") {
+        return AuthError::EmailTaken;
+    }
+    if is_unique(&err) {
+        return AuthError::NameTaken;
+    }
+    if matches!(err, StoreError::Data) {
+        return AuthError::AlreadyPermanent;
+    }
+    tracing::error!(error = %err, "account write failed");
+    AuthError::Internal
 }
 
 fn system_now_ms() -> u64 {

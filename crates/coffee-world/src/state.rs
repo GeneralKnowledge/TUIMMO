@@ -106,6 +106,10 @@ impl WorldState {
         self.operators.insert(operator.id, operator);
     }
 
+    pub fn remove_operator(&mut self, id: PlayerId) {
+        self.operators.remove(&id);
+    }
+
     pub fn operator(&self, id: PlayerId) -> Option<&Operator> {
         self.operators.get(&id)
     }

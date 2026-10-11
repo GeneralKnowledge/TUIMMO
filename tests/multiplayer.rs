@@ -122,6 +122,7 @@ async fn register(client: &mut ProtocolClient, username: &str, operator: &str) -
             username: username.into(),
             password: PASSWORD.into(),
             operator_name: operator.into(),
+            email: None,
         })
         .await
         .expect("register")

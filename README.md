@@ -15,10 +15,14 @@ The server listens on `0.0.0.0:2222` and keeps its database, host key, and local
 From another terminal:
 
 ```bash
-ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@127.0.0.1
+ssh -p 2222 -o StrictHostKeyChecking=accept-new 127.0.0.1
 ```
 
-There is no operating-system shell. The first login creates an account when registration is open (the default). The password must be 8–128 characters. Usernames are 3–16 characters: a letter, then letters, digits, or `_`. A second login with the same name returns the same operator, including their last location.
+OpenSSH still sends your local operating-system username. The server ignores it. The welcome screen is the game: enter as a guest, log in, create a permanent account, or recover an identity. There is no operating-system shell.
+
+A guest picks a handle and an operator name. No email. The server shows a recovery code once; save it. Coming back is option 4 on that screen, with the handle and the code. The same character returns, and the code is rotated. From the recovery card, or later with `account` at the prompt, a guest can set a password and become permanent without a new character. Email is optional and is not a way to reset a password.
+
+Handles are 3–16 characters: a letter, then letters, digits, or `_`. Passwords are 8–128 characters. A second login of the same account replaces the previous session and returns the same operator, including their last location.
 
 Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, and `chat` to the whole Undernet. `help` lists the commands.
 
@@ -30,7 +34,7 @@ A local TUI, without SSH, can attach to a running server:
 cargo run -p coffee-server -- play
 ```
 
-Create an account without putting the password in the process list:
+Create a permanent account without putting the password in the process list. The command prints a recovery code once:
 
 ```bash
 COFFEE_PASSWORD='a-long-secret' cargo run -p coffee-server -- account create --username ada --operator-name Ada
@@ -43,7 +47,7 @@ COFFEE_PASSWORD='a-long-secret' cargo run -p coffee-server -- account create --u
 | `terminus-core` | Commands, sessions, views, and the `Game` trait |
 | `terminus-tui` | Ratatui layout, input, and the remote client loop |
 | `terminus-protocol` | Versioned length-prefixed JSON frames |
-| `terminus-ssh` | SSH gateway. Auth starts a game session, never a shell |
+| `terminus-ssh` | SSH gateway. The lobby is the game, never a shell |
 | `coffee-world` | Undernet rules and SQLite persistence |
 | `coffee-server` | Hub, protocol listener, and `coffee-server` binary |
 | `examples/minimal-game` | Engine demo with no Coffee.shop dependency |
@@ -65,6 +69,7 @@ cargo run -p minimal-game -- --script
 
 Docs:
 
+- [Authentication](docs/authentication-design.md)
 - [Architecture](docs/architecture.md)
 - [World architecture](docs/world-architecture.md)
 - [Protocol](docs/protocol.md)
@@ -75,8 +80,9 @@ Docs:
 
 ## What this version does
 
-- SSH into a TUI, with password authentication and a generated host key
-- Register or log in, and resume the same operator after a restart
+- SSH into a TUI welcome screen, with a generated host key
+- Guest play without an email address, permanent accounts, and recovery codes
+- The same operator after disconnect, recovery, guest upgrade, and server restart
 - Header, location, status, scrollable feed, and a command prompt with history and completion
 - `help`, `look`, `map`, `who`, `go`, `say`, `chat`, `status`, `inventory`, `inspect`, `mark`, `quit`
 - Ten linked Undernet locations, including a sealed Black Archive
@@ -87,11 +93,11 @@ Docs:
 
 ## What this version does not do
 
-No combat, economy, factions, crafting, quests, homesteads, settlements, or generated NPCs. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, position, and anything they marked remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, factions, crafting, quests, homesteads, settlements, or generated NPCs. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, position, and anything they marked remain. A lost recovery code on an account with no password cannot be restored: this server does not send email. See [security notes](docs/security.md) and [authentication](docs/authentication-design.md).
 
 ## Next milestones
 
 1. Player-built cabins and homesteads as owned structures with interiors
 2. Trails, settlements, and permissions for shared building
-3. Public-key authentication alongside passwords
+3. Enroll an SSH public key from inside an authenticated session
 4. Closed registration with an invite flow
