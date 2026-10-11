@@ -103,6 +103,7 @@ pub enum PersistOp {
         access: String,
         interior_place: Option<String>,
         settlement_id: Option<Uuid>,
+        share: String,
         created_at: u64,
     },
     UpdateStructure {
@@ -110,6 +111,7 @@ pub enum PersistOp {
         name: String,
         access: String,
         interior_place: Option<String>,
+        share: String,
     },
     LinkStructureSettlement {
         id: Uuid,

@@ -40,9 +40,11 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 - Regional chat uses `Audience::Region` with a server-derived region key. Clients cannot subscribe to arbitrary regions.
 - `ignore`/`block` is enforced server-side across say, chat, region, emote, whisper, friend requests, and settlement invites.
 - Friend lists expose online/offline only, never coordinates or account credentials.
-- Cabin access (`public` / `friends` / `private` + grants) is checked when entering an interior, including bare `go <cabin>` through a stored connection.
-- Settlement membership is one per player. Private settlements are not listed to outsiders. Disband never deletes cabins or signs.
-- Noticeboard posts (Coffee Shop and settlement) are bounded in length, rate, retained count, and lifetime.
+- Cabin/workshop visitor access (`public` / `friends` / `private` + grants) and settlement share (`private` / `shared` / `communal`) are checked when entering an interior, including bare `go <name>` through a stored connection. All entry paths use the same server-side precedence.
+- Players cannot grant themselves sharing rights over others' structures. Settlement membership alone never opens a private structure.
+- Settlement membership is one per player. Private settlements are not listed to outsiders. Disband never deletes cabins, workshops, or signs; it clears links and reverts settlement share to private.
+- Invitations are addressed to a specific invitee. `settle invites` only lists that player's pending invites. Expired invites cannot be accepted.
+- Noticeboard posts (Coffee Shop, settlement, and workshop) are bounded in length, rate, retained count, and lifetime.
 
 ## What you should still do
 

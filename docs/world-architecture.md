@@ -113,7 +113,7 @@ The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoc
 | Table | What it stores |
 | --- | --- |
 | `world_regions` | Identity, version, audit seed, atlas placement, discovery time. Unique on `(world_id, epoch_id, origin_x, origin_y)`. |
-| `world_structures` | Structures per tile and kind (`marker`, `cabin`, `sign`, `trail`). Unique on `(region_id, local_x, local_y, kind)`. Cabins carry `access` and `interior_place`. `owner_id` is attribution, not a foreign key, so history can outlive an account. |
+| `world_structures` | Structures per tile and kind (`marker`, `cabin`, `workshop`, `sign`, `trail`). Unique on `(region_id, local_x, local_y, kind)`. Enterables carry `access`, `interior_place`, and `share` (`private` / `shared` / `communal`). `owner_id` is attribution, not a foreign key, so history can outlive an account. |
 | `terrain_modifications` | One override per tile. The baseline is not copied. |
 | `region_discoveries` | Visits and notes. Entering a region records an `entered` discovery. |
 | `world_connections` | Explicit links. Unique on `(from_place, keyword)`. |
@@ -163,17 +163,32 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 
 `0004_settlements.sql` adds settlements, membership (one per player), invites, and a nullable `world_structures.settlement_id` link. Disband clears membership, invites, settle notices, and structure links; it never deletes cabins, signs, trails, or discoveries. Hub rollback snapshots settlements alongside social/geography/log.
 
+`0005_sharing_and_workshops.sql` adds `world_structures.share` (default `private`) with a CHECK constraint, rebuilds the structures table so fresh and upgraded databases agree, and indexes share. Legacy rows become private. Workshop kind values use the existing structures table; workshop project boards reuse `noticeboard_posts` with `place_id = workshop:<uuid>`.
+
 ### Region chat keys
 
 Regional speech uses physical proximity only. The server derives the key from the speaker's place; clients cannot subscribe to arbitrary regions.
 
 ```text
 Wild tile       → r:<world>:<epoch>:<origin_x>:<origin_y>
-Cabin interior  → same key as the cabin's MaterializedRegion identity
+Cabin/workshop interior → same key as the structure's MaterializedRegion identity
 Static room     → u:<location_id>   (borders = room exits)
 ```
 
-Settlement boards reuse `noticeboard_posts` with `place_id = settle:<uuid>`. Discovery lists public settlements whose anchor region matches the viewer's region key, or that have a linked structure on the current tile; private settlements are listed only to members. There is no omniscient global directory.
+Settlement boards reuse `noticeboard_posts` with `place_id = settle:<uuid>`. Workshop boards use `workshop:<uuid>`. Discovery lists public settlements whose anchor region matches the viewer's region key, or that have a linked structure on the current tile; private settlements are listed only to members. There is no omniscient global directory.
+
+### Structure sharing precedence
+
+Entry checks are centralised in `ensure_structure_access_for_move`:
+
+1. Structure is enterable and present.
+2. Owner.
+3. Explicit visitor grant.
+4. Settlement `shared` / `communal` while the accessor is a current member of the linked settlement (settlement must still exist).
+5. Visitor access mode (`public` / `friends` / `private`).
+6. Deny.
+
+Disband and unclaim clear `settlement_id` and set `share` back to `private`. Structures are never deleted by settlement changes.
 
 ## Current limitations
 
@@ -182,7 +197,7 @@ Settlement boards reuse `noticeboard_posts` with `place_id = settle:<uuid>`. Dis
 - Version boundaries are not blended.
 - Settlements are membership groups with optional structure links, not map rectangles or guild ranks.
 - No settlement-wide remote chat (region chat is physical only).
-- Shared build rights / workshops are not implemented yet.
+- Workshops are shared places with inspect/board/enter — not a crafting economy.
 - Terrain modification and region relocation remain server APIs, not general player commands (building uses them only where needed).
 - Private messages are online-only; offline delivery is not stored.
 - Static exit reseeding still deletes and reinserts the hand-authored exit graph. Player links live in `world_connections` and are left alone.
@@ -190,8 +205,6 @@ Settlement boards reuse `noticeboard_posts` with `place_id = settle:<uuid>`. Dis
 
 ## Next milestone
 
-Shared build rights and workshops inside existing settlements.
-
-1. Member-scoped building permissions on settlement-linked tiles.
-2. Optional trail segments as validated `terrain_modifications` along a path, still without a full terraforming sim.
+1. Optional trail segments as validated `terrain_modifications` along a path, still without a full terraforming sim.
+2. Workshop activities that consume resources (crafting), if the world needs them.
 3. Public-key authentication alongside passwords.

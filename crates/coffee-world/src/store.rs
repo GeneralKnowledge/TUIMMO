@@ -13,7 +13,7 @@ use uuid::Uuid;
 
 use crate::geography::{
     parse_seed, Discovery, GeographyState, MaterializedRegion, RegionIdentity, Structure, Terrain,
-    TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC,
+    TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC, SHARE_PRIVATE,
 };
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
 use crate::settlement::{
@@ -291,13 +291,14 @@ impl Store {
                     access,
                     interior_place,
                     settlement_id,
+                    share,
                     created_at,
                 } => {
                     sqlx::query(
                         "INSERT INTO world_structures (
                             id, region_id, local_x, local_y, kind, name, owner_id, access,
-                            interior_place, settlement_id, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                            interior_place, settlement_id, share, created_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     )
                     .bind(id.to_string())
                     .bind(region_id.to_string())
@@ -309,18 +310,20 @@ impl Store {
                     .bind(access)
                     .bind(interior_place)
                     .bind(settlement_id.map(|id| id.to_string()))
+                    .bind(share)
                     .bind(*created_at as i64)
                     .execute(&mut *tx)
                     .await?;
                 }
-                PersistOp::UpdateStructure { id, name, access, interior_place } => {
+                PersistOp::UpdateStructure { id, name, access, interior_place, share } => {
                     sqlx::query(
                         "UPDATE world_structures
-                         SET name = ?1, access = ?2, interior_place = ?3 WHERE id = ?4",
+                         SET name = ?1, access = ?2, interior_place = ?3, share = ?4 WHERE id = ?5",
                     )
                     .bind(name)
                     .bind(access)
                     .bind(interior_place)
+                    .bind(share)
                     .bind(id.to_string())
                     .execute(&mut *tx)
                     .await?;
@@ -768,7 +771,7 @@ impl Store {
 
         let structures = sqlx::query_as::<_, StructureSql>(
             "SELECT id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
-                    settlement_id, created_at
+                    settlement_id, share, created_at
              FROM world_structures",
         )
         .fetch_all(&self.pool)
@@ -785,6 +788,7 @@ impl Store {
                 access: if row.access.is_empty() { ACCESS_PUBLIC.to_string() } else { row.access },
                 interior_place: row.interior_place,
                 settlement_id: optional_uuid(row.settlement_id)?,
+                share: if row.share.is_empty() { SHARE_PRIVATE.to_string() } else { row.share },
                 created_at: u64_col(row.created_at)?,
             });
         }
@@ -1087,6 +1091,7 @@ struct StructureSql {
     access: String,
     interior_place: Option<String>,
     settlement_id: Option<String>,
+    share: String,
     created_at: i64,
 }
 

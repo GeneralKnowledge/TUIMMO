@@ -10,12 +10,18 @@ use super::identity::{RegionCoordKey, RegionIdentity};
 
 pub const MARKER_KIND: &str = "marker";
 pub const CABIN_KIND: &str = "cabin";
+pub const WORKSHOP_KIND: &str = "workshop";
 pub const SIGN_KIND: &str = "sign";
 pub const TRAIL_KIND: &str = "trail";
 
 pub const ACCESS_PUBLIC: &str = "public";
 pub const ACCESS_PRIVATE: &str = "private";
 pub const ACCESS_FRIENDS: &str = "friends";
+
+/// Settlement-member sharing for enterable structures. Orthogonal to visitor `access`.
+pub const SHARE_PRIVATE: &str = "private";
+pub const SHARE_SHARED: &str = "shared";
+pub const SHARE_COMMUNAL: &str = "communal";
 
 /// A region that has been entered or changed. The tile grid is not stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -40,12 +46,14 @@ pub struct Structure {
     pub kind: String,
     pub name: String,
     pub owner_id: Option<PlayerId>,
-    /// `public`, `private`, or `friends`. Meaningful for cabins.
+    /// `public`, `private`, or `friends`. Meaningful for cabins/workshops.
     pub access: String,
     /// Interior place key for enterable structures (`i:<structure-id>`).
     pub interior_place: Option<String>,
     /// Optional link to a player settlement. Cleared on disband; never deletes the structure.
     pub settlement_id: Option<Uuid>,
+    /// `private`, `shared`, or `communal`. Settlement membership never implies access when private.
+    pub share: String,
     pub created_at: u64,
 }
 
@@ -57,6 +65,14 @@ impl Structure {
     pub fn parse_interior_key(raw: &str) -> Option<Uuid> {
         let rest = raw.strip_prefix("i:")?;
         Uuid::parse_str(rest).ok()
+    }
+
+    pub fn is_enterable(&self) -> bool {
+        matches!(self.kind.as_str(), CABIN_KIND | WORKSHOP_KIND) && self.interior_place.is_some()
+    }
+
+    pub fn is_workshop(&self) -> bool {
+        self.kind == WORKSHOP_KIND || (self.kind == CABIN_KIND && self.share == SHARE_COMMUNAL)
     }
 }
 

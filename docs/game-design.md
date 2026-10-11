@@ -44,13 +44,14 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto gener
 | `inventory` | `inv`, `i` | What you carry |
 | `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, or item |
 | `mark <name>` | | Leave a named marker on the outskirts tile |
-| `build cabin <name>` | | Raise a cabin on walkable outskirts ground |
-| `enter <name>` / `leave` | | Enter or leave a cabin |
-| `home <access\|allow\|deny\|rename\|demolish> …` | | Owner cabin controls |
+| `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
+| `enter <name>` / `leave` | | Enter or leave a cabin or workshop |
+| `home <inspect\|access\|share\|allow\|deny\|rename\|demolish> …` | | Owner cabin/workshop controls |
+| `workshop <inspect\|board …>` | | Inspect a workshop or use its project board |
 | `sign <text>` / `sign read` / `sign remove` | | Persistent roadside notes |
 | `trail <name>` | | Leave a trail post |
 | `board [post <text>\|remove <id>]` | `notices` | Coffee Shop noticeboard |
-| `settle <create\|inspect\|invite\|…>` | | Found, join, or manage a settlement |
+| `settle <create\|inspect\|invite\|invites\|…>` | | Found, join, or manage a settlement |
 | `settlements` | | List settlements visible from here |
 | `quit` | `q` | Disconnect |
 
@@ -67,19 +68,27 @@ In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Wate
 
 ### Homesteads and traces
 
-- Cabins need walkable outskirts ground that is not the city gate. One cabin per tile; markers, signs, and trail posts may share that tile.
-- Cabins have an interior place (`i:<id>`) linked by validated `world_connections`. Access defaults to `public`; owners may set `private` or `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
+- Cabins and workshops need walkable outskirts ground that is not the city gate. One of each kind per tile; markers, signs, and trail posts may share that tile.
+- Enterable structures have an interior place (`i:<id>`) linked by validated `world_connections`. Cabin visitor access defaults to `public`; workshops default to `private`. Owners may set `public` / `private` / `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
+- Settlement sharing is separate from visitor access. `home share private|shared|communal` controls whether linked settlement members may enter. Joining a settlement never opens a private structure by itself.
 - Demolition removes connections and moves anyone inside to the exterior door tile. Reconnecting inside a demolished cabin relocates you safely.
 - Signs are short (≤80 chars). Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
 
 ### Settlements
 
-- One membership per player. `settle create <name>` founds a public settlement on walkable outskirts ground (or the door tile when inside a cabin). The founder is owner; an owned cabin on that tile is auto-linked.
-- Invites expire after seven days. Ignore/block stops invites both ways. Accept requires no existing membership.
+- One membership per player. `settle create <name>` founds a public settlement on walkable outskirts ground (or the door tile when inside a cabin). The founder is owner; owned cabins/workshops on that tile are auto-linked.
+- `settle invites` lists your pending invitations (settlement, inviter, expiry, and exact accept/decline commands). Invites remain available while offline. They expire after seven days and cannot be accepted once expired.
+- Ignore/block stops invites both ways. Accept requires no existing membership.
 - Owner may `kick`, `transfer`, `describe` (≤160), `access public|private`, or `disband confirm`. Owner cannot leave while others remain; sole-member leave disbands.
-- `claim` / `unclaim` links owned structures on the current tile. Disband clears links and settle notices; cabins and signs remain.
+- `claim` / `unclaim` links owned structures on the current tile. Disband and unclaim clear links and revert settlement share to `private`; cabins, workshops, and signs remain.
 - `settlements` lists public settlements in the current region footprint (or linked here). Private settlements are visible only to members. `settle inspect` shows name, visibility, description, member count, and an anchor title (not raw coords for outsiders of private settles).
 - `settle board` posts use `place_id = settle:<uuid>`. Readers must be in the anchor region or at a linked structure/cabin; writers are members; delete is author or owner.
+
+### Sharing and workshops
+
+- Visitor access (`home access`) and settlement share (`home share`) are orthogonal. Precedence for entry: owner → explicit grant → settlement share/communal membership → visitor access mode → deny.
+- `shared` and `communal` require a live settlement link. Membership is checked at entry time; leaving removes membership-derived access immediately.
+- `build workshop <name>` raises a persistent workshop. Designate settlement use with `home share communal` (or share a cabin the same way). `workshop inspect` / `home inspect` show ownership and policies. `workshop board` holds short project notes (`place_id = workshop:<uuid>`), using the same retention rules as other boards.
 
 Spectators, if a future mode adds them, can look and read. They cannot move, inspect, speak, build, or mark. The server checks that. The client cannot grant it.
 

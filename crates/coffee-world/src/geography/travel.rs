@@ -5,7 +5,9 @@
 
 use super::generate::{GeneratedRegion, LandmarkKind, Terrain, Tile};
 use super::identity::{shift, IdentityError, WildernessPos, REGION_SIZE};
-use super::records::{GeographyState, Structure, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND};
+use super::records::{
+    GeographyState, Structure, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cardinal {
@@ -144,6 +146,12 @@ pub fn describe_tile(
                     sight.name, sight.owner_name
                 )
             }
+            WORKSHOP_KIND => {
+                format!(
+                    "A workshop named \"{}\" stands here. {} keeps it.",
+                    sight.name, sight.owner_name
+                )
+            }
             SIGN_KIND => {
                 format!("A sign reads \"{}\". {} left it.", sight.name, sight.owner_name)
             }
@@ -176,6 +184,7 @@ pub fn describe_tile(
     for sight in markers_here {
         let label = match sight.kind.as_str() {
             CABIN_KIND => format!("cabin \"{}\"", sight.name),
+            WORKSHOP_KIND => format!("workshop \"{}\"", sight.name),
             SIGN_KIND => format!("sign \"{}\"", sight.name),
             TRAIL_KIND => format!("trail \"{}\"", sight.name),
             _ => format!("marker \"{}\"", sight.name),
@@ -315,6 +324,7 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "enter"
             | "leave"
             | "cabin"
+            | "workshop"
             | "sign"
             | "trail"
             | "home"
@@ -330,7 +340,10 @@ pub fn marker_sights<'a>(
     structures
         .into_iter()
         .filter(|item| {
-            matches!(item.kind.as_str(), MARKER_KIND | CABIN_KIND | SIGN_KIND | TRAIL_KIND)
+            matches!(
+                item.kind.as_str(),
+                MARKER_KIND | CABIN_KIND | WORKSHOP_KIND | SIGN_KIND | TRAIL_KIND
+            )
         })
         .map(|item| MarkerSight {
             kind: item.kind.clone(),
@@ -344,6 +357,8 @@ pub fn marker_sights<'a>(
 pub fn map_symbol_for_structures(structures: &[&Structure]) -> Option<char> {
     if structures.iter().any(|item| item.kind == CABIN_KIND) {
         Some('C')
+    } else if structures.iter().any(|item| item.kind == WORKSHOP_KIND) {
+        Some('W')
     } else if structures.iter().any(|item| item.kind == SIGN_KIND) {
         Some('S')
     } else if structures.iter().any(|item| item.kind == TRAIL_KIND) {

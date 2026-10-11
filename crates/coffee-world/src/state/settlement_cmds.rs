@@ -5,7 +5,7 @@ use terminus_core::{
 };
 use uuid::Uuid;
 
-use crate::geography::{Structure, WildernessPos, CABIN_KIND};
+use crate::geography::{Structure, WildernessPos, CABIN_KIND, SHARE_PRIVATE, WORKSHOP_KIND};
 use crate::model::PersistOp;
 use crate::settlement::{
     anchor_title, member_names, region_key_for_wild_place, settlement_place_id,
@@ -97,7 +97,7 @@ impl WorldState {
         let rest = cmd.rest.trim();
         if rest.is_empty() {
             return Err(GameError::Rejected(
-                "usage: settle <create|inspect|invite|accept|decline|members|leave|kick|transfer|disband|describe|access|claim|unclaim|board> …"
+                "usage: settle <create|inspect|invite|invites|accept|decline|members|leave|kick|transfer|disband|describe|access|claim|unclaim|board> …"
                     .into(),
             ));
         }
@@ -108,6 +108,7 @@ impl WorldState {
             "create" => self.settle_create(session_id, tail),
             "inspect" => self.settle_inspect(session_id, tail),
             "invite" => self.settle_invite(session_id, tail),
+            "invites" => self.settle_invites(session_id),
             "accept" => self.settle_accept(session_id, tail),
             "decline" => self.settle_decline(session_id, tail),
             "members" => self.settle_members(session_id),
@@ -121,7 +122,7 @@ impl WorldState {
             "unclaim" => self.settle_unclaim(session_id),
             "board" => self.settle_board(session_id, tail),
             _ => Err(GameError::Rejected(
-                "usage: settle <create|inspect|invite|accept|decline|members|leave|kick|transfer|disband|describe|access|claim|unclaim|board> …"
+                "usage: settle <create|inspect|invite|invites|accept|decline|members|leave|kick|transfer|disband|describe|access|claim|unclaim|board> …"
                     .into(),
             )),
         }
@@ -189,24 +190,29 @@ impl WorldState {
             joined_at: created_at,
         });
 
-        // Auto-link an owned cabin on the anchor tile when present.
+        // Auto-link owned enterables on the anchor tile when present.
         if let Some(region) = self.geography.region(pos.identity.coord_key()) {
-            if let Some(cabin) = self
+            let owned: Vec<Uuid> = self
                 .geography
-                .structure_of_kind_at(region.id, pos.local_x, pos.local_y, CABIN_KIND)
-                .cloned()
-            {
-                if cabin.owner_id == Some(player) && cabin.settlement_id.is_none() {
-                    if let Some(item) =
-                        self.geography.structures.iter_mut().find(|item| item.id == cabin.id)
-                    {
-                        item.settlement_id = Some(id);
-                    }
-                    ops.push(PersistOp::LinkStructureSettlement {
-                        id: cabin.id,
-                        settlement_id: Some(id),
-                    });
+                .structures_at(region.id, pos.local_x, pos.local_y)
+                .into_iter()
+                .filter(|item| {
+                    item.owner_id == Some(player)
+                        && item.settlement_id.is_none()
+                        && matches!(item.kind.as_str(), CABIN_KIND | WORKSHOP_KIND)
+                })
+                .map(|item| item.id)
+                .collect();
+            for structure_id in owned {
+                if let Some(item) =
+                    self.geography.structures.iter_mut().find(|item| item.id == structure_id)
+                {
+                    item.settlement_id = Some(id);
                 }
+                ops.push(PersistOp::LinkStructureSettlement {
+                    id: structure_id,
+                    settlement_id: Some(id),
+                });
             }
         }
 
@@ -291,10 +297,11 @@ impl WorldState {
                 "That operator already belongs to a settlement.".into(),
             ));
         }
-        let mut ops = self.prune_settlement_invites();
-        if self.settlements.pending_invite(settle.id, target).is_some() {
+        // Reject before any mutation so Err paths cannot diverge from SQLite.
+        if self.settlements.pending_invite(settle.id, target, self.now_ms).is_some() {
             return Err(GameError::Rejected("An invite is already pending for them.".into()));
         }
+        let mut ops = self.prune_settlement_invites();
         let id = Uuid::new_v4();
         let created_at = self.now_ms;
         let expires_at = created_at.saturating_add(INVITE_EXPIRY_MS);
@@ -331,7 +338,7 @@ impl WorldState {
                 Audience::Player(target),
                 None,
                 format!(
-                    "{} invites you to join settlement {}. Use settle accept {}.",
+                    "{} invites you to join settlement {}. Use settle invites, then settle accept {}.",
                     self.name_of(session_id)?,
                     settle.name,
                     settle.name
@@ -346,6 +353,32 @@ impl WorldState {
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
+    fn settle_invites(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
+        let player = self.player(session_id)?;
+        let ops = self.prune_settlement_invites();
+        let pending = self.settlements.pending_for(player, self.now_ms);
+        let mut lines = vec!["Pending settlement invitations:".to_string()];
+        if pending.is_empty() {
+            lines.push("(none — you have no pending settlement invites)".into());
+        } else {
+            for invite in pending {
+                let Some(settle) = self.settlements.by_id(invite.settlement_id) else {
+                    continue;
+                };
+                let inviter = self.owner_name(Some(invite.inviter_id));
+                let expiry = format_invite_expiry(invite.expires_at, self.now_ms);
+                lines.push(format!("- {} from {inviter} ({expiry})", settle.name));
+                lines.push(format!("  settle accept {}", settle.name));
+                lines.push(format!("  settle decline {}", settle.name));
+            }
+            if lines.len() == 1 {
+                lines.push("(none — you have no pending settlement invites)".into());
+            }
+        }
+        self.set_overlay(session_id, lines.join("\n"));
+        Ok(Transition { outcome: CommandOutcome::default(), ops })
+    }
+
     fn settle_accept(&mut self, session_id: SessionId, raw: &str) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
         if self.settlements.membership_of(player).is_some() {
@@ -353,19 +386,27 @@ impl WorldState {
                 "You already belong to a settlement. Leave it before accepting.".into(),
             ));
         }
-        let mut ops = self.prune_settlement_invites();
         let key = raw.trim().to_ascii_lowercase();
-        let invite = self
-            .settlements
-            .pending_for(player)
-            .into_iter()
-            .find(|invite| {
-                self.settlements
-                    .by_id(invite.settlement_id)
-                    .is_some_and(|s| key.is_empty() || s.name_key == key)
-            })
-            .cloned()
-            .ok_or_else(|| GameError::Rejected("No matching settlement invite.".into()))?;
+        // Time-expired matches: expire durably via Ok, without joining.
+        if self.find_invite_for_player(player, &key, true).is_some() {
+            let mut ops = self.prune_settlement_invites();
+            let (event, note) = self.emit(
+                Channel::System,
+                Audience::Player(player),
+                None,
+                "That settlement invite has expired. Use settle invites to review others.",
+            );
+            ops.push(note);
+            return Ok(Transition {
+                outcome: CommandOutcome { events: vec![event], quit: false },
+                ops,
+            });
+        }
+        let invite = self.find_invite_for_player(player, &key, false).ok_or_else(|| {
+            GameError::Rejected(
+                "No matching settlement invite. Use settle invites to list yours.".into(),
+            )
+        })?;
         if self.social.blocked_either_way(player, invite.inviter_id) {
             return Err(GameError::Rejected("That operator is blocked.".into()));
         }
@@ -374,6 +415,7 @@ impl WorldState {
             .by_id(invite.settlement_id)
             .cloned()
             .ok_or_else(|| GameError::Rejected("That settlement no longer exists.".into()))?;
+        let mut ops = self.prune_settlement_invites();
         let joined_at = self.now_ms;
         self.settlements.members.push(SettlementMember {
             settlement_id: settle.id,
@@ -415,19 +457,27 @@ impl WorldState {
         raw: &str,
     ) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
-        let mut ops = self.prune_settlement_invites();
         let key = raw.trim().to_ascii_lowercase();
-        let invite = self
-            .settlements
-            .pending_for(player)
-            .into_iter()
-            .find(|invite| {
-                self.settlements
-                    .by_id(invite.settlement_id)
-                    .is_some_and(|s| key.is_empty() || s.name_key == key)
-            })
-            .cloned()
-            .ok_or_else(|| GameError::Rejected("No matching settlement invite.".into()))?;
+        if self.find_invite_for_player(player, &key, true).is_some() {
+            let mut ops = self.prune_settlement_invites();
+            let (event, note) = self.emit(
+                Channel::System,
+                Audience::Player(player),
+                None,
+                "That settlement invite has already expired.",
+            );
+            ops.push(note);
+            return Ok(Transition {
+                outcome: CommandOutcome { events: vec![event], quit: false },
+                ops,
+            });
+        }
+        let invite = self.find_invite_for_player(player, &key, false).ok_or_else(|| {
+            GameError::Rejected(
+                "No matching settlement invite. Use settle invites to list yours.".into(),
+            )
+        })?;
+        let mut ops = self.prune_settlement_invites();
         if let Some(row) = self.settlements.invites.iter_mut().find(|row| row.id == invite.id) {
             row.status = InviteStatus::Declined;
         }
@@ -444,6 +494,34 @@ impl WorldState {
             self.emit(Channel::System, Audience::Player(player), None, "Invite declined.");
         ops.push(note);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
+    /// Find an invite addressed to `player` by settlement name key.
+    /// When `expired_only`, only time-stale pending rows are considered.
+    fn find_invite_for_player(
+        &self,
+        player: PlayerId,
+        name_key: &str,
+        expired_only: bool,
+    ) -> Option<SettlementInvite> {
+        self.settlements
+            .invites
+            .iter()
+            .filter(|invite| invite.invitee_id == player && invite.status == InviteStatus::Pending)
+            .filter(|invite| {
+                let stale = invite.expires_at <= self.now_ms;
+                if expired_only {
+                    stale
+                } else {
+                    !stale
+                }
+            })
+            .find(|invite| {
+                self.settlements
+                    .by_id(invite.settlement_id)
+                    .is_some_and(|s| name_key.is_empty() || s.name_key == name_key)
+            })
+            .cloned()
     }
 
     fn settle_members(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
@@ -829,10 +907,22 @@ impl WorldState {
                 "Only the structure owner or settlement owner can unclaim.".into(),
             ));
         }
+        let mut ops =
+            vec![PersistOp::LinkStructureSettlement { id: structure.id, settlement_id: None }];
         if let Some(item) =
             self.geography.structures.iter_mut().find(|item| item.id == structure.id)
         {
             item.settlement_id = None;
+            if item.share != SHARE_PRIVATE {
+                item.share = SHARE_PRIVATE.into();
+                ops.push(PersistOp::UpdateStructure {
+                    id: item.id,
+                    name: item.name.clone(),
+                    access: item.access.clone(),
+                    interior_place: item.interior_place.clone(),
+                    share: SHARE_PRIVATE.into(),
+                });
+            }
         }
         let (event, note) = self.emit(
             Channel::System,
@@ -840,13 +930,8 @@ impl WorldState {
             None,
             format!("Unlinked {} from settlement {}.", structure.name, settle.name),
         );
-        Ok(Transition {
-            outcome: CommandOutcome { events: vec![event], quit: false },
-            ops: vec![
-                PersistOp::LinkStructureSettlement { id: structure.id, settlement_id: None },
-                note,
-            ],
-        })
+        ops.push(note);
+        Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
     fn settle_board(&mut self, session_id: SessionId, raw: &str) -> Result<Transition, GameError> {
@@ -1012,14 +1097,27 @@ impl WorldState {
         let _ = session_id;
         let place_id = settlement_place_id(settle.id);
         let mut ops = Vec::new();
-        // Clear structure links in memory; PersistOp::SettlementDelete clears DB.
+        // Clear structure links; revert settlement-derived share to private. Never delete builds.
         for structure in &mut self.geography.structures {
             if structure.settlement_id == Some(settle.id) {
                 structure.settlement_id = None;
+                let share_changed = structure.share != SHARE_PRIVATE;
+                if share_changed {
+                    structure.share = SHARE_PRIVATE.into();
+                }
                 ops.push(PersistOp::LinkStructureSettlement {
                     id: structure.id,
                     settlement_id: None,
                 });
+                if share_changed {
+                    ops.push(PersistOp::UpdateStructure {
+                        id: structure.id,
+                        name: structure.name.clone(),
+                        access: structure.access.clone(),
+                        interior_place: structure.interior_place.clone(),
+                        share: SHARE_PRIVATE.into(),
+                    });
+                }
             }
         }
         let notice_ids: Vec<Uuid> = self
@@ -1191,5 +1289,22 @@ fn strip_board_name_prefix(raw: &str, name_key: &str) -> String {
         parts.next().unwrap_or("").trim().to_string()
     } else {
         trimmed.to_string()
+    }
+}
+
+fn format_invite_expiry(expires_at: u64, now_ms: u64) -> String {
+    if expires_at <= now_ms {
+        return "expired".into();
+    }
+    let remain = expires_at.saturating_sub(now_ms);
+    let days = remain / (24 * 60 * 60 * 1000);
+    let hours = (remain % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000);
+    if days > 0 {
+        format!("expires in {days}d {hours}h")
+    } else if hours > 0 {
+        format!("expires in {hours}h")
+    } else {
+        let mins = remain / (60 * 1000);
+        format!("expires in {mins}m")
     }
 }

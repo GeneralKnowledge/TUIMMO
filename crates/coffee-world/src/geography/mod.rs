@@ -21,7 +21,8 @@ pub use identity::{
 };
 pub use records::{
     Discovery, GeographyState, MaterializedRegion, Structure, TerrainMod, WorldConnection,
-    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND,
+    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, MARKER_KIND, SHARE_COMMUNAL,
+    SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
 pub use travel::{
     describe_tile, effective_tile, is_reserved_word, map_symbol_for_structures, marker_sights,

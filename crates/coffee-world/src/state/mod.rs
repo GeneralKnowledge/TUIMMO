@@ -18,7 +18,7 @@ use crate::geography::{
     validate_marker_name, Cardinal, Discovery, GenerateError, GeneratedRegion, GeographyState,
     MaterializedRegion, RegionCache, RegionCoordKey, RegionIdentity, Structure, Terrain, Tile,
     WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD,
-    REGION_SIZE,
+    REGION_SIZE, SHARE_PRIVATE, WORKSHOP_KIND,
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::undernet::{self, ExitDef, ObjectDef};
@@ -557,31 +557,71 @@ impl WorldState {
         player: PlayerId,
         cabin: &Structure,
     ) -> Result<(), GameError> {
-        if cabin.owner_id == Some(player) {
+        self.ensure_structure_access_for_move(player, cabin)
+    }
+
+    /// Authoritative entry check for cabins and workshops.
+    ///
+    /// Precedence:
+    /// 1. Structure must be enterable.
+    /// 2. Owner always enters.
+    /// 3. Explicit visitor grant.
+    /// 4. Settlement share (`shared` / `communal`) for current members of the linked settlement.
+    /// 5. Visitor access mode (`public` / `friends` / `private`).
+    /// 6. Otherwise deny.
+    pub(crate) fn ensure_structure_access_for_move(
+        &self,
+        player: PlayerId,
+        structure: &Structure,
+    ) -> Result<(), GameError> {
+        if !structure.is_enterable() {
+            return Err(GameError::Rejected("There is no entrance here.".into()));
+        }
+        if structure.owner_id == Some(player) {
             return Ok(());
         }
-        match cabin.access.as_str() {
+        if self.social.has_grant(structure.id, player) {
+            return Ok(());
+        }
+        if self.settlement_share_allows(player, structure) {
+            return Ok(());
+        }
+        let label = if structure.kind == WORKSHOP_KIND { "workshop" } else { "cabin" };
+        match structure.access.as_str() {
             crate::geography::ACCESS_PUBLIC => Ok(()),
             crate::geography::ACCESS_FRIENDS => {
-                let owner = cabin.owner_id.ok_or_else(|| {
-                    GameError::Rejected("This cabin has no owner and stays closed.".into())
+                let owner = structure.owner_id.ok_or_else(|| {
+                    GameError::Rejected(format!("This {label} has no owner and stays closed."))
                 })?;
-                if self.social.are_friends(player, owner) || self.social.has_grant(cabin.id, player)
-                {
+                if self.social.are_friends(player, owner) {
                     Ok(())
                 } else {
-                    Err(GameError::Rejected("Friends of the owner may enter. You may not.".into()))
+                    Err(GameError::Rejected(format!(
+                        "Friends of the owner may enter this {label}. You may not."
+                    )))
                 }
             }
             crate::geography::ACCESS_PRIVATE => {
-                if self.social.has_grant(cabin.id, player) {
-                    Ok(())
-                } else {
-                    Err(GameError::Rejected("This cabin is private.".into()))
-                }
+                Err(GameError::Rejected(format!("This {label} is private.")))
             }
-            _ => Err(GameError::Rejected("This cabin is closed.".into())),
+            _ => Err(GameError::Rejected(format!("This {label} is closed."))),
         }
+    }
+
+    /// Settlement-derived entry for shared/communal structures. Membership is checked live.
+    pub(crate) fn settlement_share_allows(&self, player: PlayerId, structure: &Structure) -> bool {
+        use crate::geography::{SHARE_COMMUNAL, SHARE_SHARED};
+        match structure.share.as_str() {
+            SHARE_SHARED | SHARE_COMMUNAL => {}
+            _ => return false,
+        }
+        let Some(settle_id) = structure.settlement_id else {
+            return false;
+        };
+        if self.settlements.by_id(settle_id).is_none() {
+            return false;
+        }
+        self.settlements.is_member(settle_id, player)
     }
 
     fn cmd_say(
@@ -796,6 +836,7 @@ impl WorldState {
             access: crate::geography::ACCESS_PUBLIC.into(),
             interior_place: None,
             settlement_id: None,
+            share: SHARE_PRIVATE.into(),
             created_at,
         });
         ops.push(PersistOp::Structure {
@@ -809,6 +850,7 @@ impl WorldState {
             access: crate::geography::ACCESS_PUBLIC.into(),
             interior_place: None,
             settlement_id: None,
+            share: SHARE_PRIVATE.into(),
             created_at,
         });
         let (event, op) = self.emit(
@@ -1564,10 +1606,18 @@ impl WorldState {
             })
             .collect();
         let feed = self.visible_feed_lines(player, &location_id);
-        let mut description = format!(
-            "Inside \"{}\", a small cabin. Light slips through the door cracks. {} keeps this place.",
-            structure.name, owner
-        );
+        let kind = if structure.kind == WORKSHOP_KIND { "workshop" } else { "cabin" };
+        let mut description = if structure.kind == WORKSHOP_KIND {
+            format!(
+                "Inside \"{}\", a shared workshop. Tools wait on the benches. {} keeps this place (share: {}).",
+                structure.name, owner, structure.share
+            )
+        } else {
+            format!(
+                "Inside \"{}\", a small cabin. Light slips through the door cracks. {} keeps this place (share: {}).",
+                structure.name, owner, structure.share
+            )
+        };
         if let Some(note) = self.settlement_note_for_structure(structure, Some(player)) {
             description.push(' ');
             description.push_str(&note);
@@ -1576,11 +1626,11 @@ impl WorldState {
             world_name: self.world_name.clone(),
             connection: ConnectionState::Connected,
             operator_name: name.to_string(),
-            location_name: format!("{} (cabin)", structure.name),
+            location_name: format!("{} ({kind})", structure.name),
             description,
             exits: self.visible_exits(session_id)?,
             present,
-            objects: vec![ObjectView { keyword: "door".into(), name: "cabin door".into() }],
+            objects: vec![ObjectView { keyword: "door".into(), name: format!("{kind} door") }],
             status: self.status_lines(session_id)?,
             inventory,
             feed,
@@ -1744,6 +1794,7 @@ fn handler(name: &str) -> Option<Handler> {
         "enter" => WorldState::cmd_enter,
         "leave" => WorldState::cmd_leave,
         "home" => WorldState::cmd_home,
+        "workshop" => WorldState::cmd_workshop,
         "sign" => WorldState::cmd_sign,
         "trail" => WorldState::cmd_trail,
         "board" => WorldState::cmd_board,
@@ -1764,6 +1815,7 @@ fn needs_play(name: &str) -> bool {
             | "enter"
             | "leave"
             | "home"
+            | "workshop"
             | "sign"
             | "trail"
             | "board"
@@ -2481,5 +2533,169 @@ mod tests {
         assert!(overlay.contains("Meet at dusk"), "{overlay}");
         let err = world.apply(bob, "settle board PublicHold post outsider").unwrap_err();
         assert!(err.to_string().contains("members"), "{err}");
+    }
+
+    #[test]
+    fn settle_invites_inbox_and_offline_accept() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create Haven").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+
+        // Ada must not see Bob's inbox contents.
+        world.apply(ada, "settle invites").unwrap();
+        let ada_overlay = world.view(ada).unwrap().overlay.unwrap_or_default();
+        assert!(ada_overlay.contains("none"), "{ada_overlay}");
+
+        world.apply(bob, "settle invites").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("Haven"), "{overlay}");
+        assert!(overlay.contains("settle accept Haven"), "{overlay}");
+        assert!(overlay.contains("settle decline Haven"), "{overlay}");
+
+        world.apply(bob, "settle accept Haven").unwrap();
+        assert!(world
+            .settlements
+            .is_member(world.settlements.settlement_of(ada_id).unwrap().id, bob_id));
+        world.apply(bob, "settle invites").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("none"), "{overlay}");
+    }
+
+    #[test]
+    fn expired_invite_cannot_join_and_reject_does_not_prune() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create Haven").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+        let invite_id = world.settlements.invites[0].id;
+        // Force expiry without pruning.
+        world.now_ms = world.settlements.invites[0].expires_at;
+
+        // Rejected accept of a wrong name must not prune/expire in memory alone.
+        let err = world.apply(bob, "settle accept NoSuchHold").unwrap_err();
+        assert!(err.to_string().contains("invite"), "{err}");
+        let invite = world.settlements.invites.iter().find(|i| i.id == invite_id).unwrap();
+        assert_eq!(invite.status, crate::settlement::InviteStatus::Pending);
+
+        // Accept of expired invite expires it durably (Ok path) without joining.
+        world.apply(bob, "settle accept Haven").unwrap();
+        assert!(world.settlements.membership_of(bob_id).is_none());
+        let invite = world.settlements.invites.iter().find(|i| i.id == invite_id).unwrap();
+        assert_eq!(invite.status, crate::settlement::InviteStatus::Expired);
+
+        // Inbox stays empty for actionable invites.
+        world.apply(bob, "settle invites").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("none"), "{overlay}");
+        assert!(!overlay.contains("settle accept Haven"), "{overlay}");
+        let _ = ada_id;
+    }
+
+    #[test]
+    fn private_cabin_stays_private_until_shared_then_leave_revokes() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Nest").unwrap();
+        world.apply(ada, "home access private").unwrap();
+        world.apply(ada, "settle create Nestland").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle accept Nestland").unwrap();
+
+        // Membership alone does not open a private cabin.
+        let err = world.apply(bob, "enter Nest").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+        let err = world.apply(bob, "go nest").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+
+        // Non-owner cannot change sharing.
+        let err = world.apply(bob, "home share shared").unwrap_err();
+        assert!(err.to_string().contains("owner"), "{err}");
+
+        world.apply(ada, "home share shared").unwrap();
+        world.apply(bob, "enter Nest").unwrap();
+        world.apply(bob, "leave").unwrap();
+
+        world.apply(bob, "settle leave").unwrap();
+        assert!(world.settlements.membership_of(bob_id).is_none());
+        let err = world.apply(bob, "enter Nest").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+        let _ = ada_id;
+    }
+
+    #[test]
+    fn communal_workshop_board_and_disband_fallback() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "settle create Forgehold").unwrap();
+        world.apply(ada, "build workshop Anvil").unwrap();
+        let workshop =
+            world.geography.structures.iter().find(|s| s.kind == "workshop").cloned().unwrap();
+        assert_eq!(workshop.share, "private");
+        assert_eq!(workshop.settlement_id, world.settlements.settlement_of(ada_id).map(|s| s.id));
+
+        world.apply(ada, "home share communal").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        let err = world.apply(bob, "enter Anvil").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "settle accept Forgehold").unwrap();
+        world.apply(bob, "enter Anvil").unwrap();
+        world.apply(bob, "workshop board post Fit new hinges").unwrap();
+        world.apply(bob, "workshop board").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("Fit new hinges"), "{overlay}");
+        world.apply(bob, "leave").unwrap();
+
+        // Disband preserves the workshop and reverts share to private.
+        world.apply(ada, "settle disband confirm").unwrap();
+        assert!(world.settlements.settlements.is_empty());
+        let workshop = world
+            .geography
+            .structures
+            .iter()
+            .find(|s| s.kind == "workshop" && s.name == "Anvil")
+            .unwrap();
+        assert!(workshop.settlement_id.is_none());
+        assert_eq!(workshop.share, "private");
+        let err = world.apply(bob, "enter Anvil").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+        // Owner still enters.
+        world.apply(ada, "enter Anvil").unwrap();
+        let _ = bob_id;
+    }
+
+    #[test]
+    fn structure_access_precedence_owner_grant_share() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Keep").unwrap();
+        world.apply(ada, "home access private").unwrap();
+        let cabin = world.geography.structures.iter().find(|s| s.kind == "cabin").cloned().unwrap();
+        assert!(world.ensure_structure_access_for_move(ada_id, &cabin).is_ok());
+        assert!(world.ensure_structure_access_for_move(bob_id, &cabin).is_err());
+
+        world.apply(ada, "home allow bob").unwrap();
+        let cabin = world.geography.structures.iter().find(|s| s.kind == "cabin").cloned().unwrap();
+        assert!(world.ensure_structure_access_for_move(bob_id, &cabin).is_ok());
+        world.apply(ada, "home deny bob").unwrap();
+
+        world.apply(ada, "settle create Keepstead").unwrap();
+        world.apply(ada, "settle invite bob").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(bob, "settle accept Keepstead").unwrap();
+        world.apply(ada, "home share shared").unwrap();
+        let cabin = world.geography.structures.iter().find(|s| s.kind == "cabin").cloned().unwrap();
+        assert!(world.ensure_structure_access_for_move(bob_id, &cabin).is_ok());
+        assert!(world.settlement_share_allows(bob_id, &cabin));
+        assert!(world.settlement_share_allows(ada_id, &cabin));
     }
 }
