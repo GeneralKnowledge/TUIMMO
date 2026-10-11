@@ -36,6 +36,10 @@ Create an account without putting the password in the process list:
 COFFEE_PASSWORD='a-long-secret' cargo run -p coffee-server -- account create --username ada --operator-name Ada
 ```
 
+## World
+
+The playable map is ten Undernet rooms. How they connect, and what they should look like, is in [`assets/world/world-overview.md`](assets/world/world-overview.md). The style guide and the shop, alley, and relay pictures sit beside it. The code in `coffee-world` remains the authority for exits and objects.
+
 ## Layout
 
 | Crate | Role |

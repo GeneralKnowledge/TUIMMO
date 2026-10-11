@@ -34,6 +34,16 @@ You do not run a separate migration command. Opening the store applies pending m
 
 World geography is code. Editing `undernet.rs` and restarting upserts names and replaces exits. Operator rows stay.
 
+## Adding a location
+
+1. Add the location, its objects, and both directions of every exit in `crates/coffee-world/src/undernet.rs`. Destinations must already exist. `go` keywords are unique per room.
+2. Update `assets/world/implemented.graph` in the same change. The test `code_matches_the_world_bible_graph` fails if names, exits, objects, or listed files drift.
+3. Write `assets/world/locations/<id>/reference.md`. Separate implemented behaviour from layout interpretation. Follow `assets/world/style-guide.md` before adding `concept.png` or `floorplan.png`, and list those files in the graph only once they exist.
+4. Keep Coffee.shop art under `assets/world/`. Do not put it in `terminus-core` or the other engine crates.
+5. If the in-game `map` cannot show the new edge, say so in `assets/world/world-overview.md` instead of pretending the schematic is complete.
+
+Proposals (a vendor, a puzzle, a street door) stay in the location's unresolved questions. They do not go in `implemented.graph`.
+
 ## Adding a command
 
 Register it in the game's `CommandRegistry` (Coffee.shop does this in `coffee-world/src/catalog.rs`) and handle the canonical name in the simulation. Do not add a new top-level string match in the server. The client learns usage from the hints on `GameView`.
