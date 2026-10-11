@@ -1,6 +1,7 @@
 //! In-memory Undernet. All rules run here, with no terminal and no socket.
 
-use std::collections::{HashMap, VecDeque};
+use std::cell::RefCell;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 
 use terminus_core::text::{clean_line, MAX_SPEECH_CHARS};
 use terminus_core::{
@@ -8,8 +9,16 @@ use terminus_core::{
     FeedLine, Game, GameError, GameEvent, GameView, ItemView, LogEntry, ObjectView, ParseError,
     ParsedCommand, Permissions, PlayerId, PresenceView, SessionId, SessionIdentity,
 };
+use uuid::Uuid;
 
 use crate::catalog::coffee_registry;
+use crate::geography::{
+    derive_region_seed, describe_tile, effective_tile, epoch_spec, format_seed, frontier_epoch,
+    frontier_identity, is_reserved_word, marker_sights, step_origin, validate_marker_name,
+    Cardinal, Discovery, GenerateError, GeneratedRegion, GeographyState, MaterializedRegion,
+    RegionCache, RegionCoordKey, RegionIdentity, Structure, Terrain, Tile, WildernessPos,
+    WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE,
+};
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::undernet::{self, ExitDef, ObjectDef};
 
@@ -36,8 +45,17 @@ pub struct WorldState {
     by_player: HashMap<PlayerId, SessionId>,
     log: VecDeque<LogEntry>,
     overlays: HashMap<SessionId, String>,
+    geography: GeographyState,
+    region_cache: RefCell<RegionCache>,
     use_system_clock: bool,
     now_ms: u64,
+}
+
+struct TravelTarget {
+    to: String,
+    from_label: String,
+    to_label: String,
+    open: Option<(RegionIdentity, u8, u8)>,
 }
 
 impl WorldState {
@@ -50,6 +68,8 @@ impl WorldState {
             by_player: HashMap::new(),
             log: VecDeque::new(),
             overlays: HashMap::new(),
+            geography: GeographyState::default(),
+            region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
         }
@@ -68,6 +88,18 @@ impl WorldState {
         while self.log.len() > LOG_CAP {
             self.log.pop_front();
         }
+    }
+
+    pub fn install_geography(&mut self, geography: GeographyState) {
+        self.geography = geography;
+    }
+
+    pub fn geography_snapshot(&self) -> GeographyState {
+        self.geography.clone()
+    }
+
+    pub fn restore_geography(&mut self, geography: GeographyState) {
+        self.geography = geography;
     }
 
     pub fn insert_operator(&mut self, operator: Operator) {
@@ -226,7 +258,18 @@ impl WorldState {
             return false;
         };
         let key = word.to_ascii_lowercase();
-        self.exit_list().into_iter().any(|exit| exit.from == location && exit.keyword == key)
+        if let Some(pos) = WildernessPos::parse(&location) {
+            if Cardinal::parse(&key).is_some() || (pos.is_gate() && key == CITY_KEYWORD) {
+                return true;
+            }
+        }
+        if location == OUTSKIRTS_FROM && key == OUTSKIRTS_KEYWORD {
+            return true;
+        }
+        if self.exit_list().iter().any(|exit| exit.from == location && exit.keyword == key) {
+            return true;
+        }
+        self.geography.connection(&location, &key).is_some()
     }
 
     fn exit_list(&self) -> Vec<ExitDef> {
@@ -307,6 +350,14 @@ impl WorldState {
     ) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
+        if let Some(pos) = WildernessPos::parse(&location) {
+            let text = match self.wild_scene(pos) {
+                Ok(scene) => scene.map,
+                Err(err) => unreadable_wilderness(&err),
+            };
+            self.set_overlay(session_id, text);
+            return Ok(quiet());
+        }
         let open = self
             .operators
             .get(&player)
@@ -344,7 +395,7 @@ impl WorldState {
                         .get(&session.identity.player_id)
                         .map(|op| op.location_id.clone())
                         .unwrap_or_else(|| "?".into());
-                    let loc_name = undernet::location(&loc).map(|l| l.name).unwrap_or(loc.as_str());
+                    let loc_name = self.place_title(&loc);
                     rows.push(format!("{} — {loc_name}", session.identity.name));
                 }
                 rows.sort();
@@ -371,59 +422,44 @@ impl WorldState {
         let keyword = cmd.args.first().map(|word| word.to_ascii_lowercase()).unwrap_or_default();
         let player = self.player(session_id)?;
         let from = self.location_id(session_id)?;
-        let from_name = place_name(&from);
-        let exit =
-            self.exit_list().into_iter().find(|exit| exit.from == from && exit.keyword == keyword);
-        let Some(exit) = exit else {
-            let visible = self.visible_exits(session_id)?;
-            let list = if visible.is_empty() {
-                "none".to_string()
-            } else {
-                visible.iter().map(|exit| exit.keyword.clone()).collect::<Vec<_>>().join(", ")
-            };
-            return Err(GameError::Rejected(format!("You can't go that way. Exits: {list}.")));
-        };
-        if let Some(flag) = exit.requires_flag {
-            let has =
-                self.operators.get(&player).map(|op| op.flags.contains(flag)).unwrap_or(false);
-            if !has {
-                return Err(GameError::Rejected(
-                    "The way to the Black Archive is sealed. The lock wants a cipher plate.".into(),
-                ));
-            }
+        let flags = self.operator_flags(player);
+        let target = self.resolve_travel(&from, &keyword, &flags)?;
+        let mut ops = Vec::new();
+        if let Some((identity, local_x, local_y)) = target.open {
+            ops.extend(self.ensure_region(identity, Some(player), local_x, local_y)?);
         }
-        let dest_name = place_name(exit.to);
         let name = self.name_of(session_id)?;
         if let Some(op) = self.operators.get_mut(&player) {
-            op.location_id = exit.to.to_string();
+            op.location_id.clone_from(&target.to);
         }
         self.clear_overlay(session_id);
         let (leave, leave_op) = self.emit(
             Channel::System,
             Audience::Location(from),
             None,
-            format!("{name} heads toward {dest_name}."),
+            format!("{name} heads toward {}.", target.to_label),
         );
         let (arrive, arrive_op) = self.emit(
             Channel::System,
-            Audience::Location(exit.to.to_string()),
+            Audience::Location(target.to.clone()),
             None,
-            format!("{name} arrives from {from_name}."),
+            format!("{name} arrives from {}.", target.from_label),
         );
         let (note, note_op) = self.emit(
             Channel::System,
             Audience::Player(player),
             None,
-            format!("You step into {dest_name}."),
+            format!("You step into {}.", target.to_label),
         );
-        let moved = PersistOp::Move {
+        ops.push(PersistOp::Move {
             operator_id: player,
-            location_id: exit.to.to_string(),
+            location_id: target.to,
             last_seen: self.now_ms,
-        };
+        });
+        ops.extend([leave_op, arrive_op, note_op]);
         Ok(Transition {
             outcome: CommandOutcome { events: vec![leave, arrive, note], quit: false },
-            ops: vec![moved, leave_op, arrive_op, note_op],
+            ops,
         })
     }
 
@@ -508,6 +544,9 @@ impl WorldState {
         let target = cmd.args.first().map(|word| word.to_ascii_lowercase()).unwrap_or_default();
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
+        if let Some(pos) = WildernessPos::parse(&location) {
+            return self.inspect_wild(session_id, player, pos, &target);
+        }
         if let Some(object) = find_object(&location, &target) {
             return self.inspect_object(session_id, player, object);
         }
@@ -594,6 +633,64 @@ impl WorldState {
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
+    fn cmd_mark(
+        &mut self,
+        session_id: SessionId,
+        cmd: &ParsedCommand,
+    ) -> Result<Transition, GameError> {
+        let player = self.player(session_id)?;
+        let location = self.location_id(session_id)?;
+        let Some(pos) = WildernessPos::parse(&location) else {
+            return Err(GameError::Rejected("You can only mark a place in the outskirts.".into()));
+        };
+        let raw = cmd.args.first().map(String::as_str).unwrap_or("");
+        let name =
+            validate_marker_name(raw).map_err(|message| GameError::Rejected(message.into()))?;
+        if let Some(region_id) =
+            self.geography.region(pos.identity.coord_key()).map(|region| region.id)
+        {
+            if !self.geography.structures_at(region_id, pos.local_x, pos.local_y).is_empty() {
+                return Err(GameError::Rejected("This spot is already marked.".into()));
+            }
+        }
+        let mut ops = self.ensure_region(pos.identity, Some(player), pos.local_x, pos.local_y)?;
+        let region_id = self
+            .geography
+            .region(pos.identity.coord_key())
+            .map(|region| region.id)
+            .ok_or_else(|| GameError::Rejected("This region is not open.".into()))?;
+        let id = Uuid::new_v4();
+        let created_at = self.now_ms;
+        self.geography.structures.push(Structure {
+            id,
+            region_id,
+            local_x: pos.local_x,
+            local_y: pos.local_y,
+            kind: MARKER_KIND.into(),
+            name: name.clone(),
+            owner_id: Some(player),
+            created_at,
+        });
+        ops.push(PersistOp::Structure {
+            id,
+            region_id,
+            local_x: pos.local_x,
+            local_y: pos.local_y,
+            kind: MARKER_KIND.into(),
+            name: name.clone(),
+            owner_id: Some(player),
+            created_at,
+        });
+        let (event, op) = self.emit(
+            Channel::System,
+            Audience::Location(location),
+            None,
+            format!("{} sets a marker named {name}.", self.name_of(session_id)?),
+        );
+        ops.push(op);
+        Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
     fn cmd_quit(
         &mut self,
         _session_id: SessionId,
@@ -603,6 +700,617 @@ impl WorldState {
             outcome: CommandOutcome { events: Vec::new(), quit: true },
             ops: Vec::new(),
         })
+    }
+
+    fn operator_flags(&self, player: PlayerId) -> BTreeSet<String> {
+        self.operators.get(&player).map(|op| op.flags.clone()).unwrap_or_default()
+    }
+
+    fn generated(&self, identity: RegionIdentity) -> Result<GeneratedRegion, GenerateError> {
+        self.region_cache.borrow_mut().get_or_generate(identity)
+    }
+
+    fn place_title(&self, id: &str) -> String {
+        if let Some(pos) = WildernessPos::parse(id) {
+            if pos.is_gate() {
+                return "The Outskirts".to_string();
+            }
+            return match self.generated(pos.identity) {
+                Ok(region) => {
+                    let baseline = region
+                        .tile(pos.local_x, pos.local_y)
+                        .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
+                    effective_tile(pos, baseline, &self.geography).terrain.label().to_string()
+                }
+                Err(_) => "Unreadable wilderness".to_string(),
+            };
+        }
+        undernet::location(id).map(|loc| loc.name.to_string()).unwrap_or_else(|| id.to_string())
+    }
+
+    fn identity_for_birth(
+        &self,
+        world: crate::geography::WorldId,
+        epoch_id: u32,
+        origin_x: i32,
+        origin_y: i32,
+    ) -> Result<RegionIdentity, String> {
+        let key = RegionCoordKey { world, epoch_id, origin_x, origin_y };
+        if let Some(existing) = self.geography.region(key) {
+            return Ok(existing.identity);
+        }
+        if frontier_epoch().id == epoch_id {
+            return Ok(frontier_identity(world, origin_x, origin_y));
+        }
+        let epoch = epoch_spec(epoch_id).ok_or_else(|| format!("Epoch {epoch_id} is not open."))?;
+        Ok(RegionIdentity {
+            world,
+            epoch_id,
+            origin_x,
+            origin_y,
+            generation_version: epoch.generation_version,
+        })
+    }
+
+    fn resolve_travel(
+        &self,
+        from: &str,
+        keyword: &str,
+        flags: &BTreeSet<String>,
+    ) -> Result<TravelTarget, GameError> {
+        let key = keyword.to_ascii_lowercase();
+        if let Some(pos) = WildernessPos::parse(from) {
+            if let Some(dir) = Cardinal::parse(&key) {
+                return self.resolve_cardinal(pos, dir);
+            }
+            if pos.is_gate() && key == CITY_KEYWORD {
+                return Ok(TravelTarget {
+                    to: OUTSKIRTS_FROM.to_string(),
+                    from_label: self.place_title(from),
+                    to_label: "Roof Array".to_string(),
+                    open: None,
+                });
+            }
+        }
+        if from == OUTSKIRTS_FROM && key == OUTSKIRTS_KEYWORD {
+            let gate = crate::geography::gate_position();
+            return Ok(TravelTarget {
+                to: gate.key(),
+                from_label: self.place_title(from),
+                to_label: "The Outskirts".to_string(),
+                open: Some((gate.identity, gate.local_x, gate.local_y)),
+            });
+        }
+        if let Some(exit) =
+            self.exit_list().into_iter().find(|exit| exit.from == from && exit.keyword == key)
+        {
+            if let Some(flag) = exit.requires_flag {
+                if !flags.contains(flag) {
+                    return Err(GameError::Rejected(
+                        "The way to the Black Archive is sealed. The lock wants a cipher plate."
+                            .into(),
+                    ));
+                }
+            }
+            return self.finish_static(from, exit.to, exit.label);
+        }
+        if let Some(link) = self.geography.connection(from, &key).cloned() {
+            return self.follow_link(from, &link);
+        }
+        Err(GameError::Rejected(self.cannot_go(from, flags)))
+    }
+
+    fn resolve_cardinal(
+        &self,
+        pos: WildernessPos,
+        dir: Cardinal,
+    ) -> Result<TravelTarget, GameError> {
+        let (origin_x, origin_y, local_x, local_y) = step_origin(pos, dir)
+            .map_err(|_| GameError::Rejected("The wilderness ends here.".into()))?;
+        let identity = self
+            .identity_for_birth(pos.identity.world, pos.identity.epoch_id, origin_x, origin_y)
+            .map_err(GameError::Rejected)?;
+        let dest = WildernessPos { identity, local_x, local_y };
+        let tile = self.effective_at(dest)?;
+        if let Some(reason) = tile.block_reason() {
+            return Err(GameError::Rejected(format!(
+                "{reason} {}.",
+                dir.label().to_ascii_lowercase()
+            )));
+        }
+        Ok(TravelTarget {
+            to: dest.key(),
+            from_label: self.place_title(&pos.key()),
+            to_label: self.place_title(&dest.key()),
+            open: Some((identity, local_x, local_y)),
+        })
+    }
+
+    fn finish_static(&self, from: &str, to: &str, label: &str) -> Result<TravelTarget, GameError> {
+        if let Some(pos) = WildernessPos::parse(to) {
+            let tile = self.effective_at(pos)?;
+            if !tile.traversable() {
+                let reason = tile.block_reason().unwrap_or("You cannot go that way");
+                return Err(GameError::Rejected(format!("{reason}.")));
+            }
+            return Ok(TravelTarget {
+                to: pos.key(),
+                from_label: self.place_title(from),
+                to_label: label.to_string(),
+                open: Some((pos.identity, pos.local_x, pos.local_y)),
+            });
+        }
+        Ok(TravelTarget {
+            to: to.to_string(),
+            from_label: self.place_title(from),
+            to_label: label.to_string(),
+            open: None,
+        })
+    }
+
+    fn follow_link(&self, from: &str, link: &WorldConnection) -> Result<TravelTarget, GameError> {
+        self.finish_static(from, &link.to_place, &link.label)
+    }
+
+    fn effective_at(
+        &self,
+        pos: WildernessPos,
+    ) -> Result<crate::geography::EffectiveTile, GameError> {
+        let generated = self
+            .generated(pos.identity)
+            .map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
+        let baseline = generated
+            .tile(pos.local_x, pos.local_y)
+            .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
+        Ok(effective_tile(pos, baseline, &self.geography))
+    }
+
+    fn cannot_go(&self, from: &str, flags: &BTreeSet<String>) -> String {
+        let exits = self.list_exits(from, flags);
+        let list = if exits.is_empty() {
+            "none".to_string()
+        } else {
+            exits.iter().map(|exit| exit.keyword.clone()).collect::<Vec<_>>().join(", ")
+        };
+        format!("You can't go that way. Exits: {list}.")
+    }
+
+    fn list_exits(&self, location: &str, flags: &BTreeSet<String>) -> Vec<ExitView> {
+        let mut exits = Vec::new();
+        if let Some(pos) = WildernessPos::parse(location) {
+            for dir in [Cardinal::North, Cardinal::South, Cardinal::East, Cardinal::West] {
+                if let Ok(target) = self.resolve_cardinal(pos, dir) {
+                    exits.push(ExitView {
+                        keyword: dir.keyword().to_string(),
+                        label: dir.label().to_string(),
+                        destination: target.to_label,
+                    });
+                }
+            }
+            if pos.is_gate() {
+                exits.push(ExitView {
+                    keyword: CITY_KEYWORD.to_string(),
+                    label: "Roof Array".to_string(),
+                    destination: "Roof Array".to_string(),
+                });
+            }
+        } else {
+            for exit in self.exit_list() {
+                if exit.from != location {
+                    continue;
+                }
+                if let Some(flag) = exit.requires_flag {
+                    if !flags.contains(flag) {
+                        continue;
+                    }
+                }
+                exits.push(ExitView {
+                    keyword: exit.keyword.to_string(),
+                    label: exit.label.to_string(),
+                    destination: self.place_title(exit.to),
+                });
+            }
+            if location == OUTSKIRTS_FROM {
+                exits.push(ExitView {
+                    keyword: OUTSKIRTS_KEYWORD.to_string(),
+                    label: "The Outskirts".to_string(),
+                    destination: "The Outskirts".to_string(),
+                });
+            }
+        }
+        for link in &self.geography.connections {
+            if link.from_place != location {
+                continue;
+            }
+            if exits.iter().any(|exit| exit.keyword == link.keyword) {
+                continue;
+            }
+            if self.follow_link(location, link).is_ok() {
+                exits.push(ExitView {
+                    keyword: link.keyword.clone(),
+                    label: link.label.clone(),
+                    destination: self.place_title(&link.to_place),
+                });
+            }
+        }
+        exits
+    }
+
+    fn ensure_region(
+        &mut self,
+        identity: RegionIdentity,
+        actor: Option<PlayerId>,
+        local_x: u8,
+        local_y: u8,
+    ) -> Result<Vec<PersistOp>, GameError> {
+        if self.geography.region(identity.coord_key()).is_some() {
+            return Ok(Vec::new());
+        }
+        let seed =
+            derive_region_seed(identity).map_err(|err| GameError::Rejected(err.to_string()))?;
+        let id = Uuid::new_v4();
+        let discovered_at = self.now_ms;
+        self.geography.regions.insert(
+            identity.coord_key(),
+            MaterializedRegion {
+                id,
+                identity,
+                region_seed: seed,
+                placement_x: identity.origin_x,
+                placement_y: identity.origin_y,
+                discovered_at,
+            },
+        );
+        let discovery_id = Uuid::new_v4();
+        self.geography.discoveries.push(Discovery {
+            id: discovery_id,
+            region_id: id,
+            local_x,
+            local_y,
+            kind: "entered".into(),
+            note: "Entered the region.".into(),
+            actor_id: actor,
+            created_at: discovered_at,
+        });
+        Ok(vec![
+            PersistOp::MaterializeRegion {
+                id,
+                world_id: identity.world.as_str().to_string(),
+                epoch_id: identity.epoch_id,
+                origin_x: identity.origin_x,
+                origin_y: identity.origin_y,
+                generation_version: identity.generation_version,
+                region_seed_hex: format_seed(seed),
+                placement_x: identity.origin_x,
+                placement_y: identity.origin_y,
+                discovered_at,
+            },
+            PersistOp::Discovery {
+                id: discovery_id,
+                region_id: id,
+                local_x,
+                local_y,
+                kind: "entered".into(),
+                note: "Entered the region.".into(),
+                actor_id: actor,
+                created_at: discovered_at,
+            },
+        ])
+    }
+
+    /// Server-side terrain edit. Not a player command. The actor is the caller, never a client field.
+    pub fn apply_terrain_mod(
+        &mut self,
+        identity: RegionIdentity,
+        local_x: u8,
+        local_y: u8,
+        terrain: Terrain,
+        reason: &str,
+        actor: PlayerId,
+    ) -> Result<PersistOp, GameError> {
+        self.require_local(local_x, local_y)?;
+        let region_id = {
+            let region = self
+                .geography
+                .region(identity.coord_key())
+                .ok_or_else(|| GameError::Rejected("That region has not been opened.".into()))?;
+            if region.identity != identity {
+                return Err(GameError::Rejected(
+                    "That region keeps its original generator. It cannot be rewritten as another version."
+                        .into(),
+                ));
+            }
+            region.id
+        };
+        let created_at = self.now_ms;
+        self.geography.terrain_mods.retain(|item| {
+            !(item.region_id == region_id && item.local_x == local_x && item.local_y == local_y)
+        });
+        self.geography.terrain_mods.push(crate::geography::TerrainMod {
+            region_id,
+            local_x,
+            local_y,
+            terrain,
+            reason: reason.to_string(),
+            actor_id: Some(actor),
+            created_at,
+        });
+        Ok(PersistOp::TerrainMod {
+            region_id,
+            local_x,
+            local_y,
+            terrain: terrain.as_str().to_string(),
+            reason: reason.to_string(),
+            actor_id: Some(actor),
+            created_at,
+        })
+    }
+
+    /// Move the atlas label. Birth coordinates, seeds, and place keys stay.
+    pub fn relocate_region(
+        &mut self,
+        identity: RegionIdentity,
+        placement_x: i32,
+        placement_y: i32,
+    ) -> Result<PersistOp, GameError> {
+        let region = self
+            .geography
+            .regions
+            .get_mut(&identity.coord_key())
+            .ok_or_else(|| GameError::Rejected("That region has not been opened.".into()))?;
+        if region.identity != identity {
+            return Err(GameError::Rejected(
+                "Relocation cannot change a region's birth identity.".into(),
+            ));
+        }
+        region.placement_x = placement_x;
+        region.placement_y = placement_y;
+        Ok(PersistOp::RelocateRegion { id: region.id, placement_x, placement_y })
+    }
+
+    /// Author a persistent link. Rejects forged destinations and reserved movement words.
+    pub fn link_places(
+        &mut self,
+        from_place: &str,
+        keyword: &str,
+        to_place: &str,
+        label: &str,
+        actor: PlayerId,
+    ) -> Result<PersistOp, GameError> {
+        let keyword = keyword.trim().to_ascii_lowercase();
+        if keyword.is_empty() || keyword.split_whitespace().nth(1).is_some() {
+            return Err(GameError::Rejected("A connection needs one keyword.".into()));
+        }
+        if is_reserved_word(&keyword) {
+            return Err(GameError::Rejected("That keyword is reserved.".into()));
+        }
+        if !keyword.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
+            return Err(GameError::Rejected("A connection keyword must be plain text.".into()));
+        }
+        if from_place == to_place {
+            return Err(GameError::Rejected("A connection cannot lead to itself.".into()));
+        }
+        self.require_place(from_place)?;
+        self.require_place(to_place)?;
+        if let Some(pos) = WildernessPos::parse(to_place) {
+            let tile = self.effective_at(pos)?;
+            if !tile.traversable() {
+                return Err(GameError::Rejected("That destination cannot be walked.".into()));
+            }
+        }
+        if self.geography.connection(from_place, &keyword).is_some()
+            || self
+                .exit_list()
+                .iter()
+                .any(|exit| exit.from == from_place && exit.keyword == keyword)
+        {
+            return Err(GameError::Rejected("That way already exists.".into()));
+        }
+        let id = Uuid::new_v4();
+        let created_at = self.now_ms;
+        self.geography.connections.push(WorldConnection {
+            id,
+            from_place: from_place.to_string(),
+            keyword: keyword.clone(),
+            to_place: to_place.to_string(),
+            label: label.to_string(),
+            kind: "player".into(),
+            created_by: Some(actor),
+            created_at,
+        });
+        Ok(PersistOp::Connection {
+            id,
+            from_place: from_place.to_string(),
+            keyword,
+            to_place: to_place.to_string(),
+            label: label.to_string(),
+            kind: "player".into(),
+            created_by: Some(actor),
+            created_at,
+        })
+    }
+
+    fn require_place(&self, place: &str) -> Result<(), GameError> {
+        if WildernessPos::parse(place).is_some() || undernet::location(place).is_some() {
+            return Ok(());
+        }
+        Err(GameError::Rejected("That place is not in the world.".into()))
+    }
+
+    fn require_local(&self, local_x: u8, local_y: u8) -> Result<(), GameError> {
+        let limit = u32::try_from(REGION_SIZE).unwrap_or(16);
+        if u32::from(local_x) >= limit || u32::from(local_y) >= limit {
+            return Err(GameError::Rejected("That tile is outside the region.".into()));
+        }
+        Ok(())
+    }
+
+    fn owner_name(&self, id: Option<PlayerId>) -> String {
+        id.and_then(|id| self.operators.get(&id).map(|op| op.name.clone()))
+            .unwrap_or_else(|| "someone".to_string())
+    }
+
+    fn wild_scene(&self, pos: WildernessPos) -> Result<crate::geography::TileScene, GenerateError> {
+        let generated = self.generated(pos.identity)?;
+        let region_id = self.geography.region(pos.identity.coord_key()).map(|region| region.id);
+        let here = region_id
+            .map(|id| self.geography.structures_at(id, pos.local_x, pos.local_y))
+            .unwrap_or_default();
+        let sights = marker_sights(here, |id| self.owner_name(id));
+        let marks = region_id
+            .map(|id| {
+                self.geography
+                    .structures
+                    .iter()
+                    .filter(|item| item.region_id == id)
+                    .map(|item| (item.local_x, item.local_y))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        Ok(describe_tile(pos, &generated, &self.geography, &sights, &marks))
+    }
+
+    fn wilderness_view(
+        &self,
+        session_id: SessionId,
+        player: PlayerId,
+        name: &str,
+        pos: WildernessPos,
+    ) -> Result<GameView, GameError> {
+        let (inventory, location_id) = {
+            let op = self.operators.get(&player).ok_or(GameError::UnknownSession)?;
+            let inventory = op
+                .items
+                .iter()
+                .map(|item| ItemView {
+                    keyword: item.keyword.clone(),
+                    name: item.name.clone(),
+                    detail: item.detail.clone(),
+                })
+                .collect();
+            (inventory, op.location_id.clone())
+        };
+        let mut present = self
+            .names_in(&location_id)
+            .into_iter()
+            .filter(|other| other != name)
+            .map(|name| PresenceView { name })
+            .collect::<Vec<_>>();
+        present.sort_by(|a, b| a.name.cmp(&b.name));
+        let mut feed = self
+            .log
+            .iter()
+            .filter(|entry| entry.visible_to(&location_id, player))
+            .map(LogEntry::to_feed)
+            .collect::<Vec<_>>();
+        if feed.len() > FEED_CAP {
+            feed = feed.split_off(feed.len() - FEED_CAP);
+        }
+        let (location_name, description, objects, mut status) = match self.wild_scene(pos) {
+            Ok(scene) => {
+                let objects = scene
+                    .objects
+                    .into_iter()
+                    .map(|(keyword, name)| ObjectView { keyword, name })
+                    .collect();
+                (scene.title, scene.description, objects, scene.status)
+            }
+            Err(err) => (
+                "Unreadable wilderness".to_string(),
+                unreadable_wilderness(&err),
+                Vec::new(),
+                vec![format!("generator v{}", pos.identity.generation_version)],
+            ),
+        };
+        let mut lines = self.status_lines(session_id)?;
+        lines.append(&mut status);
+        Ok(GameView {
+            world_name: self.world_name.clone(),
+            connection: ConnectionState::Connected,
+            operator_name: name.to_string(),
+            location_name,
+            description,
+            exits: self.visible_exits(session_id)?,
+            present,
+            objects,
+            status: lines,
+            inventory,
+            feed,
+            overlay: self.overlays.get(&session_id).cloned(),
+            commands: self.registry.hints(),
+        })
+    }
+
+    fn inspect_wild(
+        &mut self,
+        session_id: SessionId,
+        player: PlayerId,
+        pos: WildernessPos,
+        target: &str,
+    ) -> Result<Transition, GameError> {
+        let scene =
+            self.wild_scene(pos).map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
+        let matched = scene.objects.iter().find(|(keyword, name)| {
+            keyword.eq_ignore_ascii_case(target) || name.eq_ignore_ascii_case(target)
+        });
+        if matched.is_none() {
+            if let Some(other) =
+                self.names_in(&pos.key()).into_iter().find(|name| name.eq_ignore_ascii_case(target))
+            {
+                let (event, op) = self.emit(
+                    Channel::System,
+                    Audience::Player(player),
+                    None,
+                    format!("{other} is here, watching the land."),
+                );
+                return Ok(Transition {
+                    outcome: CommandOutcome { events: vec![event], quit: false },
+                    ops: vec![op],
+                });
+            }
+            return self.inspect_carried(player, target);
+        }
+        let text = if let Some(kind) = self.effective_at(pos)?.landmark {
+            if target.eq_ignore_ascii_case(kind.keyword())
+                || target.eq_ignore_ascii_case(kind.name())
+            {
+                kind.prose().to_string()
+            } else {
+                scene.description
+            }
+        } else {
+            scene.description
+        };
+        let _ = session_id;
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
+        Ok(Transition {
+            outcome: CommandOutcome { events: vec![event], quit: false },
+            ops: vec![op],
+        })
+    }
+
+    fn inspect_carried(&mut self, player: PlayerId, target: &str) -> Result<Transition, GameError> {
+        if let Some(item) = self.operators.get(&player).and_then(|op| {
+            op.items
+                .iter()
+                .find(|item| {
+                    item.keyword.eq_ignore_ascii_case(target)
+                        || item.name.eq_ignore_ascii_case(target)
+                })
+                .cloned()
+        }) {
+            let (event, op) = self.emit(
+                Channel::System,
+                Audience::Player(player),
+                None,
+                format!("{}: {}", item.name, item.detail),
+            );
+            return Ok(Transition {
+                outcome: CommandOutcome { events: vec![event], quit: false },
+                ops: vec![op],
+            });
+        }
+        Err(GameError::Rejected(format!("You see nothing called '{target}'.")))
     }
 
     fn names_in(&self, location: &str) -> Vec<String> {
@@ -621,24 +1329,8 @@ impl WorldState {
     fn visible_exits(&self, session_id: SessionId) -> Result<Vec<ExitView>, GameError> {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
-        let flags = self.operators.get(&player).map(|op| op.flags.clone()).unwrap_or_default();
-        let mut exits = Vec::new();
-        for exit in self.exit_list() {
-            if exit.from != location {
-                continue;
-            }
-            if let Some(flag) = exit.requires_flag {
-                if !flags.contains(flag) {
-                    continue;
-                }
-            }
-            exits.push(ExitView {
-                keyword: exit.keyword.to_string(),
-                label: exit.label.to_string(),
-                destination: place_name(exit.to),
-            });
-        }
-        Ok(exits)
+        let flags = self.operator_flags(player);
+        Ok(self.list_exits(&location, &flags))
     }
 
     fn status_lines(&self, session_id: SessionId) -> Result<Vec<String>, GameError> {
@@ -648,7 +1340,7 @@ impl WorldState {
         let cipher = if op.flags.contains("cipher-plate") { "yes" } else { "no" };
         Ok(vec![
             name,
-            format!("place: {}", place_name(&op.location_id)),
+            format!("place: {}", self.place_title(&op.location_id)),
             format!("online: {}", self.sessions.len()),
             format!("carried: {}", op.items.len()),
             format!("cipher plate: {cipher}"),
@@ -659,6 +1351,9 @@ impl WorldState {
         let player = self.player(session_id)?;
         let name = self.name_of(session_id)?;
         let op = self.operators.get(&player).ok_or(GameError::UnknownSession)?;
+        if let Some(pos) = WildernessPos::parse(&op.location_id) {
+            return self.wilderness_view(session_id, player, &name, pos);
+        }
         let loc = undernet::location(&op.location_id)
             .ok_or_else(|| GameError::Rejected("you are standing nowhere known".into()))?;
         let mut present = self
@@ -761,13 +1456,14 @@ fn handler(name: &str) -> Option<Handler> {
         "status" => WorldState::cmd_status,
         "inventory" => WorldState::cmd_inventory,
         "inspect" => WorldState::cmd_inspect,
+        "mark" => WorldState::cmd_mark,
         "quit" => WorldState::cmd_quit,
         _ => return None,
     })
 }
 
 fn needs_play(name: &str) -> bool {
-    matches!(name, "go" | "inspect")
+    matches!(name, "go" | "inspect" | "mark")
 }
 
 fn needs_speak(name: &str) -> bool {
@@ -778,8 +1474,10 @@ fn quiet() -> Transition {
     Transition { outcome: CommandOutcome::default(), ops: Vec::new() }
 }
 
-fn place_name(id: &str) -> String {
-    undernet::location(id).map(|loc| loc.name.to_string()).unwrap_or_else(|| id.to_string())
+fn unreadable_wilderness(err: &GenerateError) -> String {
+    format!(
+        "This land cannot be rebuilt ({err}). It has not been deleted. Walking it is closed until its generator is available."
+    )
 }
 
 fn find_object(location: &str, target: &str) -> Option<ObjectDef> {
@@ -956,5 +1654,208 @@ mod tests {
         world.detach(ada).unwrap();
         assert!(world.view(bob).is_ok());
         assert!(feed_text(&world, bob).contains("disconnects"));
+    }
+
+    #[test]
+    fn outskirts_can_be_walked_marked_and_left() {
+        let (mut world, ada, bob, ada_id, _) = pair();
+        world.apply(ada, "go up").unwrap();
+        let roof = world.view(ada).unwrap();
+        assert!(roof.exits.iter().any(|exit| exit.keyword == "outskirts"));
+        world.apply(ada, "outskirts").unwrap();
+        let arrived = world.view(ada).unwrap();
+        assert_eq!(arrived.location_name, "The Outskirts");
+        assert!(arrived.description.contains("roof array"));
+        assert!(arrived.exits.iter().any(|exit| exit.keyword == "city"));
+        assert!(world.location_key(ada).unwrap().starts_with("w:undernet:1:0:0:1:"));
+        assert_eq!(world.geography.regions.len(), 1);
+        let identity = world.geography.regions.values().next().unwrap().identity;
+        assert_eq!(identity.generation_version, 1);
+        assert_eq!(identity.origin_x, 0);
+        assert_eq!(identity.origin_y, 0);
+
+        world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "trail", ada_id).unwrap();
+        world.apply(ada, "north").unwrap();
+        let moved = world.location_key(ada).unwrap();
+        assert!(moved.ends_with(":8:9"), "{moved}");
+        world.apply(ada, "mark camp").unwrap();
+        let marked = world.view(ada).unwrap();
+        assert!(marked.objects.iter().any(|object| object.keyword == "camp"));
+        world.apply(ada, "map").unwrap();
+        let mapped = world.view(ada).unwrap().overlay.unwrap_or_default();
+        assert!(mapped.contains("birth (0, 0)"));
+        assert!(mapped.contains('@'));
+
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        assert!(!world.view(ada).unwrap().present.iter().any(|person| person.name == "bob"));
+        world.apply(bob, "north").unwrap();
+        assert!(world.view(ada).unwrap().present.iter().any(|person| person.name == "bob"));
+        world.apply(ada, "say quiet").unwrap();
+        assert!(feed_text(&world, bob).contains("quiet"));
+
+        world.apply(ada, "south").unwrap();
+        world.apply(ada, "city").unwrap();
+        assert_eq!(world.view(ada).unwrap().location_name, "Roof Array");
+        assert_eq!(world.geography.structures.len(), 1);
+        assert_eq!(world.geography.structures[0].owner_id, Some(ada_id));
+    }
+
+    #[test]
+    fn wilderness_rejects_invalid_actions() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let err = world.apply(ada, "mark camp").unwrap_err();
+        assert!(err.to_string().contains("outskirts"));
+        let err = world.apply(ada, "go north").unwrap_err();
+        assert!(err.to_string().contains("can't go"));
+        let err = world.apply(ada, "go w:undernet:1:5:5:1:0:0").unwrap_err();
+        assert!(err.to_string().contains("can't go"));
+
+        world.apply(ada, "go up").unwrap();
+        world.apply(ada, "outskirts").unwrap();
+        assert!(world.apply(ada, "mark n").is_err());
+        assert!(world.apply(ada, "mark north").is_err());
+        let before = world.geography_snapshot();
+        world.apply(ada, "mark camp").unwrap();
+        assert!(world.apply(ada, "mark camp").unwrap_err().to_string().contains("already marked"));
+        assert_eq!(world.geography.structures[0].owner_id, Some(ada_id));
+        let marked = world.geography_snapshot();
+        world.restore_geography(before);
+        assert!(world.geography.structures.is_empty());
+        world.install_geography(marked);
+        assert_eq!(world.geography.structures.len(), 1);
+    }
+
+    #[test]
+    fn water_blocks_movement_and_a_mod_can_open_it() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let region = crate::geography::generate_region(crate::geography::gate_identity()).unwrap();
+        let mut water = None;
+        let mut stand = None;
+        for y in 0..16u8 {
+            for x in 0..16u8 {
+                if (x, y) == (crate::geography::GATE_LOCAL_X, crate::geography::GATE_LOCAL_Y) {
+                    continue;
+                }
+                let tile = region.tile(x, y).unwrap();
+                if tile.terrain != Terrain::Water {
+                    continue;
+                }
+                for (dx, dy, dir) in
+                    [(1, 0, "west"), (-1, 0, "east"), (0, 1, "south"), (0, -1, "north")]
+                {
+                    let nx = i32::from(x) + dx;
+                    let ny = i32::from(y) + dy;
+                    if !(0..16).contains(&nx) || !(0..16).contains(&ny) {
+                        continue;
+                    }
+                    let Ok(nx) = u8::try_from(nx) else { continue };
+                    let Ok(ny) = u8::try_from(ny) else { continue };
+                    let neighbor = region.tile(nx, ny).unwrap();
+                    if neighbor.terrain.traversable() {
+                        water = Some((x, y, dir));
+                        stand = Some((nx, ny));
+                    }
+                }
+            }
+        }
+        let (wx, wy, back) = water.expect("region 0,0 has water beside walkable ground");
+        let (sx, sy) = stand.unwrap();
+        let pos =
+            WildernessPos { identity: crate::geography::gate_identity(), local_x: sx, local_y: sy };
+        world.operators.get_mut(&ada_id).unwrap().location_id = pos.key();
+        let err = world.apply(ada, back).unwrap_err();
+        assert!(err.to_string().contains("Water"), "{err}");
+
+        world.ensure_region(pos.identity, Some(ada_id), sx, sy).unwrap();
+        world.apply_terrain_mod(pos.identity, wx, wy, Terrain::Grass, "ford", ada_id).unwrap();
+        world.apply(ada, back).unwrap();
+        let arrived = WildernessPos::parse(&world.location_key(ada).unwrap()).unwrap();
+        assert_eq!((arrived.local_x, arrived.local_y), (wx, wy));
+    }
+
+    #[test]
+    fn crossing_a_region_edge_keeps_identity_stable() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let identity = crate::geography::gate_identity();
+        let edge = WildernessPos { identity, local_x: 15, local_y: 1 };
+        world.operators.get_mut(&ada_id).unwrap().location_id = edge.key();
+        world.ensure_region(identity, Some(ada_id), 15, 1).unwrap();
+        let next = RegionIdentity { origin_x: 1, ..identity };
+        world.ensure_region(next, Some(ada_id), 0, 1).unwrap();
+        world.apply_terrain_mod(identity, 15, 1, Terrain::Grass, "edge", ada_id).unwrap();
+        world.apply_terrain_mod(next, 0, 1, Terrain::Grass, "edge", ada_id).unwrap();
+        world.apply(ada, "east").unwrap();
+        let arrived = WildernessPos::parse(&world.location_key(ada).unwrap()).unwrap();
+        assert_eq!(arrived.identity.origin_x, 1);
+        assert_eq!(arrived.local_x, 0);
+        assert_eq!(arrived.identity.generation_version, 1);
+        assert_eq!(world.geography.regions.len(), 2);
+
+        let birth = world.geography.region(identity.coord_key()).unwrap().identity;
+        let op = world.relocate_region(identity, 80, -4).unwrap();
+        assert!(matches!(op, PersistOp::RelocateRegion { placement_x: 80, placement_y: -4, .. }));
+        let stored = world.geography.region(identity.coord_key()).unwrap();
+        assert_eq!(stored.identity, birth);
+        assert_eq!((stored.placement_x, stored.placement_y), (80, -4));
+        assert_eq!(stored.region_seed, derive_region_seed(identity).unwrap());
+    }
+
+    #[test]
+    fn links_reject_reserved_words_and_unknown_places() {
+        let (mut world, _, _, ada_id, _) = pair();
+        let err =
+            world.link_places("coffee-shop", "north", "neon-alley", "North", ada_id).unwrap_err();
+        assert!(err.to_string().contains("reserved"));
+        let err =
+            world.link_places("coffee-shop", "trail", "nowhere", "Nowhere", ada_id).unwrap_err();
+        assert!(err.to_string().contains("not in the world"));
+        let err =
+            world.link_places("coffee-shop", "trail", "coffee-shop", "Loop", ada_id).unwrap_err();
+        assert!(err.to_string().contains("itself"));
+    }
+
+    #[test]
+    fn unknown_generation_version_stays_addressable() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let mut identity = crate::geography::gate_identity();
+        identity.origin_x = 3;
+        identity.origin_y = -4;
+        identity.generation_version = 9;
+        let id = uuid::Uuid::new_v4();
+        world.install_geography(GeographyState {
+            regions: HashMap::from([(
+                identity.coord_key(),
+                MaterializedRegion {
+                    id,
+                    identity,
+                    region_seed: 99,
+                    placement_x: identity.origin_x,
+                    placement_y: identity.origin_y,
+                    discovered_at: 1,
+                },
+            )]),
+            ..GeographyState::default()
+        });
+        let pos = WildernessPos { identity, local_x: 1, local_y: 1 };
+        world.operators.get_mut(&ada_id).unwrap().location_id = pos.key();
+        let view = world.view(ada).unwrap();
+        assert!(view.description.contains("version 9"), "{}", view.description);
+        assert_eq!(world.geography.regions.len(), 1);
+        assert!(world.apply(ada, "north").is_err());
+        assert_eq!(world.location_key(ada).unwrap(), pos.key());
+    }
+
+    #[test]
+    fn spectator_cannot_mark() {
+        let mut world = WorldState::for_tests();
+        let id = PlayerId::new();
+        world.insert_operator(starter_operator(id, uuid::Uuid::new_v4(), "cy", "cy"));
+        let identity = SessionIdentity::new(id, "cy", Permissions::spectator());
+        let session = identity.session_id;
+        world.connect_player(identity).unwrap();
+        world.operators.get_mut(&id).unwrap().location_id = crate::geography::gate_position().key();
+        assert!(world.apply(session, "mark camp").is_err());
+        assert!(world.geography.structures.is_empty());
     }
 }

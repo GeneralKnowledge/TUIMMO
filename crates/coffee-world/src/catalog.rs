@@ -75,6 +75,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::RequiredWord,
         },
         CommandSpec {
+            name: "mark",
+            aliases: &[],
+            summary: "Leave a named marker on this outskirts tile",
+            usage: "mark <name>",
+            args: ArgMode::RequiredWord,
+        },
+        CommandSpec {
             name: "quit",
             aliases: &["q"],
             summary: "Close this session",

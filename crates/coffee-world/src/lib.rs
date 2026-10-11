@@ -9,6 +9,7 @@
 
 pub mod auth;
 pub mod catalog;
+pub mod geography;
 pub mod model;
 pub mod state;
 pub mod store;
