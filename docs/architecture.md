@@ -1,0 +1,45 @@
+# Architecture
+
+Coffee.shop is one process with a hard boundary between transport and rules.
+
+```mermaid
+flowchart LR
+  subgraph clients [Players]
+    sshClient[SSH client]
+    play[coffee-server play]
+  end
+  subgraph process [coffee-server]
+    gateway[terminus-ssh gateway]
+    tui[terminus-tui]
+    proto[protocol listener]
+    hub[Hub actor]
+    world[WorldState]
+    store[SQLite store]
+  end
+  sshClient --> gateway
+  gateway --> tui
+  play --> tui
+  tui --> proto
+  gateway -->|password check| hub
+  proto --> hub
+  hub --> world
+  hub --> store
+```
+
+`WorldState` implements `terminus_core::Game`. It accepts typed commands and returns a `GameView` plus the rows that must be saved. It does not read sockets or draw widgets.
+
+`Hub` owns the world. Every login, command, and disconnect is a message to that task, so two players cannot interleave a mutation. After a successful transition the hub commits a `PersistOp` list inside one transaction. If the commit fails, the in-memory operator and log are restored to the pre-command snapshot.
+
+The TUI renders `GameView` and sends command lines. It does not decide whether a move is legal. SSH authentication calls the hub in-process and receives a session token. The terminal session then speaks the versioned protocol over a `0600` unix socket at `data/game.sock`. That socket is the same one `coffee-server play` uses. The gateway refuses `exec`, subsystems, environment changes, and forwarding.
+
+`examples/minimal-game` implements `Game` and calls `terminus_tui::run_local`. It does not link `coffee-world`.
+
+## Persistence boundary
+
+Locations and exits are defined in `coffee-world` and upserted on boot. The database is the record of accounts, operators, positions, flags, items, and the recent message log (capped at 200). A command does not rewrite the whole world.
+
+Migrations live in `crates/coffee-world/migrations` and run when the store opens. A new `data/` directory is created on first start.
+
+## Shutdown
+
+Ctrl-C asks the SSH listener to stop, aborts protocol tasks, and lets the hub finish the message it is on. Each protocol connection drop detaches its operator and writes a leave line. The socket file is removed. The database is left in place.

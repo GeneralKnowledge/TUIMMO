@@ -1,0 +1,22 @@
+[package]
+name = "terminus-ssh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "SSH gateway that starts a Terminus session instead of a shell"
+
+[dependencies]
+rand.workspace = true
+ratatui.workspace = true
+russh.workspace = true
+terminus-core.workspace = true
+terminus-protocol.workspace = true
+terminus-tui.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

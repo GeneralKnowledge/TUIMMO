@@ -1,0 +1,30 @@
+[package]
+name = "coffee-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Authoritative Coffee.shop server and SSH gateway"
+
+[[bin]]
+name = "coffee-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+coffee-world.workspace = true
+crossterm.workspace = true
+ratatui.workspace = true
+terminus-core.workspace = true
+terminus-protocol.workspace = true
+terminus-ssh.workspace = true
+terminus-tui.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

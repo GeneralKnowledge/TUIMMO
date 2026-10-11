@@ -1,0 +1,28 @@
+[package]
+name = "terminus-integration"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Multiplayer, persistence, and SSH integration tests"
+
+[[test]]
+name = "multiplayer"
+path = "multiplayer.rs"
+
+[[test]]
+name = "ssh_session"
+path = "ssh_session.rs"
+
+[dependencies]
+anyhow.workspace = true
+coffee-server.workspace = true
+russh.workspace = true
+tempfile.workspace = true
+terminus-core.workspace = true
+terminus-protocol.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
