@@ -20,7 +20,7 @@ flowchart LR
   gateway --> tui
   play --> tui
   tui --> proto
-  gateway -->|password check| hub
+  gateway -->|lobby or existing password| hub
   proto --> hub
   hub --> world
   hub --> store
@@ -30,7 +30,7 @@ flowchart LR
 
 `Hub` owns the world. Every login, command, and disconnect is a message to that task, so two players cannot interleave a mutation. After a successful transition the hub commits a `PersistOp` list inside one transaction. If the commit fails, the in-memory operator, message log, and geography snapshot are restored.
 
-The TUI renders `GameView` and sends command lines. It does not decide whether a move is legal. SSH authentication calls the hub in-process and receives a session token. The terminal session then speaks the versioned protocol over a `0600` unix socket at `data/game.sock`. That socket is the same one `coffee-server play` uses. The gateway refuses `exec`, subsystems, environment changes, and forwarding.
+The TUI renders `GameView` and sends command lines. It does not decide whether a move is legal. SSH `none` opens an encrypted lobby and ignores the operating-system username. The welcome screen then asks the hub to create or load an account. A client that authenticates with a password still reaches `Hub::login`, which only accepts an existing permanent account. The terminal session speaks the versioned protocol over a `0600` unix socket at `data/game.sock`. That socket is the same one `coffee-server play` uses. The gateway refuses `exec`, subsystems, environment changes, and forwarding.
 
 `examples/minimal-game` implements `Game` and calls `terminus_tui::run_local`. It does not link `coffee-world`.
 
@@ -40,7 +40,7 @@ Hand-authored locations and exits are defined in `coffee-world` and upserted on 
 
 The database is the record of accounts, operators, positions, flags, items, the recent message log (capped at 200), and persistent geography: materialized regions, structures, terrain modifications, discoveries, and explicit connections. Generated tiles are not stored. A command does not rewrite the whole world.
 
-Migrations live in `crates/coffee-world/migrations` and run when the store opens. `0001_init.sql` is the original schema. `0002_world.sql` adds the geography tables. A new `data/` directory is created on first start.
+Migrations live in `crates/coffee-world/migrations` and run when the store opens. `0001_init.sql` is the original schema. `0002_world.sql` adds the geography tables. `0003_accounts.sql` adds guest state, optional email, and recovery verifiers without rebuilding player tables. A new `data/` directory is created on first start. Account lifecycle is described in [authentication](authentication-design.md).
 
 Region identity, generation versioning, and the Roof Array seam into the outskirts are described in [world architecture](world-architecture.md).
 

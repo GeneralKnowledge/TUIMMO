@@ -16,7 +16,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use coffee_world::{
-    canonical_username, hash_password, starter_operator, validate_operator_name, AuthError, Store,
+    canonical_username, generate_recovery_code, hash_password, hash_recovery_code,
+    starter_operator, validate_operator_name, AccountKind, AuthError, NewAccount, Store,
     WorldState,
 };
 use terminus_core::PlayerId;
@@ -142,6 +143,12 @@ pub async fn create_account(
         .await
         .context("password hashing task")?
         .map_err(|err| anyhow::anyhow!(err))?;
+    let recovery = generate_recovery_code().map_err(|err| anyhow::anyhow!(err))?;
+    let recovery_for_hash = recovery.clone();
+    let recovery_hash = tokio::task::spawn_blocking(move || hash_recovery_code(&recovery_for_hash))
+        .await
+        .context("recovery hashing task")?
+        .map_err(|err| anyhow::anyhow!(err))?;
     let db_path = data_dir.join("coffee.sqlite");
     let store = Store::open(&db_path).await?;
     store.seed(coffee_world::undernet::locations(), &coffee_world::undernet::all_exits()).await?;
@@ -150,13 +157,29 @@ pub async fn create_account(
     let operator = starter_operator(operator_id, account_id, &username, &operator_name);
     let created =
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-    if let Err(err) = store.create_account(account_id, &username, &hash, &operator, created).await {
+    if let Err(err) = store
+        .create_identity(
+            NewAccount {
+                id: account_id,
+                username: &username,
+                password_hash: &hash,
+                kind: AccountKind::Permanent,
+                email: None,
+                recovery_hash: Some(&recovery_hash),
+                created_at: created,
+            },
+            &operator,
+        )
+        .await
+    {
         if is_unique(&err) {
             anyhow::bail!("that username is already registered");
         }
         return Err(err).context("create account");
     }
     tracing::info!(%username, operator = %operator_name, "account created");
+    println!("recovery code: {recovery}");
+    println!("Save this code. It will not be shown again.");
     Ok(())
 }
 
@@ -172,7 +195,9 @@ impl Authenticator for HubAuth {
         password: &str,
     ) -> Result<SessionGrant, AuthReject> {
         match self.hub.login(username.to_string(), password.to_string(), None).await {
-            Ok(grant) => Ok(SessionGrant { token: grant.token, display_name: grant.operator_name }),
+            Ok(grant) => {
+                Ok(SessionGrant { token: Some(grant.token), display_name: grant.operator_name })
+            }
             Err(err) => Err(AuthReject { reason: auth_reason(&err) }),
         }
     }

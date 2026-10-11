@@ -23,7 +23,8 @@ use crate::SshError;
 /// Token returned by a successful authentication. The TUI resumes it over the game protocol.
 #[derive(Clone, Debug)]
 pub struct SessionGrant {
-    pub token: String,
+    /// `None` is a lobby. The SSH username is not a game account.
+    pub token: Option<String>,
     pub display_name: String,
 }
 
@@ -66,6 +67,7 @@ pub async fn serve<A: Authenticator>(
         Err(err) => tracing::warn!(%err, "could not display host public key"),
     }
     let mut methods = MethodSet::empty();
+    methods.push(MethodKind::None);
     methods.push(MethodKind::Password);
     let config = Arc::new(Config {
         methods,
@@ -151,11 +153,12 @@ impl<A: Authenticator> Drop for Gateway<A> {
             task.abort();
         }
         if let Some(grant) = self.slot.authed.lock().unwrap_or_else(|err| err.into_inner()).take() {
-            let auth = self.shared.auth.clone();
-            let token = grant.token;
-            tokio::spawn(async move {
-                auth.disconnect(&token).await;
-            });
+            if let Some(token) = grant.token {
+                let auth = self.shared.auth.clone();
+                tokio::spawn(async move {
+                    auth.disconnect(&token).await;
+                });
+            }
         }
         if self.slot.admitted {
             self.shared
@@ -186,6 +189,17 @@ impl<A: Authenticator> Server for Gateway<A> {
 
 impl<A: Authenticator> Handler for Gateway<A> {
     type Error = SshError;
+
+    async fn auth_none(&mut self, _user: &str) -> Result<Auth, Self::Error> {
+        if !self.slot.admitted {
+            return Ok(Auth::reject());
+        }
+        // The operating-system username is not a game identity. The TUI asks who they are.
+        tracing::info!("ssh lobby opened");
+        *self.slot.authed.lock().unwrap_or_else(|err| err.into_inner()) =
+            Some(SessionGrant { token: None, display_name: String::new() });
+        Ok(Auth::Accept)
+    }
 
     async fn auth_password(&mut self, user: &str, password: &str) -> Result<Auth, Self::Error> {
         if !self.slot.admitted {
@@ -391,8 +405,11 @@ async fn drive(
         backend,
         ratatui::TerminalOptions { viewport: ratatui::Viewport::Fixed(area) },
     )?;
-    let result =
-        run_remote(&mut terminal, &mut client, theme, StartMode::Resume(grant.token), input).await;
+    let mode = match grant.token {
+        Some(token) => StartMode::Resume(token),
+        None => StartMode::Welcome,
+    };
+    let result = run_remote(&mut terminal, &mut client, theme, mode, input).await;
     let _ = restore.send(b"\x1b[0m\x1b[?25h\x1b[?1049l".to_vec());
     result.map_err(|err| SshError::Message(err.to_string()))
 }

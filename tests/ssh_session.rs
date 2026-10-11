@@ -44,6 +44,7 @@ async fn ssh_opens_the_game_and_refuses_exec() {
             username: "ada".into(),
             password: PASSWORD.into(),
             operator_name: "Ada".into(),
+            email: None,
         })
         .await
         .expect("register");
@@ -84,6 +85,17 @@ async fn ssh_opens_the_game_and_refuses_exec() {
         }
         other => panic!("expected channel failure, got {other:?}"),
     }
+
+    let mut lobby = ssh_connect(running.ssh_addr).await;
+    let none = lobby.authenticate_none("local-os-name").await.expect("none auth");
+    assert!(none.success(), "a first connection opens the lobby without a game password");
+    let mut channel = lobby.channel_open_session().await.expect("lobby session");
+    channel.request_pty(false, "xterm", 80, 24, 0, 0, &[]).await.expect("pty");
+    channel.request_shell(false).await.expect("shell");
+    let welcome = read_until(&mut channel, "Enter as a guest", Duration::from_secs(20)).await;
+    assert!(welcome.contains("Enter as a guest"), "lobby should show onboarding, got {welcome:?}");
+    assert!(!welcome.contains("echo"), "lobby is not a shell");
+    let _ = channel.close().await;
 
     running.shutdown().await;
 }

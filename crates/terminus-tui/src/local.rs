@@ -60,7 +60,15 @@ where
                         Err(err) => app.set_notice(err.to_string()),
                     },
                     Effect::Quit => break,
-                    Effect::None | Effect::SubmitAuth { .. } => {}
+                    Effect::None
+                    | Effect::SubmitGuest { .. }
+                    | Effect::SubmitLogin { .. }
+                    | Effect::SubmitRegister { .. }
+                    | Effect::SubmitRecover { .. }
+                    | Effect::SubmitSecret { .. }
+                    | Effect::RotateRecovery
+                    | Effect::RevokeRecovery
+                    | Effect::OpenAccount => {}
                 }
             }
             Event::Resize(_, _) => {}

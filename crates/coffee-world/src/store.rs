@@ -11,6 +11,7 @@ use terminus_core::{Audience, Channel, LogEntry, PlayerId};
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::auth::AccountKind;
 use crate::geography::{
     parse_seed, Discovery, GeographyState, MaterializedRegion, RegionIdentity, Structure, Terrain,
     TerrainMod, WorldConnection, WorldId,
@@ -28,6 +29,7 @@ pub enum StoreError {
     Data,
 }
 
+#[derive(Clone)]
 pub struct Store {
     pool: SqlitePool,
 }
@@ -109,14 +111,18 @@ impl Store {
         created_at: u64,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+        insert_account_row(
+            &mut tx,
+            &NewAccount {
+                id: account_id,
+                username,
+                password_hash,
+                kind: AccountKind::Permanent,
+                email: None,
+                recovery_hash: None,
+                created_at,
+            },
         )
-        .bind(account_id.to_string())
-        .bind(username)
-        .bind(password_hash)
-        .bind(created_at as i64)
-        .execute(&mut *tx)
         .await?;
         sqlx::query(
             "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen)
@@ -145,9 +151,135 @@ impl Store {
         Ok(())
     }
 
+    /// Guest or permanent account plus its first operator. One transaction.
+    pub async fn create_identity(
+        &self,
+        account: NewAccount<'_>,
+        operator: &Operator,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let created_at = account.created_at;
+        insert_account_row(&mut tx, &account).await?;
+        insert_operator_row(&mut tx, operator, created_at).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn upgrade_guest(
+        &self,
+        account_id: Uuid,
+        password_hash: &str,
+        email: Option<&str>,
+        changed_at: u64,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let result = sqlx::query(
+            "UPDATE accounts
+             SET kind = 'permanent', password_hash = ?1, email = ?2, password_changed_at = ?3
+             WHERE id = ?4 AND kind = 'guest'",
+        )
+        .bind(password_hash)
+        .bind(email)
+        .bind(changed_at as i64)
+        .bind(account_id.to_string())
+        .execute(&mut *tx)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::Data);
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn set_password(
+        &self,
+        account_id: Uuid,
+        password_hash: &str,
+        changed_at: u64,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(
+            "UPDATE accounts SET password_hash = ?1, password_changed_at = ?2
+             WHERE id = ?3 AND kind = 'permanent'",
+        )
+        .bind(password_hash)
+        .bind(changed_at as i64)
+        .bind(account_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::Data);
+        }
+        Ok(())
+    }
+
+    pub async fn set_recovery(
+        &self,
+        account_id: Uuid,
+        recovery_hash: &str,
+        rotated_at: u64,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(
+            "UPDATE accounts SET recovery_hash = ?1, recovery_rotated_at = ?2 WHERE id = ?3",
+        )
+        .bind(recovery_hash)
+        .bind(rotated_at as i64)
+        .bind(account_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::Data);
+        }
+        Ok(())
+    }
+
+    pub async fn clear_recovery(
+        &self,
+        account_id: Uuid,
+        rotated_at: u64,
+    ) -> Result<(), StoreError> {
+        let result = sqlx::query(
+            "UPDATE accounts SET recovery_hash = NULL, recovery_rotated_at = ?1
+             WHERE id = ?2 AND kind = 'permanent'",
+        )
+        .bind(rotated_at as i64)
+        .bind(account_id.to_string())
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() != 1 {
+            return Err(StoreError::Data);
+        }
+        Ok(())
+    }
+
+    /// Remove an account that never became a live session. Used when attach fails after insert.
+    pub async fn delete_unattached_account(&self, account_id: Uuid) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        let id = account_id.to_string();
+        sqlx::query(
+            "DELETE FROM operator_items WHERE operator_id IN (SELECT id FROM operators WHERE account_id = ?1)",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "DELETE FROM operator_flags WHERE operator_id IN (SELECT id FROM operators WHERE account_id = ?1)",
+        )
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("DELETE FROM operators WHERE account_id = ?1")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("DELETE FROM accounts WHERE id = ?1").bind(&id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
     pub async fn find_account(&self, username: &str) -> Result<Option<AccountRow>, StoreError> {
         let row = sqlx::query_as::<_, AccountSql>(
-            "SELECT a.id AS id, a.username, a.password_hash, o.id AS operator_id, o.name, o.location_id
+            "SELECT a.id AS id, a.username, a.password_hash, a.kind, a.email, a.recovery_hash,
+                    o.id AS operator_id, o.name, o.location_id
              FROM accounts a
              JOIN operators o ON o.account_id = a.id
              WHERE a.username = ?1",
@@ -585,6 +717,9 @@ pub struct AccountRow {
     pub account_id: Uuid,
     pub username: String,
     pub password_hash: String,
+    pub kind: AccountKind,
+    pub email: Option<String>,
+    pub recovery_hash: Option<String>,
     pub operator_id: PlayerId,
     pub operator_name: String,
     pub location_id: String,
@@ -595,6 +730,9 @@ struct AccountSql {
     id: String,
     username: String,
     password_hash: String,
+    kind: String,
+    email: Option<String>,
+    recovery_hash: Option<String>,
     operator_id: String,
     name: String,
     location_id: String,
@@ -606,11 +744,81 @@ impl AccountSql {
             account_id: Uuid::from_str(&self.id).map_err(|_| StoreError::Data)?,
             username: self.username,
             password_hash: self.password_hash,
+            kind: AccountKind::parse(&self.kind).ok_or(StoreError::Data)?,
+            email: self.email,
+            recovery_hash: self.recovery_hash,
             operator_id: PlayerId::from_str(&self.operator_id).map_err(|_| StoreError::Data)?,
             operator_name: self.name,
             location_id: self.location_id,
         })
     }
+}
+
+pub struct NewAccount<'a> {
+    pub id: Uuid,
+    pub username: &'a str,
+    pub password_hash: &'a str,
+    pub kind: AccountKind,
+    pub email: Option<&'a str>,
+    pub recovery_hash: Option<&'a str>,
+    pub created_at: u64,
+}
+
+async fn insert_account_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    account: &NewAccount<'_>,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO accounts (
+            id, username, password_hash, created_at, kind, email, recovery_hash, password_changed_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(account.id.to_string())
+    .bind(account.username)
+    .bind(account.password_hash)
+    .bind(account.created_at as i64)
+    .bind(account.kind.as_str())
+    .bind(account.email)
+    .bind(account.recovery_hash)
+    .bind(if account.kind == AccountKind::Permanent {
+        Some(account.created_at as i64)
+    } else {
+        None
+    })
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+async fn insert_operator_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    operator: &Operator,
+    created_at: u64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    )
+    .bind(operator.id.to_string())
+    .bind(operator.account_id.to_string())
+    .bind(&operator.name)
+    .bind(&operator.location_id)
+    .bind(created_at as i64)
+    .bind(created_at as i64)
+    .execute(&mut **tx)
+    .await?;
+    for item in &operator.items {
+        sqlx::query(
+            "INSERT INTO operator_items (operator_id, item_key, name, detail) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(operator.id.to_string())
+        .bind(&item.keyword)
+        .bind(&item.name)
+        .bind(&item.detail)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
 }
 
 #[derive(sqlx::FromRow)]
@@ -871,5 +1079,170 @@ mod tests {
         let exits: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM exits").fetch_one(&store.pool).await.unwrap();
         assert!(exits >= 20);
+    }
+
+    #[tokio::test]
+    async fn legacy_account_columns_default_to_a_permanent_account() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let account_id = Uuid::new_v4();
+        let operator_id = PlayerId::new();
+        sqlx::query(
+            "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, 'ada', 'hash', 4)",
+        )
+        .bind(account_id.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen)
+             VALUES (?1, ?2, 'Ada', 'coffee-shop', 4, 4)",
+        )
+        .bind(operator_id.to_string())
+        .bind(account_id.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+        let row = store.find_account("ada").await.unwrap().unwrap();
+        assert_eq!(row.kind, AccountKind::Permanent);
+        assert_eq!(row.account_id, account_id);
+        assert_eq!(row.operator_id, operator_id);
+        assert_eq!(row.location_id, "coffee-shop");
+        assert!(row.email.is_none());
+        assert!(row.recovery_hash.is_none());
+    }
+
+    #[tokio::test]
+    async fn guest_survives_reopen_and_a_failed_upgrade_rolls_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let code = crate::generate_recovery_code().unwrap();
+        let recovery_hash = crate::hash_recovery_code(&code).unwrap();
+        let password_hash = crate::hash_unusable_password().unwrap();
+        let account_id = Uuid::new_v4();
+        let operator_id = PlayerId::new();
+        let operator = Operator {
+            id: operator_id,
+            account_id,
+            username: "ada".into(),
+            name: "Ada".into(),
+            location_id: "coffee-shop".into(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        store
+            .create_identity(
+                NewAccount {
+                    id: account_id,
+                    username: "ada",
+                    password_hash: &password_hash,
+                    kind: AccountKind::Guest,
+                    email: None,
+                    recovery_hash: Some(&recovery_hash),
+                    created_at: 10,
+                },
+                &operator,
+            )
+            .await
+            .unwrap();
+        store
+            .commit(&[
+                PersistOp::Move { operator_id, location_id: "neon-alley".into(), last_seen: 11 },
+                PersistOp::Flag { operator_id, flag: "cipher-plate".into() },
+            ])
+            .await
+            .unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        let dumped = String::from_utf8_lossy(&raw);
+        assert!(!dumped.contains(&code), "raw recovery code was written to sqlite");
+        assert!(!dumped.contains(&code.replace('-', "")));
+
+        let reopened = Store::open(&path).await.unwrap();
+        let row = reopened.find_account("ada").await.unwrap().unwrap();
+        assert_eq!(row.kind, AccountKind::Guest);
+        assert_eq!(row.operator_id, operator_id);
+        assert_eq!(row.location_id, "neon-alley");
+        assert!(crate::verify_recovery_code(&code, row.recovery_hash.as_deref().unwrap()));
+        let loaded = reopened.load().await.unwrap();
+        let saved = loaded.operators.iter().find(|op| op.id == operator_id).unwrap();
+        assert!(saved.flags.contains("cipher-plate"));
+        assert_eq!(saved.items[0].keyword, "chip");
+
+        let permanent = crate::hash_password("permanent-pass").unwrap();
+        reopened.upgrade_guest(account_id, &permanent, Some("ada@example.com"), 20).await.unwrap();
+        let upgraded = reopened.find_account("ada").await.unwrap().unwrap();
+        assert_eq!(upgraded.kind, AccountKind::Permanent);
+        assert_eq!(upgraded.account_id, account_id);
+        assert_eq!(upgraded.operator_id, operator_id);
+        assert_eq!(upgraded.email.as_deref(), Some("ada@example.com"));
+        assert!(crate::verify_password("permanent-pass", &upgraded.password_hash));
+
+        let other_id = Uuid::new_v4();
+        let other_op = PlayerId::new();
+        let other = Operator {
+            id: other_op,
+            account_id: other_id,
+            username: "bob".into(),
+            name: "Bob".into(),
+            location_id: "coffee-shop".into(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        reopened
+            .create_identity(
+                NewAccount {
+                    id: other_id,
+                    username: "bob",
+                    password_hash: &password_hash,
+                    kind: AccountKind::Guest,
+                    email: None,
+                    recovery_hash: Some(&recovery_hash),
+                    created_at: 21,
+                },
+                &other,
+            )
+            .await
+            .unwrap();
+        let clash = reopened.upgrade_guest(other_id, &permanent, Some("ada@example.com"), 22).await;
+        assert!(clash.is_err());
+        let bob = reopened.find_account("bob").await.unwrap().unwrap();
+        assert_eq!(bob.kind, AccountKind::Guest);
+        assert!(bob.email.is_none());
+
+        let rotated = crate::hash_recovery_code(&crate::generate_recovery_code().unwrap()).unwrap();
+        reopened.set_recovery(account_id, &rotated, 30).await.unwrap();
+        let after = reopened.find_account("ada").await.unwrap().unwrap();
+        assert!(!crate::verify_recovery_code(&code, after.recovery_hash.as_deref().unwrap()));
+        reopened.clear_recovery(account_id, 31).await.unwrap();
+        assert!(reopened.find_account("ada").await.unwrap().unwrap().recovery_hash.is_none());
+        assert!(reopened.clear_recovery(other_id, 32).await.is_err());
+        assert!(reopened.find_account("bob").await.unwrap().unwrap().recovery_hash.is_some());
+    }
+
+    #[tokio::test]
+    async fn concurrent_registration_cannot_share_a_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let make = |store: Store, name: &str| {
+            let name = name.to_string();
+            async move {
+                let account_id = Uuid::new_v4();
+                let operator = Operator {
+                    id: PlayerId::new(),
+                    account_id,
+                    username: name.clone(),
+                    name: name.clone(),
+                    location_id: "coffee-shop".into(),
+                    flags: BTreeSet::new(),
+                    items: vec![Item::chip()],
+                };
+                store.create_account(account_id, "ada", "hash", &operator, 1).await
+            }
+        };
+        let (left, right) = tokio::join!(make(store.clone(), "ada"), make(store.clone(), "ada"));
+        assert!(left.is_ok() ^ right.is_ok(), "left={left:?} right={right:?}");
     }
 }

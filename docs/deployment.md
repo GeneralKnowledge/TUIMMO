@@ -35,12 +35,16 @@ ssh-keygen -lf /var/lib/coffee/keys/ssh_host_ed25519.pub
 ## Players
 
 ```bash
-ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@your.host
+ssh -p 2222 -o StrictHostKeyChecking=accept-new your.host
 ```
 
 Compare the fingerprint with the one you printed. After the first connection, leave host-key checking at its default so a changed key is a loud failure.
 
-The password is prompted by SSH. It is not a shell password on the host.
+The SSH username is ignored. The welcome screen is where a player enters as a guest, logs in, registers, or recovers. There is no host shell and no SSH password prompt for a normal OpenSSH client. Game passwords and recovery codes are typed inside the TUI, and password fields are not echoed.
+
+An existing database gains guest, email, and recovery columns the first time this version opens it (`0003_accounts.sql`). Previous accounts become permanent accounts and keep their operators, positions, and passwords. Copy `coffee.sqlite` before the first start of a new version if you want a rollback point. The migration adds columns and an email index. It does not rebuild player tables.
+
+`--no-registration` or `COFFEE_NO_REGISTRATION=1` stops new guests and new permanent accounts. People who already have an account can still log in or recover.
 
 ## Firewall
 
@@ -48,7 +52,7 @@ Allow TCP 2222 from the networks that should play. Do not publish `game.sock`. T
 
 ## Restart
 
-Stop the process (Ctrl-C, or a service stop that sends SIGINT). Start it again with the same `COFFEE_DATA_DIR`. Operators return to their saved rooms. In-memory session tokens do not survive; players log in again.
+Stop the process (Ctrl-C, or a service stop that sends SIGINT). Start it again with the same `COFFEE_DATA_DIR`. Operators return to their saved rooms. In-memory session tokens do not survive. A permanent account logs in with its password. A guest returns through recovery, which issues a new code.
 
 Copy `coffee.sqlite` (and the `-wal` file if it exists) only while the server is stopped, or use SQLite's backup command. Keep the host key with the data directory if you want clients to recognise the server.
 

@@ -147,7 +147,7 @@ async fn play(args: PlayArgs) -> anyhow::Result<()> {
     let _restore = Restore;
     let input = spawn_crossterm_input();
     let result =
-        run_remote(&mut terminal, &mut client, theme(args.ascii), StartMode::Login, input).await;
+        run_remote(&mut terminal, &mut client, theme(args.ascii), StartMode::Welcome, input).await;
     result.map_err(|err| anyhow::anyhow!(err))
 }
 

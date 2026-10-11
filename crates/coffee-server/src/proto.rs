@@ -16,7 +16,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
-use crate::hub::Hub;
+use crate::hub::{AccountNotice, Hub};
 use coffee_world::AuthError;
 use terminus_core::GameError;
 
@@ -176,6 +176,8 @@ async fn dispatch(
         }
         ClientMessage::Login { .. }
         | ClientMessage::Register { .. }
+        | ClientMessage::Guest { .. }
+        | ClientMessage::Recover { .. }
         | ClientMessage::Resume { .. }
             if token.is_some() =>
         {
@@ -198,9 +200,31 @@ async fn dispatch(
                 }
             }
         }
-        ClientMessage::Register { username, password, operator_name } => {
+        ClientMessage::Register { username, password, operator_name, email } => {
             let events = spawn_forward(out_tx.clone(), forward);
-            match hub.register(username, password, operator_name, Some(events)).await {
+            match hub.register(username, password, operator_name, email, Some(events)).await {
+                Ok(grant) => finish_auth(out_tx, token, id, grant).await,
+                Err(err) => {
+                    stop_forward(forward);
+                    let _ = send(out_tx, id, auth_error(err)).await;
+                    false
+                }
+            }
+        }
+        ClientMessage::Guest { username, operator_name } => {
+            let events = spawn_forward(out_tx.clone(), forward);
+            match hub.register_guest(username, operator_name, Some(events)).await {
+                Ok(grant) => finish_auth(out_tx, token, id, grant).await,
+                Err(err) => {
+                    stop_forward(forward);
+                    let _ = send(out_tx, id, auth_error(err)).await;
+                    false
+                }
+            }
+        }
+        ClientMessage::Recover { username, recovery_code } => {
+            let events = spawn_forward(out_tx.clone(), forward);
+            match hub.recover(username, recovery_code, Some(events)).await {
                 Ok(grant) => finish_auth(out_tx, token, id, grant).await,
                 Err(err) => {
                     stop_forward(forward);
@@ -219,6 +243,36 @@ async fn dispatch(
                     false
                 }
             }
+        }
+        ClientMessage::SetPassword { password } => {
+            account_call(hub, out_tx, token, id, move |hub, current| async move {
+                hub.set_password(current, password).await
+            })
+            .await
+        }
+        ClientMessage::Upgrade { password, email } => {
+            account_call(hub, out_tx, token, id, move |hub, current| async move {
+                hub.upgrade(current, password, email).await
+            })
+            .await
+        }
+        ClientMessage::RotateRecovery => {
+            account_call(hub, out_tx, token, id, |hub, current| async move {
+                hub.rotate_recovery(current).await
+            })
+            .await
+        }
+        ClientMessage::RevokeRecovery => {
+            account_call(hub, out_tx, token, id, |hub, current| async move {
+                hub.revoke_recovery(current).await
+            })
+            .await
+        }
+        ClientMessage::AccountInfo => {
+            account_call(hub, out_tx, token, id, |hub, current| async move {
+                hub.account_info(current).await
+            })
+            .await
         }
         ClientMessage::Command { line } => {
             let Some(current) = token.clone() else {
@@ -274,7 +328,10 @@ async fn finish_auth(
         ServerMessage::Authenticated {
             token: grant.token,
             operator_name: grant.operator_name,
+            username: Some(grant.username),
+            account_kind: Some(grant.kind),
             view: grant.view,
+            recovery_code: grant.recovery_code.map(terminus_protocol::RevealedOnce),
         },
     )
     .await
@@ -286,13 +343,57 @@ fn auth_error(err: AuthError) -> ServerMessage {
         AuthError::RateLimited => "rate",
         AuthError::RegistrationClosed => "registration",
         AuthError::NameTaken => "taken",
-        AuthError::InvalidUsername | AuthError::InvalidOperatorName | AuthError::WeakPassword => {
-            "invalid"
+        AuthError::InvalidUsername
+        | AuthError::InvalidOperatorName
+        | AuthError::WeakPassword
+        | AuthError::InvalidEmail => "invalid",
+        AuthError::EmailTaken => "taken",
+        AuthError::InvalidCredentials | AuthError::InvalidRecovery => "auth",
+        AuthError::RecoveryRequired | AuthError::AlreadyPermanent | AuthError::UpgradeRequired => {
+            "account"
         }
-        AuthError::InvalidCredentials => "auth",
         AuthError::Internal => "internal",
     };
     ServerMessage::error(code, err.to_string())
+}
+
+async fn account_call<F, Fut>(
+    hub: &Hub,
+    out_tx: &mpsc::Sender<Vec<u8>>,
+    token: &Option<String>,
+    id: u64,
+    call: F,
+) -> bool
+where
+    F: FnOnce(Hub, String) -> Fut,
+    Fut: std::future::Future<Output = Result<AccountNotice, AuthError>>,
+{
+    let Some(current) = token.clone() else {
+        let _ = send(out_tx, id, ServerMessage::error("auth", "not authenticated")).await;
+        return false;
+    };
+    match call(hub.clone(), current).await {
+        Ok(notice) => {
+            let _ = send(
+                out_tx,
+                id,
+                ServerMessage::AccountStatus {
+                    username: notice.username,
+                    kind: notice.kind,
+                    has_recovery: notice.has_recovery,
+                    has_email: notice.has_email,
+                    message: notice.message,
+                    recovery_code: notice.recovery_code.map(terminus_protocol::RevealedOnce),
+                },
+            )
+            .await;
+            false
+        }
+        Err(err) => {
+            let _ = send(out_tx, id, auth_error(err)).await;
+            false
+        }
+    }
 }
 
 fn game_error(err: GameError) -> ServerMessage {
