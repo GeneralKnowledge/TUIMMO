@@ -201,12 +201,16 @@ impl WildernessPos {
 pub enum Place {
     Static(String),
     Wild(WildernessPos),
+    /// Interior of a player-built structure (`i:<structure-uuid>`).
+    Interior(uuid::Uuid),
 }
 
 impl Place {
     pub fn parse(raw: &str) -> Self {
         if let Some(pos) = WildernessPos::parse(raw) {
             Self::Wild(pos)
+        } else if let Some(id) = crate::geography::records::Structure::parse_interior_key(raw) {
+            Self::Interior(id)
         } else {
             Self::Static(raw.to_string())
         }
@@ -216,6 +220,7 @@ impl Place {
         match self {
             Self::Static(id) => id.clone(),
             Self::Wild(pos) => pos.key(),
+            Self::Interior(id) => crate::geography::records::Structure::interior_key(*id),
         }
     }
 }
@@ -307,5 +312,14 @@ mod tests {
     fn static_ids_do_not_parse_as_wilderness() {
         assert!(matches!(Place::parse("coffee-shop"), Place::Static(_)));
         assert!(matches!(Place::parse(&gate_position().key()), Place::Wild(_)));
+    }
+
+    #[test]
+    fn interior_place_keys_round_trip() {
+        let id = uuid::Uuid::nil();
+        let key = crate::geography::records::Structure::interior_key(id);
+        assert_eq!(key, "i:00000000-0000-0000-0000-000000000000");
+        assert!(matches!(Place::parse(&key), Place::Interior(parsed) if parsed == id));
+        assert!(WildernessPos::parse(&key).is_none());
     }
 }

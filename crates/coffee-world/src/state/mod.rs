@@ -14,13 +14,17 @@ use uuid::Uuid;
 use crate::catalog::coffee_registry;
 use crate::geography::{
     derive_region_seed, describe_tile, effective_tile, epoch_spec, format_seed, frontier_epoch,
-    frontier_identity, is_reserved_word, marker_sights, step_origin, validate_marker_name,
-    Cardinal, Discovery, GenerateError, GeneratedRegion, GeographyState, MaterializedRegion,
-    RegionCache, RegionCoordKey, RegionIdentity, Structure, Terrain, Tile, WildernessPos,
-    WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE,
+    frontier_identity, is_reserved_word, map_symbol_for_structures, marker_sights, step_origin,
+    validate_marker_name, Cardinal, Discovery, GenerateError, GeneratedRegion, GeographyState,
+    MaterializedRegion, RegionCache, RegionCoordKey, RegionIdentity, Structure, Terrain, Tile,
+    WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD,
+    REGION_SIZE,
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::undernet::{self, ExitDef, ObjectDef};
+
+mod building_cmds;
+mod social_cmds;
 
 /// Result of a state transition, including the rows that must be committed.
 #[derive(Clone, Debug)]
@@ -30,25 +34,26 @@ pub struct Transition {
 }
 
 #[derive(Clone, Debug)]
-struct Session {
-    identity: SessionIdentity,
+pub(crate) struct Session {
+    pub(crate) identity: SessionIdentity,
 }
 
 type Handler = fn(&mut WorldState, SessionId, &ParsedCommand) -> Result<Transition, GameError>;
 
 /// Authoritative Undernet state.
 pub struct WorldState {
-    world_name: String,
-    registry: CommandRegistry,
-    operators: HashMap<PlayerId, Operator>,
-    sessions: HashMap<SessionId, Session>,
-    by_player: HashMap<PlayerId, SessionId>,
-    log: VecDeque<LogEntry>,
-    overlays: HashMap<SessionId, String>,
-    geography: GeographyState,
-    region_cache: RefCell<RegionCache>,
-    use_system_clock: bool,
-    now_ms: u64,
+    pub(crate) world_name: String,
+    pub(crate) registry: CommandRegistry,
+    pub(crate) operators: HashMap<PlayerId, Operator>,
+    pub(crate) sessions: HashMap<SessionId, Session>,
+    pub(crate) by_player: HashMap<PlayerId, SessionId>,
+    pub(crate) log: VecDeque<LogEntry>,
+    pub(crate) overlays: HashMap<SessionId, String>,
+    pub(crate) geography: GeographyState,
+    pub(crate) social: crate::social::SocialState,
+    pub(crate) region_cache: RefCell<RegionCache>,
+    pub(crate) use_system_clock: bool,
+    pub(crate) now_ms: u64,
 }
 
 struct TravelTarget {
@@ -69,6 +74,7 @@ impl WorldState {
             log: VecDeque::new(),
             overlays: HashMap::new(),
             geography: GeographyState::default(),
+            social: crate::social::SocialState::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -102,8 +108,43 @@ impl WorldState {
         self.geography = geography;
     }
 
+    pub fn install_social(&mut self, social: crate::social::SocialState) {
+        self.social = social;
+    }
+
+    pub fn social_snapshot(&self) -> crate::social::SocialState {
+        self.social.clone()
+    }
+
+    pub fn restore_social(&mut self, social: crate::social::SocialState) {
+        self.social = social;
+    }
+
     pub fn insert_operator(&mut self, operator: Operator) {
         self.operators.insert(operator.id, operator);
+    }
+
+    /// If an operator is stuck in a demolished interior, move them to the door tile or the Coffee Shop.
+    pub(crate) fn repair_operator_place(&mut self, player: PlayerId) -> Option<PersistOp> {
+        let location = self.operators.get(&player)?.location_id.clone();
+        Structure::parse_interior_key(&location)?;
+        if self.geography.structure_by_interior(&location).is_some() {
+            return None;
+        }
+        let fallback = self
+            .geography
+            .connections
+            .iter()
+            .find(|link| link.from_place == location)
+            .map(|link| link.to_place.clone())
+            .filter(|place| {
+                WildernessPos::parse(place).is_some() || undernet::location(place).is_some()
+            })
+            .unwrap_or_else(|| STARTER_LOCATION.to_string());
+        if let Some(op) = self.operators.get_mut(&player) {
+            op.location_id = fallback.clone();
+        }
+        Some(PersistOp::Move { operator_id: player, location_id: fallback, last_seen: self.now_ms })
     }
 
     pub fn operator(&self, id: PlayerId) -> Option<&Operator> {
@@ -119,6 +160,7 @@ impl WorldState {
         if !self.operators.contains_key(&identity.player_id) {
             return Err(GameError::Rejected("no such operator".into()));
         }
+        let repair = self.repair_operator_place(identity.player_id);
         let replaced = self.by_player.remove(&identity.player_id);
         if let Some(old) = replaced {
             self.sessions.remove(&old);
@@ -136,11 +178,12 @@ impl WorldState {
         let seen = PersistOp::Seen { operator_id: player_id, last_seen: self.now_ms };
         self.by_player.insert(player_id, session_id);
         self.sessions.insert(session_id, Session { identity });
+        let mut ops = vec![op, seen];
+        if let Some(repair_op) = repair {
+            ops.push(repair_op);
+        }
         Ok((
-            Transition {
-                outcome: CommandOutcome { events: vec![event], quit: false },
-                ops: vec![op, seen],
-            },
+            Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops },
             replaced,
         ))
     }
@@ -231,21 +274,21 @@ impl WorldState {
         self.sessions.get(&session_id).map(|session| session.identity.player_id)
     }
 
-    fn player(&self, session_id: SessionId) -> Result<PlayerId, GameError> {
+    pub(crate) fn player(&self, session_id: SessionId) -> Result<PlayerId, GameError> {
         self.sessions
             .get(&session_id)
             .map(|session| session.identity.player_id)
             .ok_or(GameError::UnknownSession)
     }
 
-    fn name_of(&self, session_id: SessionId) -> Result<String, GameError> {
+    pub(crate) fn name_of(&self, session_id: SessionId) -> Result<String, GameError> {
         self.sessions
             .get(&session_id)
             .map(|session| session.identity.name.clone())
             .ok_or(GameError::UnknownSession)
     }
 
-    fn location_id(&self, session_id: SessionId) -> Result<String, GameError> {
+    pub(crate) fn location_id(&self, session_id: SessionId) -> Result<String, GameError> {
         let player = self.player(session_id)?;
         self.operators
             .get(&player)
@@ -276,7 +319,7 @@ impl WorldState {
         undernet::all_exits()
     }
 
-    fn emit(
+    pub(crate) fn emit(
         &mut self,
         channel: Channel,
         audience: Audience,
@@ -307,11 +350,11 @@ impl WorldState {
         (GameEvent { entry }, op)
     }
 
-    fn set_overlay(&mut self, session_id: SessionId, text: impl Into<String>) {
+    pub(crate) fn set_overlay(&mut self, session_id: SessionId, text: impl Into<String>) {
         self.overlays.insert(session_id, text.into());
     }
 
-    fn clear_overlay(&mut self, session_id: SessionId) {
+    pub(crate) fn clear_overlay(&mut self, session_id: SessionId) {
         self.overlays.remove(&session_id);
     }
 
@@ -420,10 +463,22 @@ impl WorldState {
         cmd: &ParsedCommand,
     ) -> Result<Transition, GameError> {
         let keyword = cmd.args.first().map(|word| word.to_ascii_lowercase()).unwrap_or_default();
+        self.move_through(session_id, &keyword)
+    }
+
+    pub(crate) fn move_through(
+        &mut self,
+        session_id: SessionId,
+        keyword: &str,
+    ) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
         let from = self.location_id(session_id)?;
         let flags = self.operator_flags(player);
-        let target = self.resolve_travel(&from, &keyword, &flags)?;
+        let target = self.resolve_travel(&from, keyword, &flags)?;
+        if let Some(cabin) = self.geography.structure_by_interior(&target.to).cloned() {
+            // Server-side door check; clients cannot forge destination keys.
+            self.ensure_cabin_access_for_move(player, &cabin)?;
+        }
         let mut ops = Vec::new();
         if let Some((identity, local_x, local_y)) = target.open {
             ops.extend(self.ensure_region(identity, Some(player), local_x, local_y)?);
@@ -461,6 +516,38 @@ impl WorldState {
             outcome: CommandOutcome { events: vec![leave, arrive, note], quit: false },
             ops,
         })
+    }
+
+    pub(crate) fn ensure_cabin_access_for_move(
+        &self,
+        player: PlayerId,
+        cabin: &Structure,
+    ) -> Result<(), GameError> {
+        if cabin.owner_id == Some(player) {
+            return Ok(());
+        }
+        match cabin.access.as_str() {
+            crate::geography::ACCESS_PUBLIC => Ok(()),
+            crate::geography::ACCESS_FRIENDS => {
+                let owner = cabin.owner_id.ok_or_else(|| {
+                    GameError::Rejected("This cabin has no owner and stays closed.".into())
+                })?;
+                if self.social.are_friends(player, owner) || self.social.has_grant(cabin.id, player)
+                {
+                    Ok(())
+                } else {
+                    Err(GameError::Rejected("Friends of the owner may enter. You may not.".into()))
+                }
+            }
+            crate::geography::ACCESS_PRIVATE => {
+                if self.social.has_grant(cabin.id, player) {
+                    Ok(())
+                } else {
+                    Err(GameError::Rejected("This cabin is private.".into()))
+                }
+            }
+            _ => Err(GameError::Rejected("This cabin is closed.".into())),
+        }
     }
 
     fn cmd_say(
@@ -550,15 +637,18 @@ impl WorldState {
         if let Some(object) = find_object(&location, &target) {
             return self.inspect_object(session_id, player, object);
         }
-        if let Some(other) =
-            self.names_in(&location).into_iter().find(|name| name.eq_ignore_ascii_case(&target))
+        if let Some(other_id) = self
+            .operators
+            .values()
+            .find(|op| {
+                op.location_id == location
+                    && (op.name.eq_ignore_ascii_case(&target)
+                        || op.username.eq_ignore_ascii_case(&target))
+            })
+            .map(|op| op.id)
         {
-            let (event, op) = self.emit(
-                Channel::System,
-                Audience::Player(player),
-                None,
-                format!("{other} is here, watching the room."),
-            );
+            let text = self.profile_text(other_id, true);
+            let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
             return Ok(Transition {
                 outcome: CommandOutcome { events: vec![event], quit: false },
                 ops: vec![op],
@@ -646,19 +736,19 @@ impl WorldState {
         let raw = cmd.args.first().map(String::as_str).unwrap_or("");
         let name =
             validate_marker_name(raw).map_err(|message| GameError::Rejected(message.into()))?;
-        if let Some(region_id) =
-            self.geography.region(pos.identity.coord_key()).map(|region| region.id)
-        {
-            if !self.geography.structures_at(region_id, pos.local_x, pos.local_y).is_empty() {
-                return Err(GameError::Rejected("This spot is already marked.".into()));
-            }
-        }
         let mut ops = self.ensure_region(pos.identity, Some(player), pos.local_x, pos.local_y)?;
         let region_id = self
             .geography
             .region(pos.identity.coord_key())
             .map(|region| region.id)
             .ok_or_else(|| GameError::Rejected("This region is not open.".into()))?;
+        if self
+            .geography
+            .structure_of_kind_at(region_id, pos.local_x, pos.local_y, MARKER_KIND)
+            .is_some()
+        {
+            return Err(GameError::Rejected("This spot already has a marker.".into()));
+        }
         let id = Uuid::new_v4();
         let created_at = self.now_ms;
         self.geography.structures.push(Structure {
@@ -669,6 +759,8 @@ impl WorldState {
             kind: MARKER_KIND.into(),
             name: name.clone(),
             owner_id: Some(player),
+            access: crate::geography::ACCESS_PUBLIC.into(),
+            interior_place: None,
             created_at,
         });
         ops.push(PersistOp::Structure {
@@ -679,6 +771,8 @@ impl WorldState {
             kind: MARKER_KIND.into(),
             name: name.clone(),
             owner_id: Some(player),
+            access: crate::geography::ACCESS_PUBLIC.into(),
+            interior_place: None,
             created_at,
         });
         let (event, op) = self.emit(
@@ -710,7 +804,10 @@ impl WorldState {
         self.region_cache.borrow_mut().get_or_generate(identity)
     }
 
-    fn place_title(&self, id: &str) -> String {
+    pub(crate) fn place_title(&self, id: &str) -> String {
+        if let Some(structure) = self.geography.structure_by_interior(id) {
+            return format!("{} (interior)", structure.name);
+        }
         if let Some(pos) = WildernessPos::parse(id) {
             if pos.is_gate() {
                 return "The Outskirts".to_string();
@@ -852,7 +949,7 @@ impl WorldState {
         self.finish_static(from, &link.to_place, &link.label)
     }
 
-    fn effective_at(
+    pub(crate) fn effective_at(
         &self,
         pos: WildernessPos,
     ) -> Result<crate::geography::EffectiveTile, GameError> {
@@ -936,7 +1033,7 @@ impl WorldState {
         exits
     }
 
-    fn ensure_region(
+    pub(crate) fn ensure_region(
         &mut self,
         identity: RegionIdentity,
         actor: Option<PlayerId>,
@@ -1134,6 +1231,9 @@ impl WorldState {
         if WildernessPos::parse(place).is_some() || undernet::location(place).is_some() {
             return Ok(());
         }
+        if self.geography.structure_by_interior(place).is_some() {
+            return Ok(());
+        }
         Err(GameError::Rejected("That place is not in the world.".into()))
     }
 
@@ -1145,7 +1245,7 @@ impl WorldState {
         Ok(())
     }
 
-    fn owner_name(&self, id: Option<PlayerId>) -> String {
+    pub(crate) fn owner_name(&self, id: Option<PlayerId>) -> String {
         id.and_then(|id| self.operators.get(&id).map(|op| op.name.clone()))
             .unwrap_or_else(|| "someone".to_string())
     }
@@ -1159,11 +1259,18 @@ impl WorldState {
         let sights = marker_sights(here, |id| self.owner_name(id));
         let marks = region_id
             .map(|id| {
-                self.geography
-                    .structures
-                    .iter()
-                    .filter(|item| item.region_id == id)
-                    .map(|item| (item.local_x, item.local_y))
+                let mut by_tile: std::collections::BTreeMap<(u8, u8), Vec<&Structure>> =
+                    std::collections::BTreeMap::new();
+                for item in &self.geography.structures {
+                    if item.region_id == id {
+                        by_tile.entry((item.local_x, item.local_y)).or_default().push(item);
+                    }
+                }
+                by_tile
+                    .into_iter()
+                    .filter_map(|((x, y), items)| {
+                        map_symbol_for_structures(&items).map(|symbol| (x, y, symbol))
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -1197,15 +1304,7 @@ impl WorldState {
             .map(|name| PresenceView { name })
             .collect::<Vec<_>>();
         present.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut feed = self
-            .log
-            .iter()
-            .filter(|entry| entry.visible_to(&location_id, player))
-            .map(LogEntry::to_feed)
-            .collect::<Vec<_>>();
-        if feed.len() > FEED_CAP {
-            feed = feed.split_off(feed.len() - FEED_CAP);
-        }
+        let feed = self.visible_feed_lines(player, &location_id);
         let (location_name, description, objects, mut status) = match self.wild_scene(pos) {
             Ok(scene) => {
                 let objects = scene
@@ -1313,6 +1412,110 @@ impl WorldState {
         Err(GameError::Rejected(format!("You see nothing called '{target}'.")))
     }
 
+    pub(crate) fn visible_feed_lines(&self, player: PlayerId, location_id: &str) -> Vec<FeedLine> {
+        let ignored = self.social.ignored_ids(player);
+        let ignored_names: std::collections::HashSet<String> = ignored
+            .iter()
+            .filter_map(|id| self.operators.get(id).map(|op| op.name.clone()))
+            .collect();
+        let mut feed = self
+            .log
+            .iter()
+            .filter(|entry| {
+                if !entry.visible_to(location_id, player) {
+                    return false;
+                }
+                match entry.channel {
+                    Channel::Local | Channel::Global | Channel::Private => {
+                        !matches!(&entry.speaker, Some(speaker) if ignored_names.contains(speaker))
+                    }
+                    Channel::System => true,
+                }
+            })
+            .map(LogEntry::to_feed)
+            .collect::<Vec<_>>();
+        if feed.len() > FEED_CAP {
+            feed = feed.split_off(feed.len() - FEED_CAP);
+        }
+        feed
+    }
+
+    pub(crate) fn resolve_player_name(&self, raw: &str) -> Result<PlayerId, GameError> {
+        let key = raw.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return Err(GameError::Rejected("Who?".into()));
+        }
+        let mut matches: Vec<PlayerId> = self
+            .operators
+            .values()
+            .filter(|op| {
+                op.name.eq_ignore_ascii_case(&key) || op.username.eq_ignore_ascii_case(&key)
+            })
+            .map(|op| op.id)
+            .collect();
+        matches.sort_by_key(|id| id.to_string());
+        matches.dedup();
+        match matches.as_slice() {
+            [id] => Ok(*id),
+            [] => Err(GameError::Rejected(format!("No operator named '{raw}'."))),
+            _ => {
+                Err(GameError::Rejected(format!("Several operators match '{raw}'. Be more exact.")))
+            }
+        }
+    }
+
+    pub(crate) fn is_online(&self, player: PlayerId) -> bool {
+        self.by_player.contains_key(&player)
+    }
+
+    fn interior_view(
+        &self,
+        session_id: SessionId,
+        player: PlayerId,
+        name: &str,
+        structure: &Structure,
+    ) -> Result<GameView, GameError> {
+        let op = self.operators.get(&player).ok_or(GameError::UnknownSession)?;
+        let location_id = op.location_id.clone();
+        let owner = self.owner_name(structure.owner_id);
+        let mut present = self
+            .names_in(&location_id)
+            .into_iter()
+            .filter(|other| other != name)
+            .map(|name| PresenceView { name })
+            .collect::<Vec<_>>();
+        present.sort_by(|a, b| a.name.cmp(&b.name));
+        let inventory = op
+            .items
+            .iter()
+            .map(|item| ItemView {
+                keyword: item.keyword.clone(),
+                name: item.name.clone(),
+                detail: item.detail.clone(),
+            })
+            .collect();
+        let feed = self.visible_feed_lines(player, &location_id);
+        let description = format!(
+            "Inside \"{}\", a small cabin. Light slips through the door cracks. {} keeps this place.",
+            structure.name, owner
+        );
+        Ok(GameView {
+            world_name: self.world_name.clone(),
+            connection: ConnectionState::Connected,
+            operator_name: name.to_string(),
+            location_name: format!("{} (cabin)", structure.name),
+            description,
+            exits: self.visible_exits(session_id)?,
+            present,
+            objects: vec![ObjectView { keyword: "door".into(), name: "cabin door".into() }],
+            status: self.status_lines(session_id)?,
+            inventory,
+            feed,
+            overlay: self.overlays.get(&session_id).cloned(),
+            commands: self.registry.hints(),
+        })
+    }
+
     fn names_in(&self, location: &str) -> Vec<String> {
         let mut names = Vec::new();
         for session in self.sessions.values() {
@@ -1338,13 +1541,17 @@ impl WorldState {
         let name = self.name_of(session_id)?;
         let op = self.operators.get(&player).ok_or(GameError::UnknownSession)?;
         let cipher = if op.flags.contains("cipher-plate") { "yes" } else { "no" };
-        Ok(vec![
+        let mut lines = vec![
             name,
             format!("place: {}", self.place_title(&op.location_id)),
             format!("online: {}", self.sessions.len()),
             format!("carried: {}", op.items.len()),
             format!("cipher plate: {cipher}"),
-        ])
+        ];
+        if !op.status.is_empty() {
+            lines.push(format!("status: {}", op.status));
+        }
+        Ok(lines)
     }
 
     fn build_view(&self, session_id: SessionId) -> Result<GameView, GameError> {
@@ -1353,6 +1560,9 @@ impl WorldState {
         let op = self.operators.get(&player).ok_or(GameError::UnknownSession)?;
         if let Some(pos) = WildernessPos::parse(&op.location_id) {
             return self.wilderness_view(session_id, player, &name, pos);
+        }
+        if let Some(structure) = self.geography.structure_by_interior(&op.location_id) {
+            return self.interior_view(session_id, player, &name, structure);
         }
         let loc = undernet::location(&op.location_id)
             .ok_or_else(|| GameError::Rejected("you are standing nowhere known".into()))?;
@@ -1380,15 +1590,7 @@ impl WorldState {
                 detail: item.detail.clone(),
             })
             .collect();
-        let mut feed = self
-            .log
-            .iter()
-            .filter(|entry| entry.visible_to(&op.location_id, player))
-            .map(LogEntry::to_feed)
-            .collect::<Vec<_>>();
-        if feed.len() > FEED_CAP {
-            feed = feed.split_off(feed.len() - FEED_CAP);
-        }
+        let feed = self.visible_feed_lines(player, &op.location_id);
         Ok(GameView {
             world_name: self.world_name.clone(),
             connection: ConnectionState::Connected,
@@ -1453,24 +1655,56 @@ fn handler(name: &str) -> Option<Handler> {
         "go" => WorldState::cmd_go,
         "say" => WorldState::cmd_say,
         "chat" => WorldState::cmd_chat,
+        "whisper" => WorldState::cmd_whisper,
+        "emote" => WorldState::cmd_emote,
+        "profile" => WorldState::cmd_profile,
+        "friend" => WorldState::cmd_friend,
+        "friends" => WorldState::cmd_friends,
+        "ignore" => WorldState::cmd_ignore,
+        "unignore" => WorldState::cmd_unignore,
+        "ignores" => WorldState::cmd_ignores,
         "status" => WorldState::cmd_status,
         "inventory" => WorldState::cmd_inventory,
         "inspect" => WorldState::cmd_inspect,
         "mark" => WorldState::cmd_mark,
+        "build" => WorldState::cmd_build,
+        "enter" => WorldState::cmd_enter,
+        "leave" => WorldState::cmd_leave,
+        "home" => WorldState::cmd_home,
+        "sign" => WorldState::cmd_sign,
+        "trail" => WorldState::cmd_trail,
+        "board" => WorldState::cmd_board,
         "quit" => WorldState::cmd_quit,
         _ => return None,
     })
 }
 
 fn needs_play(name: &str) -> bool {
-    matches!(name, "go" | "inspect" | "mark")
+    matches!(
+        name,
+        "go" | "inspect"
+            | "mark"
+            | "build"
+            | "enter"
+            | "leave"
+            | "home"
+            | "sign"
+            | "trail"
+            | "board"
+            | "friend"
+            | "friends"
+            | "ignore"
+            | "unignore"
+            | "ignores"
+            | "profile"
+    )
 }
 
 fn needs_speak(name: &str) -> bool {
-    matches!(name, "say" | "chat")
+    matches!(name, "say" | "chat" | "whisper" | "emote")
 }
 
-fn quiet() -> Transition {
+pub(crate) fn quiet() -> Transition {
     Transition { outcome: CommandOutcome::default(), ops: Vec::new() }
 }
 
@@ -1501,6 +1735,7 @@ fn channel_name(channel: Channel) -> &'static str {
         Channel::System => "system",
         Channel::Local => "local",
         Channel::Global => "global",
+        Channel::Private => "private",
     }
 }
 
@@ -1524,6 +1759,8 @@ pub fn starter_operator(
         username: username.into(),
         name: name.into(),
         location_id: STARTER_LOCATION.into(),
+        bio: String::new(),
+        status: String::new(),
         flags: Default::default(),
         items: vec![Item::chip()],
     }
@@ -1717,7 +1954,7 @@ mod tests {
         assert!(world.apply(ada, "mark north").is_err());
         let before = world.geography_snapshot();
         world.apply(ada, "mark camp").unwrap();
-        assert!(world.apply(ada, "mark camp").unwrap_err().to_string().contains("already marked"));
+        assert!(world.apply(ada, "mark camp").unwrap_err().to_string().contains("already"));
         assert_eq!(world.geography.structures[0].owner_id, Some(ada_id));
         let marked = world.geography_snapshot();
         world.restore_geography(before);
@@ -1808,10 +2045,10 @@ mod tests {
             world.link_places("coffee-shop", "north", "neon-alley", "North", ada_id).unwrap_err();
         assert!(err.to_string().contains("reserved"));
         let err =
-            world.link_places("coffee-shop", "trail", "nowhere", "Nowhere", ada_id).unwrap_err();
+            world.link_places("coffee-shop", "path", "nowhere", "Nowhere", ada_id).unwrap_err();
         assert!(err.to_string().contains("not in the world"));
         let err =
-            world.link_places("coffee-shop", "trail", "coffee-shop", "Loop", ada_id).unwrap_err();
+            world.link_places("coffee-shop", "path", "coffee-shop", "Loop", ada_id).unwrap_err();
         assert!(err.to_string().contains("itself"));
     }
 
@@ -1857,5 +2094,154 @@ mod tests {
         world.operators.get_mut(&id).unwrap().location_id = crate::geography::gate_position().key();
         assert!(world.apply(session, "mark camp").is_err());
         assert!(world.geography.structures.is_empty());
+    }
+
+    fn to_buildable_tile(world: &mut WorldState, session: SessionId, player: PlayerId) {
+        world.apply(session, "go up").unwrap();
+        world.apply(session, "outskirts").unwrap();
+        let identity = crate::geography::gate_identity();
+        world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "camp", player).unwrap();
+        world.apply(session, "north").unwrap();
+    }
+
+    #[test]
+    fn whisper_is_private_and_offline_is_refused() {
+        let (mut world, ada, bob, _, bob_id) = pair();
+        world.apply(ada, "whisper bob secret-ping").unwrap();
+        assert!(feed_text(&world, bob).contains("secret-ping"));
+        assert!(feed_text(&world, ada).contains("You whisper to bob"));
+        // A third party must not see private contents in their feed.
+        world.apply(bob, "go alley").unwrap();
+        let bob_feed = feed_text(&world, bob);
+        assert!(bob_feed.contains("secret-ping"));
+        world.detach(bob).unwrap();
+        let err = world.apply(ada, "whisper bob later").unwrap_err();
+        assert!(err.to_string().contains("offline"), "{err}");
+        let _ = bob_id;
+    }
+
+    #[test]
+    fn friendship_requires_accept_and_persists_in_memory() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        world.apply(ada, "friend add bob").unwrap();
+        assert!(!world.social.are_friends(ada_id, bob_id));
+        world.apply(bob, "friend accept ada").unwrap();
+        assert!(world.social.are_friends(ada_id, bob_id));
+        world.apply(ada, "friends").unwrap();
+        let overlay = world.view(ada).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("bob"));
+        assert!(overlay.contains("online"));
+        world.apply(bob, "friend remove ada").unwrap();
+        assert!(!world.social.are_friends(ada_id, bob_id));
+    }
+
+    #[test]
+    fn ignore_filters_chat_and_blocks_whisper() {
+        let (mut world, ada, bob, _, _) = pair();
+        world.apply(ada, "ignore bob").unwrap();
+        world.apply(bob, "say ignored-local").unwrap();
+        world.apply(bob, "chat ignored-global").unwrap();
+        let ada_feed = feed_text(&world, ada);
+        assert!(!ada_feed.contains("ignored-local"), "{ada_feed}");
+        assert!(!ada_feed.contains("ignored-global"), "{ada_feed}");
+        let err = world.apply(bob, "whisper ada hi").unwrap_err();
+        assert!(err.to_string().contains("ignore"), "{err}");
+        let err = world.apply(bob, "friend add ada").unwrap_err();
+        assert!(err.to_string().contains("ignore"), "{err}");
+    }
+
+    #[test]
+    fn cabin_build_enter_visit_and_private_access() {
+        let (mut world, ada, bob, ada_id, _) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Haven").unwrap();
+        assert_eq!(world.geography.structures.iter().filter(|s| s.kind == "cabin").count(), 1);
+        world.apply(ada, "enter Haven").unwrap();
+        assert!(world.view(ada).unwrap().location_name.contains("Haven"));
+        world.apply(ada, "leave").unwrap();
+        assert!(!world.location_key(ada).unwrap().starts_with("i:"));
+
+        // Bob can visit a public cabin.
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(bob, "enter Haven").unwrap();
+        assert!(world.view(bob).unwrap().location_name.contains("Haven"));
+        world.apply(bob, "leave").unwrap();
+
+        world.apply(ada, "home access private").unwrap();
+        let err = world.apply(bob, "enter Haven").unwrap_err();
+        assert!(err.to_string().contains("private"), "{err}");
+        world.apply(ada, "home allow bob").unwrap();
+        world.apply(bob, "enter Haven").unwrap();
+        world.apply(bob, "leave").unwrap();
+
+        world.apply(ada, "sign Welcome friends").unwrap();
+        world.apply(ada, "sign read").unwrap();
+        assert!(feed_text(&world, ada).contains("Welcome friends"));
+        world.apply(ada, "trail Ridge").unwrap();
+        assert!(world.geography.structures.iter().any(|s| s.kind == "trail"));
+        // Marker can coexist with cabin/sign/trail on the same tile.
+        world.apply(ada, "mark Camp").unwrap();
+        assert!(
+            world
+                .geography
+                .structures_at(
+                    world
+                        .geography
+                        .structures
+                        .iter()
+                        .find(|s| s.kind == "cabin")
+                        .unwrap()
+                        .region_id,
+                    WildernessPos::parse(&world.location_key(ada).unwrap()).unwrap().local_x,
+                    WildernessPos::parse(&world.location_key(ada).unwrap()).unwrap().local_y,
+                )
+                .len()
+                >= 4
+        );
+    }
+
+    #[test]
+    fn cabin_demolish_evacuates_occupants() {
+        let (mut world, ada, bob, ada_id, _) = pair();
+        to_buildable_tile(&mut world, ada, ada_id);
+        world.apply(ada, "build cabin Nest").unwrap();
+        world.apply(bob, "go up").unwrap();
+        world.apply(bob, "outskirts").unwrap();
+        world.apply(bob, "north").unwrap();
+        world.apply(bob, "enter Nest").unwrap();
+        assert!(world.location_key(bob).unwrap().starts_with("i:"));
+        world.apply(ada, "home demolish confirm").unwrap();
+        assert!(!world.location_key(bob).unwrap().starts_with("i:"));
+        assert!(!world.geography.structures.iter().any(|s| s.kind == "cabin"));
+        assert!(world.geography.connections.is_empty());
+    }
+
+    #[test]
+    fn noticeboard_posts_and_owner_removal() {
+        let (mut world, ada, bob, _, _) = pair();
+        world.apply(ada, "board post Meet at Haven").unwrap();
+        world.apply(bob, "board").unwrap();
+        let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
+        assert!(overlay.contains("Meet at Haven"));
+        let id8 = world.social.notices[0].id.to_string()[..8].to_string();
+        let err = world.apply(bob, &format!("board remove {id8}")).unwrap_err();
+        assert!(err.to_string().contains("your own"), "{err}");
+        world.apply(ada, &format!("board remove {id8}")).unwrap();
+        assert!(world.social.notices.is_empty());
+    }
+
+    #[test]
+    fn profile_bio_is_public_without_account_secrets() {
+        let (mut world, ada, bob, _, _) = pair();
+        world.apply(ada, "profile bio Likes rain and relays").unwrap();
+        world.apply(ada, "profile status exploring").unwrap();
+        world.apply(bob, "inspect ada").unwrap();
+        let feed = feed_text(&world, bob);
+        assert!(feed.contains("Likes rain and relays"));
+        assert!(feed.contains("exploring"));
+        assert!(!feed.contains("password"));
+        assert!(!feed.contains('@'));
     }
 }

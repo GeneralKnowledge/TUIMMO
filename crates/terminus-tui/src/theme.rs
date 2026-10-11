@@ -13,6 +13,7 @@ pub struct Theme {
     pub warn: Color,
     pub local: Color,
     pub global: Color,
+    pub private: Color,
     pub system: Color,
     pub ascii: bool,
 }
@@ -28,6 +29,7 @@ impl Theme {
             warn: Color::Yellow,
             local: Color::White,
             global: Color::Cyan,
+            private: Color::Magenta,
             system: Color::DarkGray,
             ascii: false,
         }

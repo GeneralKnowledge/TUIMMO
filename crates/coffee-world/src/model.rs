@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 use terminus_core::PlayerId;
 use uuid::Uuid;
 
+use crate::social::FriendshipStatus;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
     pub keyword: String,
@@ -29,6 +31,8 @@ pub struct Operator {
     pub username: String,
     pub name: String,
     pub location_id: String,
+    pub bio: String,
+    pub status: String,
     pub flags: BTreeSet<String>,
     pub items: Vec<Item>,
 }
@@ -44,6 +48,11 @@ pub enum PersistOp {
     Seen {
         operator_id: PlayerId,
         last_seen: u64,
+    },
+    Profile {
+        operator_id: PlayerId,
+        bio: String,
+        status: String,
     },
     Message {
         at_ms: u64,
@@ -90,7 +99,18 @@ pub enum PersistOp {
         kind: String,
         name: String,
         owner_id: Option<PlayerId>,
+        access: String,
+        interior_place: Option<String>,
         created_at: u64,
+    },
+    UpdateStructure {
+        id: Uuid,
+        name: String,
+        access: String,
+        interior_place: Option<String>,
+    },
+    DeleteStructure {
+        id: Uuid,
     },
     TerrainMod {
         region_id: Uuid,
@@ -120,6 +140,49 @@ pub enum PersistOp {
         kind: String,
         created_by: Option<PlayerId>,
         created_at: u64,
+    },
+    DeleteConnection {
+        id: Uuid,
+    },
+    FriendshipUpsert {
+        requester_id: PlayerId,
+        recipient_id: PlayerId,
+        status: FriendshipStatus,
+        created_at: u64,
+        updated_at: u64,
+    },
+    FriendshipDelete {
+        requester_id: PlayerId,
+        recipient_id: PlayerId,
+    },
+    IgnoreUpsert {
+        operator_id: PlayerId,
+        ignored_id: PlayerId,
+        created_at: u64,
+    },
+    IgnoreDelete {
+        operator_id: PlayerId,
+        ignored_id: PlayerId,
+    },
+    StructureGrantUpsert {
+        structure_id: Uuid,
+        grantee_id: PlayerId,
+        created_at: u64,
+    },
+    StructureGrantDelete {
+        structure_id: Uuid,
+        grantee_id: PlayerId,
+    },
+    NoticeUpsert {
+        id: Uuid,
+        place_id: String,
+        author_id: PlayerId,
+        body: String,
+        created_at: u64,
+        expires_at: u64,
+    },
+    NoticeDelete {
+        id: Uuid,
     },
 }
 

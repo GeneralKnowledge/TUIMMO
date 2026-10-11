@@ -118,9 +118,10 @@ Operators treat the shop as neutral ground. The windows look onto wet neon, and 
             },
             ObjectDef {
                 keyword: "board",
-                aliases: &["jobs"],
-                name: "job board",
-                description: "Faded cards offer courier work and ask after lost keys. None of them are for you, yet.",
+                aliases: &["jobs", "noticeboard", "notices"],
+                name: "noticeboard",
+                description: "A cork board by the terminals. Operators pin short notices here. \
+Use `board` to read them, `board post <text>` to leave one, or `board remove <id>` for your own.",
                 grant: None,
             },
         ],

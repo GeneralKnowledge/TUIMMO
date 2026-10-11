@@ -19,6 +19,8 @@ pub enum ArgMode {
     OptionalWord,
     /// Exactly one word.
     RequiredWord,
+    /// One required word, then the remainder of the line.
+    WordThenRest { required_rest: bool },
     /// The rest of the line, optionally required.
     Rest { required: bool },
 }
@@ -146,6 +148,19 @@ impl CommandRegistry {
                 }
                 (vec![word.to_string()], String::new())
             }
+            ArgMode::WordThenRest { required_rest } => {
+                let trimmed = rest.trim();
+                if trimmed.is_empty() {
+                    return Err(bad(spec, "missing argument"));
+                }
+                let mut parts = trimmed.splitn(2, char::is_whitespace);
+                let word = parts.next().unwrap_or("").to_string();
+                let remainder = parts.next().unwrap_or("").trim().to_string();
+                if required_rest && remainder.is_empty() {
+                    return Err(bad(spec, "missing message"));
+                }
+                (vec![word], remainder)
+            }
             ArgMode::Rest { required } => {
                 if required && rest.is_empty() {
                     return Err(bad(spec, "missing message"));
@@ -267,6 +282,13 @@ mod tests {
                 usage: "go <exit>",
                 args: ArgMode::RequiredWord,
             },
+            CommandSpec {
+                name: "whisper",
+                aliases: &["tell"],
+                summary: "private message",
+                usage: "whisper <player> <message>",
+                args: ArgMode::WordThenRest { required_rest: true },
+            },
         ])
     }
 
@@ -280,6 +302,10 @@ mod tests {
         assert_eq!(parsed.rest, "hello there");
         let parsed = reg.parse("SAY  hi   you").unwrap();
         assert_eq!(parsed.rest, "hi   you");
+        let parsed = reg.parse("whisper bob hello there").unwrap();
+        assert_eq!(parsed.name, "whisper");
+        assert_eq!(parsed.args, vec!["bob".to_string()]);
+        assert_eq!(parsed.rest, "hello there");
     }
 
     #[test]

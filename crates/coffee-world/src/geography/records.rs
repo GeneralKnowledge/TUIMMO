@@ -9,6 +9,13 @@ use super::generate::Terrain;
 use super::identity::{RegionCoordKey, RegionIdentity};
 
 pub const MARKER_KIND: &str = "marker";
+pub const CABIN_KIND: &str = "cabin";
+pub const SIGN_KIND: &str = "sign";
+pub const TRAIL_KIND: &str = "trail";
+
+pub const ACCESS_PUBLIC: &str = "public";
+pub const ACCESS_PRIVATE: &str = "private";
+pub const ACCESS_FRIENDS: &str = "friends";
 
 /// A region that has been entered or changed. The tile grid is not stored.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,7 +40,22 @@ pub struct Structure {
     pub kind: String,
     pub name: String,
     pub owner_id: Option<PlayerId>,
+    /// `public`, `private`, or `friends`. Meaningful for cabins.
+    pub access: String,
+    /// Interior place key for enterable structures (`i:<structure-id>`).
+    pub interior_place: Option<String>,
     pub created_at: u64,
+}
+
+impl Structure {
+    pub fn interior_key(id: Uuid) -> String {
+        format!("i:{id}")
+    }
+
+    pub fn parse_interior_key(raw: &str) -> Option<Uuid> {
+        let rest = raw.strip_prefix("i:")?;
+        Uuid::parse_str(rest).ok()
+    }
 }
 
 /// An override of the generated baseline at one tile.
@@ -108,9 +130,39 @@ impl GeographyState {
             .collect()
     }
 
+    pub fn structure_of_kind_at(
+        &self,
+        region_id: Uuid,
+        local_x: u8,
+        local_y: u8,
+        kind: &str,
+    ) -> Option<&Structure> {
+        self.structures.iter().find(|item| {
+            item.region_id == region_id
+                && item.local_x == local_x
+                && item.local_y == local_y
+                && item.kind == kind
+        })
+    }
+
+    pub fn structure_by_id(&self, id: Uuid) -> Option<&Structure> {
+        self.structures.iter().find(|item| item.id == id)
+    }
+
+    pub fn structure_by_interior(&self, place: &str) -> Option<&Structure> {
+        self.structures.iter().find(|item| item.interior_place.as_deref() == Some(place))
+    }
+
     pub fn connection(&self, from_place: &str, keyword: &str) -> Option<&WorldConnection> {
         self.connections
             .iter()
             .find(|link| link.from_place == from_place && link.keyword == keyword)
+    }
+
+    pub fn connections_touching(&self, place: &str) -> Vec<&WorldConnection> {
+        self.connections
+            .iter()
+            .filter(|link| link.from_place == place || link.to_place == place)
+            .collect()
     }
 }

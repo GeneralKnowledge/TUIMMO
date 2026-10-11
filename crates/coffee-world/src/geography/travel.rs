@@ -5,7 +5,7 @@
 
 use super::generate::{GeneratedRegion, LandmarkKind, Terrain, Tile};
 use super::identity::{shift, IdentityError, WildernessPos, REGION_SIZE};
-use super::records::{GeographyState, Structure};
+use super::records::{GeographyState, Structure, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cardinal {
@@ -104,6 +104,7 @@ pub fn step_origin(pos: WildernessPos, dir: Cardinal) -> Result<(i32, i32, u8, u
 }
 
 pub struct MarkerSight {
+    pub kind: String,
     pub name: String,
     pub owner_name: String,
 }
@@ -121,7 +122,7 @@ pub fn describe_tile(
     generated: &GeneratedRegion,
     geo: &GeographyState,
     markers_here: &[MarkerSight],
-    markers_in_region: &[(u8, u8)],
+    markers_in_region: &[(u8, u8, char)],
 ) -> TileScene {
     let baseline = generated
         .tile(pos.local_x, pos.local_y)
@@ -133,8 +134,22 @@ pub fn describe_tile(
     if let Some(kind) = tile.landmark {
         lines.push(kind.prose().to_string());
     }
-    for marker in markers_here {
-        lines.push(format!("A marker reads \"{}\". {} left it.", marker.name, marker.owner_name));
+    for sight in markers_here {
+        lines.push(match sight.kind.as_str() {
+            CABIN_KIND => {
+                format!(
+                    "A cabin named \"{}\" stands here. {} built it.",
+                    sight.name, sight.owner_name
+                )
+            }
+            SIGN_KIND => {
+                format!("A sign reads \"{}\". {} left it.", sight.name, sight.owner_name)
+            }
+            TRAIL_KIND => {
+                format!("A trail post marks \"{}\". {} set it.", sight.name, sight.owner_name)
+            }
+            _ => format!("A marker reads \"{}\". {} left it.", sight.name, sight.owner_name),
+        });
     }
     let (placement_x, placement_y) = geo
         .region(pos.identity.coord_key())
@@ -151,8 +166,14 @@ pub fn describe_tile(
     if let Some(kind) = tile.landmark {
         objects.push((kind.keyword().to_string(), kind.name().to_string()));
     }
-    for marker in markers_here {
-        objects.push((marker.name.to_ascii_lowercase(), format!("marker \"{}\"", marker.name)));
+    for sight in markers_here {
+        let label = match sight.kind.as_str() {
+            CABIN_KIND => format!("cabin \"{}\"", sight.name),
+            SIGN_KIND => format!("sign \"{}\"", sight.name),
+            TRAIL_KIND => format!("trail \"{}\"", sight.name),
+            _ => format!("marker \"{}\"", sight.name),
+        };
+        objects.push((sight.name.to_ascii_lowercase(), label));
     }
     TileScene {
         title,
@@ -194,7 +215,7 @@ fn render_map(
     pos: WildernessPos,
     generated: &GeneratedRegion,
     geo: &GeographyState,
-    markers: &[(u8, u8)],
+    markers: &[(u8, u8, char)],
     placement_x: i32,
     placement_y: i32,
 ) -> String {
@@ -207,8 +228,9 @@ fn render_map(
             let ly = u8::try_from(local_y).unwrap_or(0);
             let symbol = if lx == pos.local_x && ly == pos.local_y {
                 '@'
-            } else if markers.iter().any(|(x, y)| *x == lx && *y == ly) {
-                'M'
+            } else if let Some((_, _, mark)) = markers.iter().find(|(x, y, _)| *x == lx && *y == ly)
+            {
+                *mark
             } else {
                 let here = WildernessPos { identity: pos.identity, local_x: lx, local_y: ly };
                 let baseline = generated
@@ -231,7 +253,7 @@ fn render_map(
         "\
 epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}
 {}
-@ you  + city gate  * landmark  M marker
+@ you  + city gate  * landmark  M marker  C cabin  S sign  T trail
 . grass  t trees  , scrub  ~ water  ^ rock",
         pos.identity.epoch_id,
         pos.identity.origin_x,
@@ -283,6 +305,13 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "stone"
             | "mast"
             | "milepost"
+            | "enter"
+            | "leave"
+            | "cabin"
+            | "sign"
+            | "trail"
+            | "home"
+            | "door"
     )
 }
 
@@ -292,9 +321,29 @@ pub fn marker_sights<'a>(
 ) -> Vec<MarkerSight> {
     structures
         .into_iter()
-        .filter(|item| item.kind == super::records::MARKER_KIND)
-        .map(|item| MarkerSight { name: item.name.clone(), owner_name: owner_name(item.owner_id) })
+        .filter(|item| {
+            matches!(item.kind.as_str(), MARKER_KIND | CABIN_KIND | SIGN_KIND | TRAIL_KIND)
+        })
+        .map(|item| MarkerSight {
+            kind: item.kind.clone(),
+            name: item.name.clone(),
+            owner_name: owner_name(item.owner_id),
+        })
         .collect()
+}
+
+pub fn map_symbol_for_structures(structures: &[&Structure]) -> Option<char> {
+    if structures.iter().any(|item| item.kind == CABIN_KIND) {
+        Some('C')
+    } else if structures.iter().any(|item| item.kind == SIGN_KIND) {
+        Some('S')
+    } else if structures.iter().any(|item| item.kind == TRAIL_KIND) {
+        Some('T')
+    } else if structures.iter().any(|item| item.kind == MARKER_KIND) {
+        Some('M')
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]
