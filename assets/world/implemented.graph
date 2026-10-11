@@ -1,0 +1,67 @@
+# Canonical implemented world. Checked by coffee-world's graph test.
+# Proposals do not belong in this file.
+# name <id> <display name>
+# exit <from> <keyword> <to>
+# object <location> <keyword>
+# asset <path under assets/world>
+
+name coffee-shop The Coffee Shop
+name neon-alley Neon Alley
+name exchange The Exchange
+name stack-market Stack Market
+name service-corridor Service Corridor
+name abandoned-exchange The Abandoned Exchange
+name cooling-tunnels Cooling Tunnels
+name old-relay The Old Relay
+name black-archive The Black Archive
+name roof-array Roof Array
+
+exit coffee-shop alley neon-alley
+exit coffee-shop up roof-array
+exit roof-array down coffee-shop
+exit neon-alley shop coffee-shop
+exit neon-alley exchange exchange
+exit neon-alley down cooling-tunnels
+exit exchange alley neon-alley
+exit exchange market stack-market
+exit exchange service service-corridor
+exit stack-market exchange exchange
+exit stack-market service service-corridor
+exit service-corridor exchange exchange
+exit service-corridor market stack-market
+exit service-corridor down abandoned-exchange
+exit abandoned-exchange up service-corridor
+exit abandoned-exchange relay old-relay
+exit cooling-tunnels up neon-alley
+exit cooling-tunnels relay old-relay
+exit old-relay tunnels cooling-tunnels
+exit old-relay floor abandoned-exchange
+exit old-relay archive black-archive
+exit black-archive relay old-relay
+
+object coffee-shop counter
+object coffee-shop board
+object neon-alley poster
+object exchange ticker
+object stack-market stall
+object service-corridor panel
+object abandoned-exchange terminal
+object cooling-tunnels grate
+object old-relay relay
+object old-relay dish
+object black-archive stacks
+object roof-array antenna
+
+asset style-guide.md
+asset world-overview.md
+asset regions/undernet.md
+asset locations/continuity.md
+asset locations/coffee-shop/reference.md
+asset locations/coffee-shop/concept.png
+asset locations/coffee-shop/floorplan.png
+asset locations/neon-alley/reference.md
+asset locations/neon-alley/concept.png
+asset locations/neon-alley/floorplan.png
+asset locations/old-relay/reference.md
+asset locations/old-relay/concept.png
+asset locations/old-relay/floorplan.png

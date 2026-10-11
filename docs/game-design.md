@@ -1,22 +1,21 @@
 # Coffee.shop — the Undernet
 
-Ten rooms, one shared world. The Coffee Shop is the safe room where new operators appear.
+Ten rooms, one shared world. The Coffee Shop is the safe room where new operators appear. The authoritative graph is the exit list in `crates/coffee-world/src/undernet.rs`, mirrored in `assets/world/implemented.graph`.
 
 ```text
 Roof Array
     |
-The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
-                       |              |
-                       |        Service Corridor
-                       |              |
-                 Cooling Tunnels -- The Abandoned Exchange
-                       |              |
-                       +-------- The Old Relay
-                                      |
-                               The Black Archive   (sealed)
+The Coffee Shop -- Neon Alley -- Cooling Tunnels -- The Old Relay
+    |                 |                               |    |
+    |                 |                               |    +-- Black Archive (sealed)
+    |            The Exchange -- Stack Market         |
+    |                 |         \                     |
+    |                 |          Service Corridor     |
+    |                 |                 |             |
+    |                 |         Abandoned Exchange ---+
 ```
 
-`map` prints this with your room marked. The archive door is hidden until you are carrying a cipher plate.
+`map` marks where you are and shows the archive as `(sealed)` until you carry a cipher plate. That schematic omits two real walks: Stack Market to the Service Corridor, and the Abandoned Exchange to the Old Relay. Visual direction, floorplans, and the full connection list live in `assets/world/`.
 
 ## Commands
 
@@ -42,7 +41,7 @@ Spectators, if a future mode adds them, can look and read. They cannot move, ins
 
 You start with a loyalty chip. It opens nothing.
 
-In the Abandoned Exchange, `inspect terminal` tears off a log scrap. At the Old Relay, `inspect relay` yields a cipher plate. Back at the relay, `go archive` opens the Black Archive. Before that, the door answers that it is sealed.
+In the Abandoned Exchange, `inspect terminal` tears off a log scrap. At the Old Relay, `inspect relay` yields a cipher plate. `go archive` then opens the Black Archive. Before that, the exit is hidden and guessing it says the way is sealed. `go floor` in the relay is a different, always-open passage to the Abandoned Exchange.
 
 ## Tone
 

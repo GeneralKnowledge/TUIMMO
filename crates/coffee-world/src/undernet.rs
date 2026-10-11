@@ -41,7 +41,7 @@ const RELAY_GRANT: GrantDef = GrantDef {
     item_key: "cipher-plate",
     item_name: "cipher plate",
     item_detail: "A warm metal plate etched with a route cipher.",
-    first: "The plate comes free in your hand. Somewhere below, a sealed hatch will answer it.",
+    first: "The plate comes free in your hand. The sealed hatch in this room will answer it.",
     already: "The relay housing is empty. You already carry the plate.",
 };
 
@@ -66,6 +66,11 @@ pub fn location(id: &str) -> Option<&'static LocationDef> {
     LOCATIONS.iter().find(|loc| loc.id == id)
 }
 
+/// Compact schematic for the `map` command.
+///
+/// This is not a floorplan. It omits two implemented edges that do not fit the
+/// column width: `stack-market` ↔ `service-corridor`, and `abandoned-exchange`
+/// ↔ `old-relay`. The full graph is `all_exits` and `assets/world/implemented.graph`.
 pub fn map_text(current_id: &str, archive_open: bool) -> String {
     let mark = |id: &str, label: &str| -> String {
         if id == current_id {
@@ -413,4 +418,123 @@ pub fn all_exits() -> Vec<ExitDef> {
     exits.push(archive_exit());
     exits.push(archive_return());
     exits
+}
+
+#[cfg(test)]
+mod graph_file {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+
+    use super::{all_exits, locations};
+
+    #[derive(Default)]
+    struct GraphFile {
+        names: BTreeMap<String, String>,
+        exits: BTreeSet<(String, String, String)>,
+        objects: BTreeSet<(String, String)>,
+        assets: Vec<String>,
+    }
+
+    fn world_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/world")
+    }
+
+    fn load_graph() -> GraphFile {
+        let path = world_root().join("implemented.graph");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|err| {
+            panic!("read {}: {err}", path.display());
+        });
+        let mut graph = GraphFile::default();
+        for raw in text.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let mut parts = line.split_whitespace();
+            let kind = parts.next().unwrap_or("");
+            match kind {
+                "name" => {
+                    let id = parts.next().expect("name id").to_string();
+                    let display = parts.collect::<Vec<_>>().join(" ");
+                    assert!(graph.names.insert(id, display).is_none(), "duplicate name");
+                }
+                "exit" => {
+                    let from = parts.next().expect("exit from").to_string();
+                    let keyword = parts.next().expect("exit keyword").to_string();
+                    let to = parts.next().expect("exit to").to_string();
+                    assert!(parts.next().is_none(), "exit has extra fields: {line}");
+                    assert!(graph.exits.insert((from, keyword, to)), "duplicate exit: {line}");
+                }
+                "object" => {
+                    let location = parts.next().expect("object location").to_string();
+                    let keyword = parts.next().expect("object keyword").to_string();
+                    assert!(parts.next().is_none(), "object has extra fields: {line}");
+                    assert!(graph.objects.insert((location, keyword)), "duplicate object: {line}");
+                }
+                "asset" => {
+                    let path = parts.next().expect("asset path").to_string();
+                    assert!(parts.next().is_none(), "asset path has spaces: {line}");
+                    graph.assets.push(path);
+                }
+                other => panic!("unknown graph line '{other}'"),
+            }
+        }
+        graph
+    }
+
+    #[test]
+    fn code_matches_the_world_bible_graph() {
+        let graph = load_graph();
+        let code_ids: BTreeSet<_> = locations().iter().map(|loc| loc.id.to_string()).collect();
+        assert_eq!(code_ids.len(), locations().len(), "duplicate location id");
+        assert_eq!(code_ids, graph.names.keys().cloned().collect());
+
+        for loc in locations() {
+            assert_eq!(graph.names.get(loc.id).map(String::as_str), Some(loc.name));
+            let mut keywords = BTreeSet::new();
+            for object in loc.objects {
+                assert!(
+                    keywords.insert(object.keyword),
+                    "duplicate object {} in {}",
+                    object.keyword,
+                    loc.id
+                );
+                assert!(
+                    graph.objects.contains(&(loc.id.to_string(), object.keyword.to_string())),
+                    "object {} / {} missing from implemented.graph",
+                    loc.id,
+                    object.keyword
+                );
+            }
+        }
+        let code_objects: BTreeSet<_> = locations()
+            .iter()
+            .flat_map(|loc| {
+                loc.objects
+                    .iter()
+                    .map(move |object| (loc.id.to_string(), object.keyword.to_string()))
+            })
+            .collect();
+        assert_eq!(code_objects, graph.objects);
+
+        let code_exits: BTreeSet<_> = all_exits()
+            .iter()
+            .map(|exit| (exit.from.to_string(), exit.keyword.to_string(), exit.to.to_string()))
+            .collect();
+        assert_eq!(code_exits.len(), all_exits().len(), "duplicate from+keyword");
+        assert_eq!(code_exits, graph.exits);
+        for (from, _, to) in &code_exits {
+            assert!(code_ids.contains(from), "exit leaves unknown room {from}");
+            assert!(code_ids.contains(to), "exit arrives at unknown room {to}");
+            let returned =
+                code_exits.iter().any(|(back_from, _, back_to)| back_from == to && back_to == from);
+            assert!(returned, "no return from {to} to {from}");
+        }
+
+        let root = world_root();
+        for asset in &graph.assets {
+            let path = root.join(asset);
+            assert!(path.is_file(), "missing world asset {}", path.display());
+        }
+    }
 }
