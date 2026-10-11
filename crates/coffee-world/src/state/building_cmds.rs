@@ -1,4 +1,4 @@
-//! Homestead, signs, trails, and Coffee Shop noticeboard commands.
+//! Homestead, workshops, signs, trails, and Coffee Shop noticeboard commands.
 
 use terminus_core::{
     Audience, Channel, CommandOutcome, GameError, ParsedCommand, PlayerId, SessionId,
@@ -7,9 +7,10 @@ use uuid::Uuid;
 
 use crate::geography::{
     validate_marker_name, Structure, WildernessPos, ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC,
-    CABIN_KIND, SIGN_KIND, TRAIL_KIND,
+    CABIN_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
 use crate::model::{PersistOp, STARTER_LOCATION};
+use crate::settlement::workshop_place_id;
 use crate::social::{
     validate_notice_text, validate_sign_text, NoticePost, StructureGrant, BUILD_RATE_MS,
     NOTICE_PLACE_CAP, NOTICE_RATE_MS, NOTICE_RETENTION_MS,
@@ -26,9 +27,25 @@ impl WorldState {
         let mut parts = rest.splitn(2, char::is_whitespace);
         let kind = parts.next().unwrap_or("").to_ascii_lowercase();
         let name_raw = parts.next().unwrap_or("").trim();
-        if kind != "cabin" || name_raw.is_empty() {
-            return Err(GameError::Rejected("usage: build cabin <name>".into()));
+        match kind.as_str() {
+            "cabin" if !name_raw.is_empty() => {
+                self.build_enterable(session_id, CABIN_KIND, name_raw, ACCESS_PUBLIC)
+            }
+            "workshop" if !name_raw.is_empty() => {
+                // Workshops start private; owners opt in with `home share`.
+                self.build_enterable(session_id, WORKSHOP_KIND, name_raw, ACCESS_PRIVATE)
+            }
+            _ => Err(GameError::Rejected("usage: build <cabin|workshop> <name>".into())),
         }
+    }
+
+    fn build_enterable(
+        &mut self,
+        session_id: SessionId,
+        kind: &str,
+        name_raw: &str,
+        default_access: &str,
+    ) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
         self.check_build_rate(player)?;
         let location = self.location_id(session_id)?;
@@ -49,28 +66,38 @@ impl WorldState {
             .region(pos.identity.coord_key())
             .map(|region| region.id)
             .ok_or_else(|| GameError::Rejected("This region is not open.".into()))?;
+        if self.geography.structure_of_kind_at(region_id, pos.local_x, pos.local_y, kind).is_some()
+        {
+            let label = if kind == WORKSHOP_KIND { "workshop" } else { "cabin" };
+            return Err(GameError::Rejected(format!("There is already a {label} here.")));
+        }
+        // Name collision among enterables on this tile would break go/enter keywords.
         if self
             .geography
-            .structure_of_kind_at(region_id, pos.local_x, pos.local_y, CABIN_KIND)
-            .is_some()
+            .structures_at(region_id, pos.local_x, pos.local_y)
+            .into_iter()
+            .any(|item| item.is_enterable() && item.name.eq_ignore_ascii_case(&name))
         {
-            return Err(GameError::Rejected("There is already a cabin here.".into()));
+            return Err(GameError::Rejected(
+                "An enterable structure already uses that name on this tile.".into(),
+            ));
         }
-        // Unique cabin name per owner is enough for enter/inspect by name on the tile.
         let id = Uuid::new_v4();
         let interior = Structure::interior_key(id);
         let created_at = self.now_ms;
+        let settlement_id = self.settlements.settlement_of(player).map(|s| s.id);
         let structure = Structure {
             id,
             region_id,
             local_x: pos.local_x,
             local_y: pos.local_y,
-            kind: CABIN_KIND.into(),
+            kind: kind.into(),
             name: name.clone(),
             owner_id: Some(player),
-            access: ACCESS_PUBLIC.into(),
+            access: default_access.into(),
             interior_place: Some(interior.clone()),
-            settlement_id: None,
+            settlement_id,
+            share: SHARE_PRIVATE.into(),
             created_at,
         };
         self.geography.structures.push(structure.clone());
@@ -79,12 +106,13 @@ impl WorldState {
             region_id,
             local_x: pos.local_x,
             local_y: pos.local_y,
-            kind: CABIN_KIND.into(),
+            kind: kind.into(),
             name: name.clone(),
             owner_id: Some(player),
-            access: ACCESS_PUBLIC.into(),
+            access: default_access.into(),
             interior_place: Some(interior.clone()),
-            settlement_id: None,
+            settlement_id,
+            share: SHARE_PRIVATE.into(),
             created_at,
         });
         let enter_kw = name.to_ascii_lowercase();
@@ -93,11 +121,12 @@ impl WorldState {
         let out_op = self.link_places(&interior, "out", &location, "outside", player)?;
         ops.push(out_op);
         self.social.last_build_at.insert(player, self.now_ms);
+        let verb = if kind == WORKSHOP_KIND { "raises a workshop" } else { "raises a cabin" };
         let (event, note) = self.emit(
             Channel::System,
             Audience::Location(location),
             None,
-            format!("{} raises a cabin named {name}.", self.name_of(session_id)?),
+            format!("{} {verb} named {name}.", self.name_of(session_id)?),
         );
         ops.push(note);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
@@ -112,24 +141,24 @@ impl WorldState {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
         let Some(pos) = WildernessPos::parse(&location) else {
-            return Err(GameError::Rejected("There is no cabin entrance here.".into()));
+            return Err(GameError::Rejected("There is no entrance here.".into()));
         };
         let region_id = self
             .geography
             .region(pos.identity.coord_key())
             .map(|region| region.id)
-            .ok_or_else(|| GameError::Rejected("There is no cabin here.".into()))?;
-        let Some(cabin) = self
+            .ok_or_else(|| GameError::Rejected("There is no entrance here.".into()))?;
+        let Some(structure) = self
             .geography
             .structures_at(region_id, pos.local_x, pos.local_y)
             .into_iter()
-            .find(|item| item.kind == CABIN_KIND && item.name.eq_ignore_ascii_case(raw))
+            .find(|item| item.is_enterable() && item.name.eq_ignore_ascii_case(raw))
             .cloned()
         else {
-            return Err(GameError::Rejected(format!("No cabin named '{raw}' here.")));
+            return Err(GameError::Rejected(format!("No cabin or workshop named '{raw}' here.")));
         };
-        self.ensure_cabin_access_for_move(player, &cabin)?;
-        let keyword = cabin.name.to_ascii_lowercase();
+        self.ensure_structure_access_for_move(player, &structure)?;
+        let keyword = structure.name.to_ascii_lowercase();
         self.move_through(session_id, &keyword)
     }
 
@@ -140,7 +169,7 @@ impl WorldState {
     ) -> Result<Transition, GameError> {
         let location = self.location_id(session_id)?;
         if self.geography.structure_by_interior(&location).is_none() {
-            return Err(GameError::Rejected("You are not inside a cabin.".into()));
+            return Err(GameError::Rejected("You are not inside a cabin or workshop.".into()));
         }
         if self.geography.connection(&location, "out").is_none() {
             return Err(GameError::Rejected("The door is gone. You cannot leave that way.".into()));
@@ -158,7 +187,10 @@ impl WorldState {
         let action = parts.next().unwrap_or("").to_ascii_lowercase();
         let tail = parts.next().unwrap_or("").trim();
         let player = self.player(session_id)?;
-        let cabin = self.cabin_under_control(session_id, player)?;
+        if action == "inspect" {
+            return self.home_inspect(session_id, player);
+        }
+        let cabin = self.structure_under_control(session_id, player)?;
         match action.as_str() {
             "access" => {
                 let mode = tail.to_ascii_lowercase();
@@ -173,6 +205,20 @@ impl WorldState {
                     }
                 };
                 self.update_cabin_access(player, cabin.id, access)
+            }
+            "share" => {
+                let mode = tail.to_ascii_lowercase();
+                let share = match mode.as_str() {
+                    "private" => SHARE_PRIVATE,
+                    "shared" => SHARE_SHARED,
+                    "communal" => SHARE_COMMUNAL,
+                    _ => {
+                        return Err(GameError::Rejected(
+                            "usage: home share <private|shared|communal>".into(),
+                        ));
+                    }
+                };
+                self.update_structure_share(player, cabin, share)
             }
             "allow" => {
                 if tail.is_empty() {
@@ -204,40 +250,173 @@ impl WorldState {
                 self.demolish_cabin(session_id, player, cabin)
             }
             _ => Err(GameError::Rejected(
-                "usage: home <access|allow|deny|rename|demolish> ...".into(),
+                "usage: home <inspect|access|share|allow|deny|rename|demolish> ...".into(),
             )),
         }
     }
 
-    fn cabin_under_control(
+    pub(crate) fn cmd_workshop(
+        &mut self,
+        session_id: SessionId,
+        cmd: &ParsedCommand,
+    ) -> Result<Transition, GameError> {
+        let rest = cmd.rest.trim();
+        let mut parts = rest.splitn(2, char::is_whitespace);
+        let action = parts.next().unwrap_or("").to_ascii_lowercase();
+        let tail = parts.next().unwrap_or("").trim();
+        match action.as_str() {
+            "board" | "" => {
+                self.workshop_board(session_id, if action.is_empty() { rest } else { tail })
+            }
+            "inspect" => {
+                let player = self.player(session_id)?;
+                self.home_inspect(session_id, player)
+            }
+            _ => Err(GameError::Rejected(
+                "usage: workshop <inspect|board [post <text>|remove <id>]>".into(),
+            )),
+        }
+    }
+
+    fn home_inspect(
+        &mut self,
+        session_id: SessionId,
+        player: PlayerId,
+    ) -> Result<Transition, GameError> {
+        let structure = self.structure_here_or_inside(session_id)?;
+        let owner = self.owner_name(structure.owner_id);
+        let settle = structure
+            .settlement_id
+            .and_then(|id| self.settlements.by_id(id))
+            .map(|s| s.name.clone())
+            .unwrap_or_else(|| "(none)".into());
+        let kind = if structure.kind == WORKSHOP_KIND { "workshop" } else { "cabin" };
+        let mut lines = vec![
+            format!("{} \"{}\"", kind, structure.name),
+            format!("Owner: {owner}"),
+            format!("Visitor access: {}", structure.access),
+            format!("Settlement share: {}", structure.share),
+            format!("Settlement link: {settle}"),
+        ];
+        if structure.owner_id == Some(player) {
+            lines.push(
+                "Owner controls: home access … · home share <private|shared|communal>".into(),
+            );
+        }
+        if structure.is_workshop() {
+            lines.push("Workshop board: workshop board [post <text>]".into());
+        }
+        self.set_overlay(session_id, lines.join("\n"));
+        Ok(quiet())
+    }
+
+    fn update_structure_share(
+        &mut self,
+        player: PlayerId,
+        structure: Structure,
+        share: &str,
+    ) -> Result<Transition, GameError> {
+        if structure.owner_id != Some(player) {
+            return Err(GameError::Rejected("Only the owner can change sharing.".into()));
+        }
+        if matches!(share, SHARE_SHARED | SHARE_COMMUNAL) && structure.settlement_id.is_none() {
+            return Err(GameError::Rejected(
+                "Link this structure to a settlement first (settle claim), then set sharing."
+                    .into(),
+            ));
+        }
+        if matches!(share, SHARE_SHARED | SHARE_COMMUNAL) {
+            let Some(sid) = structure.settlement_id else {
+                return Err(GameError::Rejected("Settlement link missing.".into()));
+            };
+            if self.settlements.by_id(sid).is_none() {
+                return Err(GameError::Rejected(
+                    "That settlement no longer exists. Sharing stays private.".into(),
+                ));
+            }
+            if !self.settlements.is_member(sid, player) {
+                return Err(GameError::Rejected(
+                    "You must belong to the linked settlement to share with it.".into(),
+                ));
+            }
+        }
+        let (name, access, interior, new_share) = {
+            let Some(item) =
+                self.geography.structures.iter_mut().find(|item| item.id == structure.id)
+            else {
+                return Err(GameError::Rejected("Structure not found.".into()));
+            };
+            item.share = share.to_string();
+            (
+                item.name.clone(),
+                item.access.clone(),
+                item.interior_place.clone(),
+                item.share.clone(),
+            )
+        };
+        let (event, note) = self.emit(
+            Channel::System,
+            Audience::Player(player),
+            None,
+            format!("\"{name}\" settlement share is now {new_share}."),
+        );
+        Ok(Transition {
+            outcome: CommandOutcome { events: vec![event], quit: false },
+            ops: vec![
+                PersistOp::UpdateStructure {
+                    id: structure.id,
+                    name,
+                    access,
+                    interior_place: interior,
+                    share: new_share,
+                },
+                note,
+            ],
+        })
+    }
+
+    fn structure_under_control(
         &self,
         session_id: SessionId,
         player: PlayerId,
     ) -> Result<Structure, GameError> {
+        let structure = self.structure_here_or_inside(session_id)?;
+        if structure.owner_id != Some(player) {
+            return Err(GameError::Rejected(
+                "Only the owner can manage this cabin or workshop.".into(),
+            ));
+        }
+        Ok(structure)
+    }
+
+    fn structure_here_or_inside(&self, session_id: SessionId) -> Result<Structure, GameError> {
         let location = self.location_id(session_id)?;
-        if let Some(cabin) = self.geography.structure_by_interior(&location).cloned() {
-            if cabin.owner_id != Some(player) {
-                return Err(GameError::Rejected("Only the owner can manage this cabin.".into()));
-            }
-            return Ok(cabin);
+        if let Some(structure) = self.geography.structure_by_interior(&location).cloned() {
+            return Ok(structure);
         }
         let Some(pos) = WildernessPos::parse(&location) else {
-            return Err(GameError::Rejected("Stand at your cabin or inside it.".into()));
+            return Err(GameError::Rejected(
+                "Stand at your cabin or workshop, or inside it.".into(),
+            ));
         };
-        let region_id = self
-            .geography
-            .region(pos.identity.coord_key())
-            .map(|region| region.id)
-            .ok_or_else(|| GameError::Rejected("Stand at your cabin or inside it.".into()))?;
-        let cabin = self
-            .geography
-            .structure_of_kind_at(region_id, pos.local_x, pos.local_y, CABIN_KIND)
-            .cloned()
-            .ok_or_else(|| GameError::Rejected("There is no cabin here.".into()))?;
-        if cabin.owner_id != Some(player) {
-            return Err(GameError::Rejected("Only the owner can manage this cabin.".into()));
+        let region_id =
+            self.geography.region(pos.identity.coord_key()).map(|region| region.id).ok_or_else(
+                || GameError::Rejected("Stand at your cabin or workshop, or inside it.".into()),
+            )?;
+        let structures = self.geography.structures_at(region_id, pos.local_x, pos.local_y);
+        let enterable: Vec<&Structure> =
+            structures.into_iter().filter(|item| item.is_enterable()).collect();
+        match enterable.as_slice() {
+            [one] => Ok((*one).clone()),
+            [] => Err(GameError::Rejected("There is no cabin or workshop here.".into())),
+            many => {
+                // Prefer a workshop when several enterables share the tile.
+                if let Some(workshop) = many.iter().find(|item| item.kind == WORKSHOP_KIND) {
+                    return Ok((*workshop).clone());
+                }
+                Ok(many[0].clone())
+            }
         }
-        Ok(cabin)
     }
 
     fn update_cabin_access(
@@ -246,13 +425,14 @@ impl WorldState {
         cabin_id: Uuid,
         access: &str,
     ) -> Result<Transition, GameError> {
-        let Some(cabin) = self.geography.structures.iter_mut().find(|item| item.id == cabin_id)
-        else {
-            return Err(GameError::Rejected("Cabin not found.".into()));
+        let (name, interior, share) = {
+            let Some(cabin) = self.geography.structures.iter_mut().find(|item| item.id == cabin_id)
+            else {
+                return Err(GameError::Rejected("Cabin not found.".into()));
+            };
+            cabin.access = access.to_string();
+            (cabin.name.clone(), cabin.interior_place.clone(), cabin.share.clone())
         };
-        cabin.access = access.to_string();
-        let name = cabin.name.clone();
-        let interior = cabin.interior_place.clone();
         let (event, note) = self.emit(
             Channel::System,
             Audience::Player(player),
@@ -267,6 +447,7 @@ impl WorldState {
                     name,
                     access: access.to_string(),
                     interior_place: interior,
+                    share,
                 },
                 note,
             ],
@@ -373,6 +554,7 @@ impl WorldState {
             name: name.clone(),
             access: cabin.access,
             interior_place: cabin.interior_place,
+            share: cabin.share,
         });
         let (event, note) = self.emit(
             Channel::System,
@@ -489,6 +671,7 @@ impl WorldState {
             }
             // Replace own sign text.
             let id = existing.id;
+            let share = existing.share.clone();
             if let Some(item) = self.geography.structures.iter_mut().find(|item| item.id == id) {
                 item.name = text.clone();
             }
@@ -497,6 +680,7 @@ impl WorldState {
                 name: text.clone(),
                 access: ACCESS_PUBLIC.into(),
                 interior_place: None,
+                share,
             });
         } else {
             let id = Uuid::new_v4();
@@ -512,6 +696,7 @@ impl WorldState {
                 access: ACCESS_PUBLIC.into(),
                 interior_place: None,
                 settlement_id: None,
+                share: SHARE_PRIVATE.into(),
                 created_at,
             });
             ops.push(PersistOp::Structure {
@@ -525,6 +710,7 @@ impl WorldState {
                 access: ACCESS_PUBLIC.into(),
                 interior_place: None,
                 settlement_id: None,
+                share: SHARE_PRIVATE.into(),
                 created_at,
             });
         }
@@ -650,6 +836,7 @@ impl WorldState {
             access: ACCESS_PUBLIC.into(),
             interior_place: None,
             settlement_id: None,
+            share: SHARE_PRIVATE.into(),
             created_at,
         });
         ops.push(PersistOp::Structure {
@@ -663,6 +850,7 @@ impl WorldState {
             access: ACCESS_PUBLIC.into(),
             interior_place: None,
             settlement_id: None,
+            share: SHARE_PRIVATE.into(),
             created_at,
         });
         self.social.last_build_at.insert(player, self.now_ms);
@@ -802,6 +990,162 @@ impl WorldState {
         Ok(Transition {
             outcome: CommandOutcome { events: vec![event], quit: false },
             ops: vec![PersistOp::NoticeDelete { id }, note],
+        })
+    }
+
+    fn workshop_board(
+        &mut self,
+        session_id: SessionId,
+        raw: &str,
+    ) -> Result<Transition, GameError> {
+        let player = self.player(session_id)?;
+        let structure = self.structure_here_or_inside(session_id)?;
+        if !structure.is_workshop() && structure.kind != WORKSHOP_KIND {
+            return Err(GameError::Rejected(
+                "Stand at a workshop (or a cabin marked communal) to use its board.".into(),
+            ));
+        }
+        // Entering requires the same rules as the door; reading the board from outside does too.
+        self.ensure_structure_access_for_move(player, &structure)?;
+        let place_id = workshop_place_id(structure.id);
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("read") {
+            return self.workshop_board_read(session_id, &structure, &place_id);
+        }
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let action = parts.next().unwrap_or("").to_ascii_lowercase();
+        let tail = parts.next().unwrap_or("").trim();
+        match action.as_str() {
+            "post" => self.workshop_board_post(session_id, player, &structure, &place_id, tail),
+            "remove" => self.workshop_board_remove(player, &structure, &place_id, tail),
+            _ => Err(GameError::Rejected("usage: workshop board [post <text>|remove <id>]".into())),
+        }
+    }
+
+    fn workshop_board_read(
+        &mut self,
+        session_id: SessionId,
+        structure: &Structure,
+        place_id: &str,
+    ) -> Result<Transition, GameError> {
+        let _ = self.social.prune_notices(self.now_ms);
+        let posts = self.social.active_notices(place_id, self.now_ms);
+        let mut lines = vec![format!("Workshop \"{}\" project board:", structure.name)];
+        lines.push(format!("Share: {} · Access: {}", structure.share, structure.access));
+        if posts.is_empty() {
+            lines.push("(empty — try workshop board post <text>)".into());
+        } else {
+            for post in posts.into_iter().take(NOTICE_PLACE_CAP) {
+                let author = self
+                    .operators
+                    .get(&post.author_id)
+                    .map(|op| op.name.clone())
+                    .unwrap_or_else(|| "someone".into());
+                let short = post.id.to_string();
+                let id8 = &short[..8.min(short.len())];
+                lines.push(format!("[{id8}] {author}: {}", post.body));
+            }
+        }
+        self.set_overlay(session_id, lines.join("\n"));
+        Ok(quiet())
+    }
+
+    fn workshop_board_post(
+        &mut self,
+        _session_id: SessionId,
+        player: PlayerId,
+        structure: &Structure,
+        place_id: &str,
+        raw: &str,
+    ) -> Result<Transition, GameError> {
+        // Poster must currently be allowed to use the workshop (membership checked live).
+        self.ensure_structure_access_for_move(player, structure)?;
+        if self.use_system_clock {
+            if let Some(last) = self.social.last_notice_at.get(&player).copied() {
+                if self.now_ms.saturating_sub(last) < NOTICE_RATE_MS {
+                    return Err(GameError::Rejected(
+                        "Wait a moment before posting another notice.".into(),
+                    ));
+                }
+            }
+        }
+        let body = validate_notice_text(raw).map_err(|m| GameError::Rejected(m.into()))?;
+        let mut ops = Vec::new();
+        for expired in self.social.prune_notices(self.now_ms) {
+            ops.push(PersistOp::NoticeDelete { id: expired });
+        }
+        let active = self.social.active_notices(place_id, self.now_ms);
+        if active.len() >= NOTICE_PLACE_CAP {
+            if let Some(oldest) = active.last() {
+                let id = oldest.id;
+                self.social.notices.retain(|post| post.id != id);
+                ops.push(PersistOp::NoticeDelete { id });
+            }
+        }
+        let id = Uuid::new_v4();
+        let created_at = self.now_ms;
+        let expires_at = created_at.saturating_add(NOTICE_RETENTION_MS);
+        self.social.notices.push(NoticePost {
+            id,
+            place_id: place_id.into(),
+            author_id: player,
+            body: body.clone(),
+            created_at,
+            expires_at,
+        });
+        self.social.last_notice_at.insert(player, created_at);
+        ops.push(PersistOp::NoticeUpsert {
+            id,
+            place_id: place_id.into(),
+            author_id: player,
+            body,
+            created_at,
+            expires_at,
+        });
+        let short = id.to_string();
+        let id8 = &short[..8.min(short.len())];
+        let (event, note) = self.emit(
+            Channel::System,
+            Audience::Player(player),
+            None,
+            format!("You pin a project note [{id8}] on \"{}\".", structure.name),
+        );
+        ops.push(note);
+        Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
+    fn workshop_board_remove(
+        &mut self,
+        player: PlayerId,
+        structure: &Structure,
+        place_id: &str,
+        raw: &str,
+    ) -> Result<Transition, GameError> {
+        let key = raw.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return Err(GameError::Rejected("usage: workshop board remove <id>".into()));
+        }
+        let Some(post) = self
+            .social
+            .notices
+            .iter()
+            .find(|post| post.place_id == place_id && post.id.to_string().starts_with(&key))
+            .cloned()
+        else {
+            return Err(GameError::Rejected("No notice matches that id.".into()));
+        };
+        let allowed = post.author_id == player || structure.owner_id == Some(player);
+        if !allowed {
+            return Err(GameError::Rejected(
+                "Only the author or workshop owner can remove that notice.".into(),
+            ));
+        }
+        self.social.notices.retain(|row| row.id != post.id);
+        let (event, note) =
+            self.emit(Channel::System, Audience::Player(player), None, "Notice removed.");
+        Ok(Transition {
+            outcome: CommandOutcome { events: vec![event], quit: false },
+            ops: vec![PersistOp::NoticeDelete { id: post.id }, note],
         })
     }
 

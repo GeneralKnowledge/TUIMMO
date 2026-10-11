@@ -100,6 +100,126 @@ async fn settle_region_board_survive_restart() {
     running.shutdown().await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn offline_invite_share_workshop_survive_restart() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let data = dir.path().to_path_buf();
+    let running = boot(&data).await;
+
+    let mut ada = connect(&running.socket_path).await;
+    let mut bob = connect(&running.socket_path).await;
+    let _ = register(&mut ada, "ada", "Ada").await;
+    let _ = register(&mut bob, "bob", "Bob").await;
+
+    // Invite while Bob stays in the Coffee Shop (offline from the wilderness).
+    let _ = command(&mut ada, "go up").await;
+    let _ = command(&mut ada, "outskirts").await;
+    let mut cabin_ok = false;
+    'probe: for _ in 0..12 {
+        if try_command(&mut ada, "build cabin Haven").await.is_ok() {
+            cabin_ok = true;
+            break;
+        }
+        for dir in ["north", "east", "south", "west"] {
+            if try_command(&mut ada, dir).await.is_ok() {
+                if try_command(&mut ada, "build cabin Haven").await.is_ok() {
+                    cabin_ok = true;
+                    break 'probe;
+                }
+                break;
+            }
+        }
+    }
+    assert!(cabin_ok, "could not find a buildable tile");
+
+    let _ = command(&mut ada, "home access private").await;
+    let _ = command(&mut ada, "settle create Ridgeworks").await;
+    tokio::time::sleep(Duration::from_millis(1600)).await;
+    let _ = command(&mut ada, "build workshop Anvil").await;
+    let _ = command(&mut ada, "home share communal").await;
+    let _ = command(&mut ada, "settle invite Bob").await;
+
+    drop(bob);
+    let mut bob = connect(&running.socket_path).await;
+    let _ = login(&mut bob, "bob").await;
+    let invites = command(&mut bob, "settle invites").await;
+    let overlay = invites.overlay.clone().unwrap_or_default();
+    assert!(overlay.contains("Ridgeworks"), "missing invite after reconnect: {overlay}");
+    assert!(overlay.contains("settle accept Ridgeworks"), "{overlay}");
+    let _ = command(&mut bob, "settle accept Ridgeworks").await;
+
+    // Colocate Bob with Ada by searching look text for the cabin name.
+    let _ = command(&mut bob, "go up").await;
+    let _ = command(&mut bob, "outskirts").await;
+    let mut found = {
+        let look = command(&mut bob, "look").await;
+        look.description.contains("Haven")
+    };
+    if !found {
+        'hunt: for _ in 0..32 {
+            for dir in ["north", "east", "south", "west"] {
+                if try_command(&mut bob, dir).await.is_ok() {
+                    let look = command(&mut bob, "look").await;
+                    if look.description.contains("Haven") {
+                        found = true;
+                        break 'hunt;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    assert!(found, "Bob could not reach Ada's cabin tile");
+
+    // Private cabin remains closed to members until shared.
+    let cabin_err = try_command(&mut bob, "enter Haven").await;
+    assert!(cabin_err.is_err(), "private cabin should refuse members: {cabin_err:?}");
+
+    let _ = command(&mut ada, "enter Haven").await;
+    let _ = command(&mut ada, "home share shared").await;
+    let _ = command(&mut ada, "leave").await;
+    let entered_cabin = command(&mut bob, "enter Haven").await;
+    assert!(entered_cabin.location_name.contains("Haven"), "{}", entered_cabin.location_name);
+    let _ = command(&mut bob, "leave").await;
+
+    let entered = command(&mut bob, "enter Anvil").await;
+    assert!(entered.location_name.contains("Anvil"), "{}", entered.location_name);
+    let _ = command(&mut bob, "workshop board post Fit hinges").await;
+    let board = command(&mut bob, "workshop board").await;
+    let overlay = board.overlay.clone().unwrap_or_default();
+    assert!(overlay.contains("Fit hinges"), "{overlay}");
+    let _ = command(&mut bob, "leave").await;
+
+    drop(ada);
+    drop(bob);
+    running.shutdown().await;
+
+    let running = boot(&data).await;
+    let mut ada = connect(&running.socket_path).await;
+    let mut bob = connect(&running.socket_path).await;
+    let _ = login(&mut ada, "ada").await;
+    let _ = login(&mut bob, "bob").await;
+
+    let inspect = command(&mut ada, "settle inspect").await;
+    let overlay = inspect.overlay.clone().unwrap_or_default();
+    assert!(overlay.contains("Ridgeworks"), "settlement lost: {overlay}");
+    let members = command(&mut bob, "settle members").await;
+    let overlay = members.overlay.clone().unwrap_or_default();
+    assert!(overlay.contains("Ada"), "membership lost: {overlay}");
+    let _ = command(&mut ada, "enter Anvil").await;
+    let home = command(&mut ada, "home inspect").await;
+    let overlay = home.overlay.clone().unwrap_or_default();
+    assert!(
+        overlay.contains("communal") || overlay.contains("shared") || overlay.contains("private"),
+        "{overlay}"
+    );
+    let board = command(&mut ada, "workshop board").await;
+    let overlay = board.overlay.clone().unwrap_or_default();
+    assert!(overlay.contains("Fit hinges"), "workshop notice lost: {overlay}");
+
+    running.shutdown().await;
+}
+
 async fn boot(data: &PathBuf) -> coffee_server::Running {
     let mut config = ServerConfig::new(data);
     config.ssh_listen = SocketAddr::from(([127, 0, 0, 1], 0));

@@ -182,22 +182,38 @@ impl SettlementState {
         &self,
         settlement_id: Uuid,
         invitee: PlayerId,
+        now_ms: u64,
     ) -> Option<&SettlementInvite> {
         self.invites.iter().find(|row| {
             row.settlement_id == settlement_id
                 && row.invitee_id == invitee
                 && row.status == InviteStatus::Pending
+                && row.expires_at > now_ms
         })
     }
 
-    pub fn pending_for(&self, invitee: PlayerId) -> Vec<&SettlementInvite> {
+    /// Actionable pending invites for `invitee` (not yet expired by `now_ms`).
+    pub fn pending_for(&self, invitee: PlayerId, now_ms: u64) -> Vec<&SettlementInvite> {
         self.invites
             .iter()
-            .filter(|row| row.invitee_id == invitee && row.status == InviteStatus::Pending)
+            .filter(|row| {
+                row.invitee_id == invitee
+                    && row.status == InviteStatus::Pending
+                    && row.expires_at > now_ms
+            })
+            .collect()
+    }
+
+    /// Pending rows that have passed `expires_at` but are not yet marked expired.
+    pub fn stale_pending(&self, now_ms: u64) -> Vec<&SettlementInvite> {
+        self.invites
+            .iter()
+            .filter(|row| row.status == InviteStatus::Pending && row.expires_at <= now_ms)
             .collect()
     }
 
     /// Mark expired pending invites. Returns ids that changed.
+    /// Call only on Ok command paths so hub commit/rollback stays consistent.
     pub fn prune_invites(&mut self, now_ms: u64) -> Vec<Uuid> {
         let mut expired = Vec::new();
         for invite in &mut self.invites {
@@ -212,6 +228,15 @@ impl SettlementState {
 
 pub fn settlement_place_id(id: Uuid) -> String {
     format!("settle:{id}")
+}
+
+pub fn workshop_place_id(id: Uuid) -> String {
+    format!("workshop:{id}")
+}
+
+pub fn parse_workshop_place_id(raw: &str) -> Option<Uuid> {
+    let rest = raw.strip_prefix("workshop:")?;
+    Uuid::parse_str(rest).ok()
 }
 
 pub fn parse_settlement_place_id(raw: &str) -> Option<Uuid> {
