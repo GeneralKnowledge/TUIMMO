@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used)]
 //! Invite-only registration: seed codes, redeem, friend codes, seat cap.
 
 use std::time::Duration;
@@ -11,13 +12,13 @@ const PASSWORD: &str = "correct horse";
 
 #[tokio::test]
 async fn invite_only_register_mints_friend_codes_and_enforces_cap() {
-    let dir = tempdir().unwrap();
+    let dir = tempdir().expect("tempdir");
     let data = dir.path();
     let codes = create_invite_codes(data, 1, "reddit").await.expect("seed");
     assert_eq!(codes.len(), 1);
 
     let mut config = ServerConfig::new(data);
-    config.ssh_listen = "127.0.0.1:0".parse().unwrap();
+    config.ssh_listen = "127.0.0.1:0".parse().expect("listen addr");
     config.invite_only = true;
     config.max_accounts = 2;
     config.invites_per_player = 2;
