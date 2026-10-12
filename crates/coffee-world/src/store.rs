@@ -383,20 +383,27 @@ impl Store {
                     note,
                     actor_id,
                     created_at,
+                    content_key,
+                    title,
+                    place_key,
                 } => {
                     sqlx::query(
                         "INSERT INTO region_discoveries (
-                            id, region_id, local_x, local_y, kind, note, actor_id, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                            id, region_id, local_x, local_y, kind, note, actor_id, created_at,
+                            content_key, title, place_key
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                     )
                     .bind(id.to_string())
-                    .bind(region_id.to_string())
+                    .bind(region_id.map(|id| id.to_string()))
                     .bind(i64::from(*local_x))
                     .bind(i64::from(*local_y))
                     .bind(kind)
                     .bind(note)
                     .bind(actor_id.map(|id| id.to_string()))
                     .bind(*created_at as i64)
+                    .bind(content_key)
+                    .bind(title)
+                    .bind(place_key)
                     .execute(&mut *tx)
                     .await?;
                 }
@@ -812,7 +819,8 @@ impl Store {
         }
 
         let discoveries = sqlx::query_as::<_, DiscoverySql>(
-            "SELECT id, region_id, local_x, local_y, kind, note, actor_id, created_at
+            "SELECT id, region_id, local_x, local_y, kind, note, actor_id, created_at,
+                    content_key, title, place_key
              FROM region_discoveries",
         )
         .fetch_all(&self.pool)
@@ -820,13 +828,16 @@ impl Store {
         for row in discoveries {
             geography.discoveries.push(Discovery {
                 id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
-                region_id: Uuid::from_str(&row.region_id).map_err(|_| StoreError::Data)?,
+                region_id: optional_uuid(row.region_id)?,
                 local_x: local_col(row.local_x)?,
                 local_y: local_col(row.local_y)?,
                 kind: row.kind,
                 note: row.note,
                 actor_id: optional_player(row.actor_id)?,
                 created_at: u64_col(row.created_at)?,
+                content_key: blank_to_none(row.content_key),
+                title: blank_to_none(row.title),
+                place_key: blank_to_none(row.place_key),
             });
         }
 
@@ -987,6 +998,10 @@ fn optional_player(value: Option<String>) -> Result<Option<PlayerId>, StoreError
 
 fn optional_uuid(value: Option<String>) -> Result<Option<Uuid>, StoreError> {
     value.map(|raw| Uuid::from_str(&raw).map_err(|_| StoreError::Data)).transpose()
+}
+
+fn blank_to_none(value: Option<String>) -> Option<String> {
+    value.filter(|text| !text.is_empty())
 }
 
 pub struct AccountRow {
@@ -1173,13 +1188,16 @@ struct ModSql {
 #[derive(sqlx::FromRow)]
 struct DiscoverySql {
     id: String,
-    region_id: String,
+    region_id: Option<String>,
     local_x: i64,
     local_y: i64,
     kind: String,
     note: String,
     actor_id: Option<String>,
     created_at: i64,
+    content_key: Option<String>,
+    title: Option<String>,
+    place_key: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1196,6 +1214,8 @@ struct LinkSql {
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr;
+
     use super::*;
     use crate::geography::{gate_identity, generate_region, Terrain, WildernessPos};
     use crate::model::STARTER_LOCATION;
@@ -1559,6 +1579,13 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(bio_col, 1);
+        let content_key_col: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('region_discoveries') WHERE name = 'content_key'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(content_key_col, 1);
         drop(store);
 
         // Re-open an already-migrated database (forward-only migrations stay idempotent).
@@ -1568,5 +1595,337 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(friendships, 0);
+    }
+
+    #[tokio::test]
+    async fn failed_discovery_commit_rolls_back_the_whole_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let err = store
+            .commit(&[
+                PersistOp::Message {
+                    at_ms: 1,
+                    channel: "system".into(),
+                    audience: "player".into(),
+                    audience_key: "nope".into(),
+                    speaker: None,
+                    body: "partial".into(),
+                },
+                PersistOp::Discovery {
+                    id: Uuid::new_v4(),
+                    region_id: Some(Uuid::new_v4()),
+                    local_x: 0,
+                    local_y: 0,
+                    kind: "field".into(),
+                    note: "should not stick".into(),
+                    actor_id: None,
+                    created_at: 1,
+                    content_key: Some("survey-scratch".into()),
+                    title: Some("Gate scratch".into()),
+                    place_key: Some("roof-array".into()),
+                },
+            ])
+            .await;
+        assert!(err.is_err());
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.log.is_empty());
+        assert!(loaded.geography.discoveries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn field_notes_migrate_existing_rows_and_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("legacy.sqlite");
+        let legacy_dir = dir.path().join("legacy-migrations");
+        std::fs::create_dir(&legacy_dir).unwrap();
+        let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+        for name in [
+            "0001_init.sql",
+            "0002_world.sql",
+            "0003_social_and_places.sql",
+            "0004_settlements.sql",
+            "0005_sharing_and_workshops.sql",
+        ] {
+            std::fs::copy(manifest.join(name), legacy_dir.join(name)).unwrap();
+        }
+        let url = format!("sqlite://{}", path.display());
+        let options = sqlx::sqlite::SqliteConnectOptions::from_str(&url)
+            .unwrap()
+            .create_if_missing(true)
+            .foreign_keys(true);
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        sqlx::migrate::Migrator::new(legacy_dir).await.unwrap().run(&pool).await.unwrap();
+
+        let ada_account = Uuid::new_v4();
+        let bob_account = Uuid::new_v4();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let region_id = Uuid::new_v4();
+        let cabin_id = Uuid::new_v4();
+        let sign_id = Uuid::new_v4();
+        let trail_id = Uuid::new_v4();
+        let entered_id = Uuid::new_v4();
+        let settle_id = Uuid::new_v4();
+        let invite_id = Uuid::new_v4();
+        let notice_id = Uuid::new_v4();
+        let place = "w:undernet:1:0:0:1:8:9";
+
+        sqlx::query(
+            "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(ada_account.to_string())
+        .bind("ada")
+        .bind("hash")
+        .bind(10_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(bob_account.to_string())
+        .bind("bob")
+        .bind("hash")
+        .bind(11_i64)
+        .execute(&pool)
+        .await
+        .unwrap();
+        for (id, account, name, at) in
+            [(ada_id, ada_account, "ada", 10_i64), (bob_id, bob_account, "bob", 11_i64)]
+        {
+            sqlx::query(
+                "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen)
+                 VALUES (?1, ?2, ?3, 'coffee-shop', ?4, ?4)",
+            )
+            .bind(id.to_string())
+            .bind(account.to_string())
+            .bind(name)
+            .bind(at)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        sqlx::query("INSERT INTO operator_flags (operator_id, flag) VALUES (?1, 'cipher-plate')")
+            .bind(ada_id.to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO operator_items (operator_id, item_key, name, detail) VALUES (?1, 'chip', 'loyalty chip', 'scuffed')",
+        )
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO friendships (requester_id, recipient_id, status, created_at, updated_at)
+             VALUES (?1, ?2, 'accepted', 12, 13)",
+        )
+        .bind(ada_id.to_string())
+        .bind(bob_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO ignores (operator_id, ignored_id, created_at) VALUES (?1, ?2, 14)",
+        )
+        .bind(bob_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO world_regions (
+                id, world_id, epoch_id, origin_x, origin_y, generation_version, region_seed,
+                placement_x, placement_y, discovered_at
+             ) VALUES (?1, 'undernet', 1, 0, 0, 1, '0000000000000001', 0, 0, 20)",
+        )
+        .bind(region_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO world_structures (
+                id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
+                settlement_id, share, created_at
+             ) VALUES (?1, ?2, 8, 9, 'cabin', 'Haven', ?3, 'public', NULL, NULL, 'private', 21)",
+        )
+        .bind(cabin_id.to_string())
+        .bind(region_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO world_structures (
+                id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
+                settlement_id, share, created_at
+             ) VALUES (?1, ?2, 8, 9, 'sign', 'Come visit', ?3, 'public', NULL, NULL, 'private', 22)",
+        )
+        .bind(sign_id.to_string())
+        .bind(region_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO world_structures (
+                id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
+                settlement_id, share, created_at
+             ) VALUES (?1, ?2, 8, 9, 'trail', 'ridge', ?3, 'public', NULL, NULL, 'private', 23)",
+        )
+        .bind(trail_id.to_string())
+        .bind(region_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO terrain_modifications (
+                region_id, local_x, local_y, terrain, reason, actor_id, created_at
+             ) VALUES (?1, 8, 9, 'grass', 'pad', ?2, 24)",
+        )
+        .bind(region_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO region_discoveries (
+                id, region_id, local_x, local_y, kind, note, actor_id, created_at
+             ) VALUES (?1, ?2, 8, 8, 'entered', 'Entered the region.', ?3, 25)",
+        )
+        .bind(entered_id.to_string())
+        .bind(region_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO settlements (
+                id, name, name_key, description, visibility, anchor_place, owner_id, created_at
+             ) VALUES (?1, 'Havenhold', 'havenhold', 'ridge camp', 'public', ?2, ?3, 26)",
+        )
+        .bind(settle_id.to_string())
+        .bind(place)
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO settlement_members (settlement_id, operator_id, role, joined_at)
+             VALUES (?1, ?2, 'owner', 26)",
+        )
+        .bind(settle_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO settlement_invites (
+                id, settlement_id, inviter_id, invitee_id, status, created_at, expires_at
+             ) VALUES (?1, ?2, ?3, ?4, 'pending', 27, 900000)",
+        )
+        .bind(invite_id.to_string())
+        .bind(settle_id.to_string())
+        .bind(ada_id.to_string())
+        .bind(bob_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO noticeboard_posts (id, place_id, author_id, body, created_at, expires_at)
+             VALUES (?1, 'coffee-shop', ?2, 'Visit Haven', 28, 900000)",
+        )
+        .bind(notice_id.to_string())
+        .bind(ada_id.to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        drop(pool);
+
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
+        let bob = loaded.operators.iter().find(|op| op.id == bob_id).unwrap();
+        assert_eq!(ada.location_id, "coffee-shop");
+        assert!(ada.flags.contains("cipher-plate"));
+        assert_eq!(ada.items[0].keyword, "chip");
+        assert_eq!(bob.username, "bob");
+        assert!(loaded.social.are_friends(ada_id, bob_id));
+        assert!(loaded.social.ignores.iter().any(|edge| edge.operator_id == bob_id));
+        assert_eq!(loaded.settlements.settlements.len(), 1);
+        assert_eq!(loaded.settlements.settlements[0].name, "Havenhold");
+        assert_eq!(loaded.settlements.invites.len(), 1);
+        assert!(loaded
+            .geography
+            .structures
+            .iter()
+            .any(|row| row.kind == "cabin" && row.name == "Haven"));
+        assert!(loaded.geography.structures.iter().any(|row| row.kind == "sign"));
+        assert!(loaded.geography.structures.iter().any(|row| row.kind == "trail"));
+        assert_eq!(loaded.geography.terrain_mods.len(), 1);
+        assert_eq!(loaded.social.notices.len(), 1);
+        let entered = loaded.geography.discoveries.iter().find(|row| row.id == entered_id).unwrap();
+        assert_eq!(entered.kind, "entered");
+        assert!(entered.content_key.is_none());
+        assert_eq!(entered.actor_id, Some(ada_id));
+        assert_eq!(entered.region_id, Some(region_id));
+
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_geography(loaded.geography);
+        world.install_social(loaded.social);
+        world.install_settlements(loaded.settlements);
+        let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        let ops = world.connect_player(ada_ident).unwrap().0.ops;
+        store.commit(&ops).await.unwrap();
+        let mut ops = world.apply(ada_session, "go up").unwrap().ops;
+        ops.extend(world.apply(ada_session, "journal record").unwrap().ops);
+        store.commit(&ops).await.unwrap();
+        drop(store);
+
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
+        assert_eq!(ada.location_id, "roof-array");
+        assert!(ada.flags.contains("cipher-plate"));
+        assert!(loaded.social.are_friends(ada_id, bob_id));
+        assert!(loaded.geography.structures.iter().any(|row| row.name == "Haven"));
+        assert!(loaded
+            .geography
+            .discoveries
+            .iter()
+            .any(|row| row.id == entered_id && row.kind == "entered"));
+        let note = loaded
+            .geography
+            .discoveries
+            .iter()
+            .find(|row| row.kind == "field" && row.actor_id == Some(ada_id))
+            .unwrap();
+        assert_eq!(note.content_key.as_deref(), Some("survey-scratch"));
+        assert_eq!(note.place_key.as_deref(), Some("roof-array"));
+        assert!(note.region_id.is_none());
+        assert_eq!(loaded.settlements.settlements[0].owner_id, ada_id);
+
+        let mut again = WorldState::for_tests();
+        again.install_loaded(loaded.operators, loaded.log);
+        again.install_geography(loaded.geography);
+        let back = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let session = back.session_id;
+        again.connect_player(back).unwrap();
+        again.apply(session, "journal read survey-scratch").unwrap();
+        let page = again.view(session).unwrap().overlay.unwrap_or_default();
+        assert!(page.contains("one step west of the gate"));
+        assert!(page.contains("Roof Array"));
+        again.apply(session, "journal record").unwrap();
+        assert_eq!(again.geography.field_notes_for(ada_id).len(), 1);
     }
 }

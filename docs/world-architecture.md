@@ -115,7 +115,7 @@ The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoc
 | `world_regions` | Identity, version, audit seed, atlas placement, discovery time. Unique on `(world_id, epoch_id, origin_x, origin_y)`. |
 | `world_structures` | Structures per tile and kind (`marker`, `cabin`, `workshop`, `sign`, `trail`). Unique on `(region_id, local_x, local_y, kind)`. Enterables carry `access`, `interior_place`, and `share` (`private` / `shared` / `communal`). `owner_id` is attribution, not a foreign key, so history can outlive an account. |
 | `terrain_modifications` | One override per tile. The baseline is not copied. |
-| `region_discoveries` | Visits and notes. Entering a region records an `entered` discovery. |
+| `region_discoveries` | Visits and personal field notes. Entering a region records an `entered` discovery. A player's journal is additional `field` rows in the same table. |
 | `world_connections` | Explicit links. Unique on `(from_place, keyword)`. |
 
 Indexes cover atlas placement, structure owner, discoveries by region, and connections by origin place.
@@ -156,6 +156,7 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 - set an arbitrary place key (`go` only follows exits, cardinals, the city seam, or a stored connection)
 - choose a generation version or seed
 - write another player's `owner_id`
+- read another player's field journal (`journal read` only returns the caller's rows)
 - overwrite a generated grid except through `apply_terrain_mod`, which records an override
 - open an operating-system shell (the SSH gateway still refuses `exec`)
 
@@ -164,6 +165,19 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 `0004_settlements.sql` adds settlements, membership (one per player), invites, and a nullable `world_structures.settlement_id` link. Disband clears membership, invites, settle notices, and structure links; it never deletes cabins, signs, trails, or discoveries. Hub rollback snapshots settlements alongside social/geography/log.
 
 `0005_sharing_and_workshops.sql` adds `world_structures.share` (default `private`) with a CHECK constraint, rebuilds the structures table so fresh and upgraded databases agree, and indexes share. Legacy rows become private. Workshop kind values use the existing structures table; workshop project boards reuse `noticeboard_posts` with `place_id = workshop:<uuid>`.
+
+`0006_field_notes.sql` rebuilds `region_discoveries` forward-only. Existing visit rows are copied with null `content_key`, `title`, and `place_key`. New columns:
+
+| Column | Use |
+| --- | --- |
+| `content_key` | Stable discovery id, the same for every player who records that feature. |
+| `title` | Short journal title. |
+| `place_key` | Wilderness place key or static location id, so the note can point back. |
+| `region_id` | Now nullable. Static-room notes (the roof, the Old Relay) have no region row. |
+
+A unique index on `(actor_id, content_key)` for `kind = 'field'` makes recording idempotent. Visit rows are not part of that index. Field notes do not write terrain, landmarks, or another player's rows. A failed commit rolls the note back with the rest of the transaction.
+
+The unfiled-survey stone at birth `(0, 0)` tile `(7, 8)` is presentation layered on the version 1 tile. `generate_region` is unchanged, and the origin fingerprint stays `0x8812_F1DB_241C_39A1`. Landmark inspection variants are chosen by a fixed salt of absolute coordinates in `geography/field.rs`. That salt is not a generator input.
 
 ### Region chat keys
 

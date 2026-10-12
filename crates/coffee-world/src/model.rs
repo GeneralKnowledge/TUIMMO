@@ -131,13 +131,16 @@ pub enum PersistOp {
     },
     Discovery {
         id: Uuid,
-        region_id: Uuid,
+        region_id: Option<Uuid>,
         local_x: u8,
         local_y: u8,
         kind: String,
         note: String,
         actor_id: Option<PlayerId>,
         created_at: u64,
+        content_key: Option<String>,
+        title: Option<String>,
+        place_key: Option<String>,
     },
     Connection {
         id: Uuid,

@@ -42,7 +42,8 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto gener
 | `ignore <player>` / `unignore` / `ignores` | `block` | Filter say, chat, region, emote, whisper, and friend/settle invites |
 | `status` | `st` | Your name and location |
 | `inventory` | `inv`, `i` | What you carry |
-| `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, or item |
+| `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, landmark, or item |
+| `journal [recent\|read <id>\|record]` | | Private field journal of authored discoveries |
 | `mark <name>` | | Leave a named marker on the outskirts tile |
 | `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
 | `enter <name>` / `leave` | | Enter or leave a cabin or workshop |
@@ -92,11 +93,38 @@ In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Wate
 
 Spectators, if a future mode adds them, can look and read. They cannot move, inspect, speak, build, or mark. The server checks that. The client cannot grant it.
 
+## Field journal
+
+`journal` is a private record of authored discoveries. It is not a quest log and not a shared noticeboard.
+
+- `journal` lists your entries (id and title). An empty journal says so.
+- `journal recent` shows the latest entries with a place line and a short finding.
+- `journal read <id>` shows one entry: title, finding, a way back, and the stable place key.
+- `journal record` keeps the notable discovery at your current place. Recording the same discovery again does not add a second copy.
+
+Ids such as `survey-mark` or `lm:undernet:1:stone:0:0:5:13` name the discovery, not the database row. Two operators can record the same id. `journal read` only opens the caller's own entry. A missing id, including another operator's, answers `No journal entry matches`.
+
+Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator.
+
+A journal entry is not a sign, a trail post, or a region visit. `region_discoveries` rows with kind `entered` are shared history of who first opened a birth cell. Kind `field` is the personal note. Signs and structures stay world-visible. Journal text is not copied into chat, settlement boards, or another operator's journal.
+
 ## A short discovery
 
 You start with a loyalty chip. It opens nothing.
 
-In the Abandoned Exchange, `inspect terminal` tears off a log scrap. At the Old Relay, `inspect relay` yields a cipher plate. Back at the relay, `go archive` opens the Black Archive. Before that, the door answers that it is sealed.
+In the Abandoned Exchange, `inspect terminal` tears off a log scrap. At the Old Relay, `inspect relay` yields a cipher plate. Back at the relay, `go archive` opens the Black Archive. Before that, the door answers that it is sealed. The cipher plate is still required. Field notes do not open the archive.
+
+## The unfiled survey
+
+This chain is optional and solo. It uses the Roof Array, the city gate, and the Old Relay dish. It does not grant items and does not change the archive door.
+
+Player-facing text reveals the path one step at a time. The ending is not in `help`.
+
+1. The Roof Array mast has fresh scratches. `inspect antenna` reads a bearing: one step west of the gate. `journal record` there keeps `survey-scratch`.
+2. That tile (`w:undernet:1:0:0:1:7:8`) is open grass with no generated landmark. Look shows a flat stone cut twice. `inspect mark` (also `stone` or `cairn`) finds relay insulation and does not name the dish. Inspecting or recording it sets the `survey-mark` flag. `journal record` keeps `survey-mark`.
+3. At the Old Relay, `inspect dish` mentions a scuff. Before the flag, that is all, and `journal record` refuses. After the flag, the dish matches the fiber: the relay crew swung the dish toward the gate, closed the survey, and never filed it because the archive was already sealed. `journal record` keeps `survey-closure`.
+
+The stone is an authored overlay in presentation. It is not a terrain edit and not a new landmark in `generate_region`. Version 1's fingerprint stays `0x8812_F1DB_241C_39A1`.
 
 ## Tone
 

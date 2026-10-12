@@ -4,11 +4,19 @@
 //! generation version. Player changes live in [`GeographyState`] and are stored
 //! apart from that baseline. Nothing in this module knows about SSH or the TUI.
 
+mod field;
 mod generate;
 mod identity;
 mod records;
 mod travel;
 
+pub use field::{
+    closure_inspect_text, describe_place, format_entry, format_overview, format_recent,
+    is_survey_tile, landmark_sight, roof_scratch, survey_aliases, survey_closure, survey_finding,
+    survey_look_line, survey_position, survey_sight, AuthoredFinding, JournalLine, Sight,
+    SURVEY_CLOSURE_ID, SURVEY_LOCAL_X, SURVEY_LOCAL_Y, SURVEY_MARK_FLAG, SURVEY_MARK_ID,
+    SURVEY_SCRATCH_ID,
+};
 pub use generate::{
     derive_region_seed, epoch_spec, fingerprint, format_seed, frontier_epoch, frontier_identity,
     generate_region, parse_seed, sample_baseline, EpochSpec, GenerateError, GeneratedRegion,
@@ -21,8 +29,8 @@ pub use identity::{
 };
 pub use records::{
     Discovery, GeographyState, MaterializedRegion, Structure, TerrainMod, WorldConnection,
-    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, MARKER_KIND, SHARE_COMMUNAL,
-    SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
+    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, ENTERED_KIND, FIELD_KIND,
+    MARKER_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
 pub use travel::{
     describe_tile, effective_tile, is_reserved_word, map_symbol_for_structures, marker_sights,

@@ -614,6 +614,7 @@ fn contextual_candidates(view: &GameView, command: &str) -> Vec<String> {
         }
         "help" | "?" => view.commands.iter().map(|hint| hint.name.clone()).collect(),
         "who" => vec!["here".into(), "all".into()],
+        "journal" => vec!["recent".into(), "read".into(), "record".into()],
         _ => Vec::new(),
     }
 }
