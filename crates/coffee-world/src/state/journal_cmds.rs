@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::geography::{
     delisted_floor, delisted_panel_waiting, delisted_terminal_waiting, format_entry,
-    format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch, survey_closure,
-    survey_finding, AuthoredFinding, JournalLine, WildernessPos, FIELD_KIND, SURVEY_MARK_FLAG,
-    SURVEY_MARK_ID,
+    format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch, story_finding,
+    survey_closure, survey_finding, AuthoredFinding, JournalLine, UrbanContext, WildernessPos,
+    FIELD_KIND, SURVEY_MARK_FLAG, SURVEY_MARK_ID,
 };
 use crate::model::PersistOp;
 use crate::state::{Transition, WorldState};
@@ -180,6 +180,14 @@ impl WorldState {
             if is_survey_tile(pos) {
                 return Ok(RecordOffer::Ready(PlacedFinding {
                     finding: survey_finding(),
+                    place_key: pos.key(),
+                    wild: Some(pos),
+                }));
+            }
+            let urban = UrbanContext::at(pos);
+            if let Some(site) = urban.story {
+                return Ok(RecordOffer::Ready(PlacedFinding {
+                    finding: story_finding(site),
                     place_key: pos.key(),
                     wild: Some(pos),
                 }));
@@ -778,5 +786,79 @@ mod tests {
         let text = overlay(&world, ada);
         assert!(text.contains("journal"));
         assert!(text.contains("record"));
+    }
+
+    #[test]
+    fn ward_clinic_story_is_discoverable_without_a_quest_marker() {
+        use crate::geography::{
+            CLINIC_CORRIDOR_ID, CLINIC_DIRECTORY_ID, CLINIC_NOTICE_ID, GATE_LOCAL_X, GATE_LOCAL_Y,
+        };
+
+        let (mut world, ada, _, ada_id, _) = pair();
+        world.apply(ada, "go up").unwrap();
+        world.apply(ada, "outskirts").unwrap();
+        let gate = world.view(ada).unwrap();
+        assert_eq!(gate.location_name, "The Squalor");
+        // District presentation is on ordinary tiles, not the authored gate seam.
+        world.apply(ada, "west").unwrap();
+        let west = world.view(ada).unwrap();
+        assert!(
+            west.location_name.contains('—')
+                || west.status.iter().any(|line| {
+                    line.contains("residential")
+                        || line.contains("commercial")
+                        || line.contains("civic")
+                }),
+            "title={} status={:?}",
+            west.location_name,
+            west.status
+        );
+
+        // Gate (8,8) → west → north → west → north reaches directory (6,10).
+        // (Direct north from the survey stone hits floodwater.)
+        world.apply(ada, "north").unwrap();
+        world.apply(ada, "west").unwrap();
+        world.apply(ada, "north").unwrap();
+        let directory = world.view(ada).unwrap();
+        assert!(directory.description.contains("Ward Clinic"), "{}", directory.description);
+        world.apply(ada, "inspect directory").unwrap();
+        let noticed = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(noticed.contains("CLOSED") || noticed.contains("closed"), "{noticed}");
+        world.apply(ada, "journal record").unwrap();
+        assert!(world
+            .geography
+            .field_notes_for(ada_id)
+            .iter()
+            .any(|row| row.content_key.as_deref() == Some(CLINIC_DIRECTORY_ID)));
+
+        // Clinic (5,12): north, north, west from the directory.
+        world.apply(ada, "north").unwrap();
+        world.apply(ada, "north").unwrap();
+        world.apply(ada, "west").unwrap();
+        world.apply(ada, "inspect clinic").unwrap();
+        let clinic_notice = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(clinic_notice.contains("corridor"), "{clinic_notice}");
+        world.apply(ada, "journal record").unwrap();
+
+        // Corridor is one step east at (6,12).
+        world.apply(ada, "east").unwrap();
+        world.apply(ada, "inspect corridor").unwrap();
+        let corridor = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(corridor.contains("work order") || corridor.contains("seal"), "{corridor}");
+        world.apply(ada, "journal record").unwrap();
+
+        let keys: Vec<_> = world
+            .geography
+            .field_notes_for(ada_id)
+            .iter()
+            .filter_map(|row| row.content_key.clone())
+            .collect();
+        assert!(keys.contains(&CLINIC_DIRECTORY_ID.to_string()));
+        assert!(keys.contains(&CLINIC_NOTICE_ID.to_string()));
+        assert!(keys.contains(&CLINIC_CORRIDOR_ID.to_string()));
+        // Delisted-floor mystery untouched.
+        assert!(!keys.iter().any(|key| key == DELISTED_FLOOR_ID));
+        // Gate coordinates remain the authored seam.
+        assert_eq!((GATE_LOCAL_X, GATE_LOCAL_Y), (8, 8));
     }
 }

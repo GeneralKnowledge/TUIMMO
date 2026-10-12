@@ -4,6 +4,7 @@
 //! generation version. Player changes live in [`GeographyState`] and are stored
 //! apart from that baseline. Nothing in this module knows about SSH or the TUI.
 
+mod density;
 mod field;
 mod generate;
 mod identity;
@@ -14,6 +15,13 @@ mod travel;
 #[cfg(test)]
 mod explore;
 
+pub use density::{
+    density_band, district_at, story_aliases, story_finding, story_sight, trace_aliases,
+    BlockPattern, DensityBand, DistrictKind, StorySite, TraceKind, UrbanContext,
+    CLINIC_CORRIDOR_ID, CLINIC_CORRIDOR_LOCAL_X, CLINIC_CORRIDOR_LOCAL_Y, CLINIC_DIRECTORY_ID,
+    CLINIC_DIRECTORY_LOCAL_X, CLINIC_DIRECTORY_LOCAL_Y, CLINIC_ENTRANCE_LOCAL_X,
+    CLINIC_ENTRANCE_LOCAL_Y, CLINIC_NOTICE_ID,
+};
 pub use field::{
     closure_inspect_text, delisted_floor, delisted_panel_waiting, delisted_terminal_waiting,
     describe_place, format_entry, format_overview, format_recent, is_survey_tile, landmark_sight,

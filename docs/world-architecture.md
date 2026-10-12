@@ -110,6 +110,16 @@ The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoc
 
 A repeatable walk of version 1, including that seam, is locked in `geography::explore`. From the gate, 221 tiles are one walkable component and all 6 origin landmarks are reachable. The nearest is a standing stone 8 steps away. Across five birth cells, no sampled chart left a landmark on ground the start could not reach. Median steps to a first landmark stay between 4 and 10. Region `(1, 0)` holds only one landmark and `(2, -1)` holds two; the others hold six or eight. That spread is the existing feature threshold (about 3% of walkable tiles), not a reason to retune it. Water at the gate is a local seam, now described in the look text. The region map already marks every landmark with `*`.
 
+## Urban density presentation
+
+District identity, block composition, environmental traces, and the near-Hub Ward Clinic story live in `geography/density.rs`. They are pure functions of absolute coordinates, like other authored overlays. They do **not** change `generate_region`, the version-1 fingerprint, terrain tokens, or place keys. No decorative generated object is written to SQLite; only journaled findings use the existing discovery rows when a player chooses `journal record`.
+
+- Districts are 32-tile cells (residential, commercial, civic) shared across region borders.
+- Block patterns are 4-tile cells (courtyard, shop row, plaza, service yard) biased by district.
+- A Chebyshev distance from the Hub gate chooses near-Hub / fringe / deep atmosphere.
+- Ordinary look prose varies by district, block, terrain, and band. A minority of tiles add an inspectable trace; landmarks remain the sparse generated points of interest.
+- The Ward Clinic story is three authored tiles in region `(0, 0)`: directory `(6,10)`, clinic `(5,12)`, corridor `(6,12)`.
+
 ## Persistence and migrations
 
 `0001_init.sql` is unchanged. `0002_world.sql` adds:

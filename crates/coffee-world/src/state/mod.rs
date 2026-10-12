@@ -16,11 +16,12 @@ use crate::geography::{
     closure_inspect_text, derive_region_seed, describe_tile, effective_tile, epoch_spec,
     format_seed, frontier_epoch, frontier_identity, is_reserved_word, is_survey_tile,
     landmark_sight, map_symbol_for_structures, marker_sights, panel_after_log, stacks_after_log,
-    step_origin, survey_aliases, survey_look_line, survey_sight, torn_page_text,
-    validate_marker_name, Cardinal, Discovery, EffectiveTile, GenerateError, GeneratedRegion,
-    GeographyState, LandmarkKind, MaterializedRegion, RegionCache, RegionCoordKey, RegionIdentity,
-    Structure, Terrain, Tile, WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND,
-    OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE, SURVEY_MARK_FLAG, WORKSHOP_KIND,
+    step_origin, story_aliases, story_sight, survey_aliases, survey_look_line, survey_sight,
+    torn_page_text, trace_aliases, validate_marker_name, Cardinal, Discovery, EffectiveTile,
+    GenerateError, GeneratedRegion, GeographyState, LandmarkKind, MaterializedRegion, RegionCache,
+    RegionCoordKey, RegionIdentity, Structure, Terrain, Tile, UrbanContext, WildernessPos,
+    WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE,
+    SHARE_PRIVATE, SURVEY_MARK_FLAG, WORKSHOP_KIND,
 };
 use crate::home::HomeState;
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
@@ -1646,11 +1647,18 @@ impl WorldState {
         let scene = self
             .wild_scene(pos, Some(player))
             .map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
+        let urban = UrbanContext::at(pos);
         let matched = scene.objects.iter().find(|(keyword, name)| {
             keyword.eq_ignore_ascii_case(target) || name.eq_ignore_ascii_case(target)
         });
         let asks_ground = target == "ground";
-        if matched.is_none() && !asks_ground && !(is_survey_tile(pos) && survey_aliases(target)) {
+        let asks_urban_detail = urban.story.is_some_and(|site| story_aliases(site, target))
+            || urban.trace.is_some_and(|kind| trace_aliases(kind, target));
+        if matched.is_none()
+            && !asks_ground
+            && !asks_urban_detail
+            && !(is_survey_tile(pos) && survey_aliases(target))
+        {
             if let Some(other) =
                 self.names_in(&pos.key()).into_iter().find(|name| name.eq_ignore_ascii_case(target))
             {
@@ -1675,6 +1683,10 @@ impl WorldState {
         } else if is_survey_tile(pos) && survey_aliases(target) {
             self.note_survey_mark(player, &mut ops);
             survey_sight().text
+        } else if let Some(site) = urban.story.filter(|site| story_aliases(*site, target)) {
+            story_sight(site).text
+        } else if let Some(kind) = urban.trace.filter(|kind| trace_aliases(*kind, target)) {
+            kind.inspect_text(urban.band, urban.district)
         } else if let Some(kind) = tile.landmark {
             if target.eq_ignore_ascii_case(kind.keyword())
                 || target.eq_ignore_ascii_case(kind.name())
@@ -1697,6 +1709,8 @@ impl WorldState {
                     "{}\nA repeated mark lies in the grass. `inspect mark`.",
                     terrain_inspect_line(tile)
                 )
+            } else if let Some(detail) = urban.detail_look_line() {
+                format!("{}\n{detail}", terrain_inspect_line(tile))
             } else {
                 format!("{}\nNothing unusual marks this ground.", terrain_inspect_line(tile))
             }
