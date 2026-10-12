@@ -34,6 +34,7 @@ const SQUALOR_ALIAS: &str = "squalor";
 mod building_cmds;
 mod guide;
 mod home_cmds;
+mod invite_cmds;
 mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
@@ -74,6 +75,7 @@ pub struct WorldState {
     pub(crate) homes: HomeState,
     pub(crate) mailbox: crate::mail::Mailbox,
     pub(crate) theories: crate::theories::TheoryBoard,
+    pub(crate) invites: crate::invite::InviteBook,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
     pub(crate) now_ms: u64,
@@ -104,6 +106,7 @@ impl WorldState {
             homes: HomeState::default(),
             mailbox: crate::mail::Mailbox::default(),
             theories: crate::theories::TheoryBoard::default(),
+            invites: crate::invite::InviteBook::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -207,6 +210,32 @@ impl WorldState {
 
     pub fn restore_theories(&mut self, theories: crate::theories::TheoryBoard) {
         self.theories = theories;
+    }
+
+    pub fn install_invites(&mut self, invites: crate::invite::InviteBook) {
+        self.invites = invites;
+    }
+
+    pub fn invite_snapshot(&self) -> crate::invite::InviteBook {
+        self.invites.clone()
+    }
+
+    pub fn restore_invites(&mut self, invites: crate::invite::InviteBook) {
+        self.invites = invites;
+    }
+
+    /// Apply invite rows minted or redeemed during registration.
+    pub fn note_invite_redemption(
+        &mut self,
+        code_key: Option<&str>,
+        redeemed_by: PlayerId,
+        redeemed_at: u64,
+        minted: Vec<crate::invite::AccountInvite>,
+    ) {
+        if let Some(key) = code_key {
+            self.invites.mark_redeemed(key, redeemed_by, redeemed_at);
+        }
+        self.invites.push_many(minted);
     }
 
     pub fn overlay_snapshot(&self) -> HashMap<SessionId, String> {
@@ -2040,6 +2069,7 @@ fn handler(name: &str) -> Option<Handler> {
         "theory" => WorldState::cmd_theory,
         "waypoint" => WorldState::cmd_waypoint,
         "mail" => WorldState::cmd_mail,
+        "invite" => WorldState::cmd_invite,
         "mark" => WorldState::cmd_mark,
         "build" => WorldState::cmd_build,
         "enter" => WorldState::cmd_enter,

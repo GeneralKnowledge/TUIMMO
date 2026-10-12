@@ -47,6 +47,7 @@ From the Roof Array, `outskirts` or `squalor` steps through a break in the fenci
 | `region <text>` | `rsay` | Speech heard across this physical region |
 | `whisper <player> <text>` | `tell` | Private message to one online operator. Not stored |
 | `mail [list\|read\|send\|delete]` | | Private letter, kept for an offline operator |
+| `invite [list]` | | Show unused account invite codes you can share |
 | `emote <action>` | `me`, `em` | Action text heard in this location |
 | `profile [player\|bio …\|status …]` | | View or edit a short public profile |
 | `friend <add\|accept\|decline\|remove> <player>` | | Mutual friendship requests |

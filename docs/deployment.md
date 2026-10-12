@@ -15,8 +15,12 @@ The binary is `target/release/coffee-server`.
 ```bash
 export COFFEE_DATA_DIR=/var/lib/coffee
 export COFFEE_SSH_LISTEN=0.0.0.0:2222
-export COFFEE_NO_REGISTRATION=1   # after the accounts exist
+export COFFEE_INVITE_ONLY=1
+export COFFEE_MAX_ACCOUNTS=50
+./coffee-server invite create --count 20 --note reddit   # print codes for first testers
 ./coffee-server serve
+# later, when the circle should stop growing:
+# export COFFEE_NO_REGISTRATION=1
 ```
 
 First boot creates:

@@ -31,6 +31,7 @@ use uuid::Uuid;
 use crate::hub::{is_unique, Hub};
 use crate::theme::coffee_theme;
 
+pub use crate::hub::HubAuthConfig;
 pub use crate::theme::coffee_theme as theme;
 
 /// How to boot one Coffee.shop process.
@@ -39,6 +40,12 @@ pub struct ServerConfig {
     pub data_dir: PathBuf,
     pub ssh_listen: SocketAddr,
     pub allow_registration: bool,
+    /// Require a single-use invite code to register.
+    pub invite_only: bool,
+    /// Soft cap on accounts. Zero means unlimited.
+    pub max_accounts: u32,
+    /// Friend codes minted for each successful invite redeem.
+    pub invites_per_player: u32,
     pub ascii: bool,
     pub max_sessions: usize,
     pub auth_rejection: Duration,
@@ -50,6 +57,9 @@ impl ServerConfig {
             data_dir: data_dir.into(),
             ssh_listen: SocketAddr::from(([127, 0, 0, 1], 0)),
             allow_registration: true,
+            invite_only: false,
+            max_accounts: 0,
+            invites_per_player: coffee_world::DEFAULT_INVITES_PER_PLAYER,
             ascii: true,
             max_sessions: 64,
             auth_rejection: Duration::from_millis(200),
@@ -98,7 +108,17 @@ pub async fn start(config: ServerConfig) -> anyhow::Result<Running> {
     world.install_homes(loaded.homes);
     world.install_mail(loaded.mailbox);
     world.install_theories(loaded.theories);
-    let hub = Hub::spawn(world, store, config.allow_registration);
+    world.install_invites(loaded.invites);
+    let hub = Hub::spawn(
+        world,
+        store,
+        HubAuthConfig {
+            allow_registration: config.allow_registration,
+            invite_only: config.invite_only,
+            max_accounts: config.max_accounts,
+            invites_per_player: config.invites_per_player,
+        },
+    );
 
     let socket_path = config.data_dir.join("game.sock");
     let listener =
@@ -160,13 +180,34 @@ pub async fn create_account(
     let created =
         SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
     if let Err(err) = store.create_account(account_id, &username, &hash, &operator, created).await {
-        if is_unique(&err) {
+        if matches!(err, coffee_world::StoreError::NameTaken) || is_unique(&err) {
             anyhow::bail!("that username is already registered");
         }
         return Err(err).context("create account");
     }
     tracing::info!(%username, operator = %operator_name, "account created");
     Ok(())
+}
+
+/// Mint unused invite codes for Reddit/admin seeding. Prints one code per line.
+pub async fn create_invite_codes(
+    data_dir: &Path,
+    count: u32,
+    note: &str,
+) -> anyhow::Result<Vec<String>> {
+    if count == 0 {
+        anyhow::bail!("count must be at least 1");
+    }
+    if count > 1_000 {
+        anyhow::bail!("count must be at most 1000");
+    }
+    let db_path = data_dir.join("coffee.sqlite");
+    let store = Store::open(&db_path).await?;
+    store.seed(&coffee_world::seed_locations(), &coffee_world::seed_exits()).await?;
+    let created =
+        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let rows = store.create_invite_codes(count, None, created, note).await?;
+    Ok(rows.into_iter().map(|row| row.display_code).collect())
 }
 
 #[derive(Clone)]

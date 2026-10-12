@@ -20,6 +20,14 @@ pub enum AuthError {
     NameTaken,
     #[error("registration is closed")]
     RegistrationClosed,
+    #[error("an invite code is required to register")]
+    InviteRequired,
+    #[error("that invite code is not valid")]
+    InvalidInvite,
+    #[error("that invite code was already used")]
+    InviteUsed,
+    #[error("this server is full")]
+    AccountCapReached,
     #[error("too many attempts, wait a moment")]
     RateLimited,
     #[error("authentication failed")]

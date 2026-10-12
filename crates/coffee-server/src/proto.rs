@@ -198,9 +198,9 @@ async fn dispatch(
                 }
             }
         }
-        ClientMessage::Register { username, password, operator_name } => {
+        ClientMessage::Register { username, password, operator_name, invite_code } => {
             let events = spawn_forward(out_tx.clone(), forward);
-            match hub.register(username, password, operator_name, Some(events)).await {
+            match hub.register(username, password, operator_name, invite_code, Some(events)).await {
                 Ok(grant) => finish_auth(out_tx, token, id, grant).await,
                 Err(err) => {
                     stop_forward(forward);
@@ -285,6 +285,8 @@ fn auth_error(err: AuthError) -> ServerMessage {
     let code = match err {
         AuthError::RateLimited => "rate",
         AuthError::RegistrationClosed => "registration",
+        AuthError::InviteRequired | AuthError::InvalidInvite | AuthError::InviteUsed => "invite",
+        AuthError::AccountCapReached => "full",
         AuthError::NameTaken => "taken",
         AuthError::InvalidUsername | AuthError::InvalidOperatorName | AuthError::WeakPassword => {
             "invalid"

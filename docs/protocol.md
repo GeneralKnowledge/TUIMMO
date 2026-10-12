@@ -34,7 +34,7 @@ The JSON object is:
 | type | When |
 | --- | --- |
 | `hello` | First message. `client` is a short name. |
-| `register` | Create an account. `username`, `password`, `operator_name`. |
+| `register` | Create an account. `username`, `password`, `operator_name`, optional `invite_code`. |
 | `login` | Existing account. |
 | `resume` | Bind an event stream to a token the SSH gateway already issued. |
 | `command` | One line, parsed by the server registry. |

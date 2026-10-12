@@ -146,7 +146,7 @@ fn help_overview() -> &'static str {
      Nothing here is a required task. look returns to the place.\n\
      \n\
      help around — look, move, inspect, map\n\
-     help people — say, chat, whisper, mail\n\
+     help people — say, chat, whisper, mail, invite\n\
      help explore — journal, waypoint, theory\n\
      help commands — the full list\n\
      help stuck — when you are lost\n\
@@ -184,6 +184,7 @@ fn people_page() -> &'static str {
      chat <text> — operators who are online, in any room.\n\
      whisper <player> <text> — one online operator. It is not saved.\n\
      mail send <player> <text> — a letter that waits if they are offline.\n\
+     invite list — unused codes you can give a friend to register.\n\
      who here / who all — this room, or everyone online.\n\
      friends, profile, ignore — optional. help <name> for each."
 }
@@ -244,6 +245,7 @@ fn command_why(name: &str) -> &'static str {
         }
         "waypoint" => "Use it to name the place you are standing. It does not move you.",
         "mail" => "Use it to leave a letter for someone who may be offline.",
+        "invite" => "Use it to see unused registration codes you can share with a friend.",
         "mark" => "Use it to name an outskirts tile you are standing on.",
         "build" => "Use it to raise a cabin or workshop on walkable outskirts ground.",
         "enter" => "Use it to step into a cabin or workshop on this tile.",

@@ -2,13 +2,14 @@
 //!
 //! `serve` is the authoritative process. `play` is a local TUI that talks to
 //! that process over the unix socket. `account create` writes a row directly.
+//! `invite create` mints single-use registration codes for invite-only hosts.
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use coffee_server::{create_account, start, theme, ServerConfig};
+use coffee_server::{create_account, create_invite_codes, start, theme, ServerConfig};
 use terminus_protocol::ProtocolClient;
 use terminus_tui::{run_remote, spawn_crossterm_input, StartMode};
 use tracing_subscriber::EnvFilter;
@@ -31,6 +32,11 @@ enum Command {
         #[command(subcommand)]
         action: AccountCmd,
     },
+    /// Offline invite-code administration.
+    Invite {
+        #[command(subcommand)]
+        action: InviteCmd,
+    },
 }
 
 #[derive(Parser)]
@@ -44,6 +50,15 @@ struct ServeArgs {
     /// Refuse new registrations. Existing accounts can still log in.
     #[arg(long, env = "COFFEE_NO_REGISTRATION", action = clap::ArgAction::SetTrue)]
     no_registration: bool,
+    /// Require a single-use invite code to register.
+    #[arg(long, env = "COFFEE_INVITE_ONLY", action = clap::ArgAction::SetTrue)]
+    invite_only: bool,
+    /// Maximum number of accounts. Zero means unlimited.
+    #[arg(long, default_value_t = 0, env = "COFFEE_MAX_ACCOUNTS")]
+    max_accounts: u32,
+    /// Friend codes minted when someone redeems an invite.
+    #[arg(long, default_value_t = 2, env = "COFFEE_INVITES_PER_PLAYER")]
+    invites_per_player: u32,
     /// Draw plain ASCII borders.
     #[arg(long, env = "COFFEE_ASCII", action = clap::ArgAction::SetTrue)]
     ascii: bool,
@@ -74,6 +89,20 @@ enum AccountCmd {
     },
 }
 
+#[derive(Subcommand)]
+enum InviteCmd {
+    /// Mint unused registration codes and print them, one per line.
+    Create {
+        #[arg(long, default_value_t = 1)]
+        count: u32,
+        /// Short label stored with the batch (for example "reddit").
+        #[arg(long, default_value = "")]
+        note: String,
+        #[arg(long, default_value = "data", env = "COFFEE_DATA_DIR")]
+        data_dir: PathBuf,
+    },
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
@@ -89,6 +118,13 @@ async fn main() -> anyhow::Result<()> {
             )?;
             create_account(&data_dir, &username, &password, &operator_name).await
         }
+        Command::Invite { action: InviteCmd::Create { count, note, data_dir } } => {
+            let codes = create_invite_codes(&data_dir, count, &note).await?;
+            for code in codes {
+                println!("{code}");
+            }
+            Ok(())
+        }
     }
 }
 
@@ -100,10 +136,19 @@ fn default_serve() -> Command {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 2222)));
+    let max_accounts =
+        std::env::var("COFFEE_MAX_ACCOUNTS").ok().and_then(|value| value.parse().ok()).unwrap_or(0);
+    let invites_per_player = std::env::var("COFFEE_INVITES_PER_PLAYER")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2);
     Command::Serve(ServeArgs {
         data_dir,
         ssh_listen,
         no_registration: env_flag("COFFEE_NO_REGISTRATION"),
+        invite_only: env_flag("COFFEE_INVITE_ONLY"),
+        max_accounts,
+        invites_per_player,
         ascii: env_flag("COFFEE_ASCII"),
         max_sessions: 64,
     })
@@ -120,12 +165,17 @@ async fn serve(args: ServeArgs) -> anyhow::Result<()> {
     let mut config = ServerConfig::new(args.data_dir);
     config.ssh_listen = args.ssh_listen;
     config.allow_registration = !args.no_registration;
+    config.invite_only = args.invite_only;
+    config.max_accounts = args.max_accounts;
+    config.invites_per_player = args.invites_per_player;
     config.ascii = args.ascii;
     config.max_sessions = args.max_sessions;
     let running = start(config).await?;
     tracing::info!(
         ssh = %running.ssh_addr,
         socket = %running.socket_path.display(),
+        invite_only = args.invite_only,
+        max_accounts = args.max_accounts,
         "coffee.shop ready"
     );
     tokio::signal::ctrl_c().await.context("wait for ctrl-c")?;
