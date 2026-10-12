@@ -67,38 +67,36 @@ pub fn location(id: &str) -> Option<&'static LocationDef> {
 }
 
 pub fn map_text(current_id: &str, archive_open: bool) -> String {
-    let mark = |id: &str, label: &str| -> String {
-        if id == current_id {
-            format!("*{label}*")
-        } else {
-            label.to_string()
-        }
+    let archive = if archive_open { "Black Archive" } else { "(sealed)" };
+    let row = |id: &str, body: &str| -> String {
+        let mark = if id == current_id { '@' } else { ' ' };
+        format!("{mark}{body}")
     };
-    let archive =
-        if archive_open { mark("black-archive", "Black Archive") } else { "(sealed)".to_string() };
     format!(
         "\
+Undernet
 {roof}
-   |
-{shop} --- {alley} --- {tunnels} --- {relay}
-   |            |                         |
-   |       {exchange} --- {market}        {archive}
-   |            |
-   |     {service}
-   |            |
-   |   {abandoned}
+{shop}
+{alley}
+{exchange}
+{market}
+{service}
+{abandoned}
+{tunnels}
+{relay}
+{archive}
 
-* marks where you are standing.",
-        roof = mark("roof-array", "Roof Array"),
-        shop = mark("coffee-shop", "Coffee Shop"),
-        alley = mark("neon-alley", "Neon Alley"),
-        tunnels = mark("cooling-tunnels", "Cooling Tunnels"),
-        relay = mark("old-relay", "Old Relay"),
-        exchange = mark("exchange", "The Exchange"),
-        market = mark("stack-market", "Stack Market"),
-        service = mark("service-corridor", "Service Corridor"),
-        abandoned = mark("abandoned-exchange", "Abandoned Exchange"),
-        archive = archive,
+@ you are here",
+        roof = row("roof-array", " Roof Array"),
+        shop = row("coffee-shop", " Coffee Shop"),
+        alley = row("neon-alley", " + Neon Alley"),
+        exchange = row("exchange", " | + Exchange"),
+        market = row("stack-market", " | | + Stack Market"),
+        service = row("service-corridor", " | | + Service Corridor"),
+        abandoned = row("abandoned-exchange", " | |   + Abandoned Exchange"),
+        tunnels = row("cooling-tunnels", " + Cooling Tunnels"),
+        relay = row("old-relay", "   + Old Relay"),
+        archive = row("black-archive", &format!("     + {archive}")),
     )
 }
 
@@ -414,4 +412,22 @@ pub fn all_exits() -> Vec<ExitDef> {
     exits.push(archive_exit());
     exits.push(archive_return());
     exits
+}
+
+#[cfg(test)]
+mod tests {
+    use super::map_text;
+
+    #[test]
+    fn city_map_marks_the_player_and_keeps_the_archive_sealed() {
+        let here = map_text("coffee-shop", false);
+        assert!(here.contains("@ Coffee Shop"), "{here}");
+        assert!(here.contains("(sealed)"));
+        assert!(!here.contains("Black Archive"), "{here}");
+        assert!(here.lines().all(|line| line.chars().count() <= 40), "{here}");
+        let open = map_text("old-relay", true);
+        assert!(open.contains("@   + Old Relay") || open.contains("@"), "{open}");
+        assert!(open.contains("Black Archive"));
+        assert!(!open.contains("(sealed)"));
+    }
 }

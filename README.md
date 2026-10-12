@@ -77,7 +77,7 @@ Docs:
 
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
-- Header, location, status, scrollable feed, and a command prompt with history and completion
+- Header, place, activity feed, and a command prompt. Wide terminals add an operator panel
 - Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, `emote`, profiles, mutual friends, and ignore/block
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts
 - Settlements: named membership groups anchored to outskirts tiles, invites, claim/unclaim of structures, discovery without a global directory
@@ -94,6 +94,25 @@ No combat, economy, guild ranks, crafting, quests, or generated NPCs. Settlement
 
 ## Next milestones
 
-1. Shared build rights / workshops inside settlements
-2. Public-key authentication alongside passwords
-3. Closed registration with an invite flow
+1. Public-key authentication alongside passwords
+2. Closed registration with an invite flow
+
+## Terminal
+
+The play screen is a header, the current place, an activity feed, and a command line. A terminal about 100 columns wide also shows an operator panel (status and what you are carrying). Narrower terminals stack the place above the feed and drop that panel. Very short screens keep the command line and drop the hint.
+
+| Key | Action |
+| --- | --- |
+| Enter | Send the command |
+| Up / Down | Previous and next command |
+| Tab | Complete a command or argument |
+| Page Up / Page Down | Scroll the activity feed |
+| Left / Right, Home, End | Move the cursor |
+| Ctrl-U | Clear the line |
+| Ctrl-W | Delete the word before the cursor |
+| Ctrl-C | Quit when the line is empty |
+| Ctrl-R | On the login form, toggle registration |
+
+`--ascii` or `COFFEE_ASCII=1` draws plain `+` borders and uses the 16-colour palette. The default uses indexed colours and rounded borders. The interface does not require true colour, emoji, or a special font.
+
+Speech, region chat, whispers, emotes, and world notes are marked in the feed (`[all]`, `[region]`, `[whisper]`, `*`, `[note]`), not only by colour. A whisper is shown only when the server included it in your feed.

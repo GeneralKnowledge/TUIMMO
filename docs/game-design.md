@@ -18,7 +18,7 @@ The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
                                The Black Archive   (sealed)
 ```
 
-`map` inside the city prints this graph with your room marked. The archive door is hidden until you are carrying a cipher plate.
+`map` inside the city prints a narrow tree of these rooms. `@` marks where you are standing. The archive line reads `(sealed)` until you are carrying a cipher plate.
 
 From the Roof Array, `outskirts` steps through a break in the fencing onto generated land. `map` there draws the 16 by 16 region you are standing in. `city`, from the gate tile, returns to the roof. The ten rooms are unchanged. The land beyond them is described in [world architecture](world-architecture.md).
 

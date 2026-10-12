@@ -10,6 +10,7 @@ mod app;
 mod decode;
 mod editor;
 mod local;
+mod present;
 mod remote;
 mod theme;
 
