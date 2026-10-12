@@ -15,6 +15,7 @@ use crate::geography::{
     parse_seed, Discovery, GeographyState, MaterializedRegion, RegionIdentity, Structure, Terrain,
     TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC, SHARE_PRIVATE,
 };
+use crate::home::{HomeState, PersonalHome};
 use crate::mail::{MailMessage, Mailbox};
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
 use crate::settlement::{
@@ -49,6 +50,7 @@ pub struct LoadedWorld {
     pub social: SocialState,
     pub settlements: SettlementState,
     pub waypoints: Vec<Waypoint>,
+    pub homes: HomeState,
     pub mailbox: Mailbox,
     pub theories: TheoryBoard,
 }
@@ -115,6 +117,7 @@ impl Store {
         let social = self.load_social().await?;
         let settlements = self.load_settlements().await?;
         let waypoints = self.load_waypoints().await?;
+        let homes = self.load_homes().await?;
         let mailbox = self.load_mail().await?;
         let theories = self.load_theories().await?;
         Ok(LoadedWorld {
@@ -124,6 +127,7 @@ impl Store {
             social,
             settlements,
             waypoints,
+            homes,
             mailbox,
             theories,
         })
@@ -789,6 +793,41 @@ impl Store {
                         .execute(&mut *tx)
                         .await?;
                 }
+                PersistOp::HomeClaim {
+                    id,
+                    operator_id,
+                    place_key,
+                    claimed_at,
+                    public_name,
+                    public_description,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO personal_homes (
+                            id, operator_id, place_key, claimed_at, abandoned_at,
+                            public_name, public_description
+                         ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
+                    )
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .bind(place_key)
+                    .bind(*claimed_at as i64)
+                    .bind(public_name)
+                    .bind(public_description)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::HomeAbandon { id, operator_id, abandoned_at } => {
+                    sqlx::query(
+                        "UPDATE personal_homes
+                         SET abandoned_at = ?1
+                         WHERE id = ?2 AND operator_id = ?3 AND abandoned_at IS NULL",
+                    )
+                    .bind(*abandoned_at as i64)
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
             }
         }
         sqlx::query(
@@ -1018,6 +1057,29 @@ impl Store {
             });
         }
         Ok(waypoints)
+    }
+
+    async fn load_homes(&self) -> Result<HomeState, StoreError> {
+        let rows = sqlx::query_as::<_, HomeSql>(
+            "SELECT id, operator_id, place_key, claimed_at, abandoned_at,
+                    public_name, public_description
+             FROM personal_homes",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut homes = Vec::with_capacity(rows.len());
+        for row in rows {
+            homes.push(PersonalHome {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                operator_id: PlayerId::from_str(&row.operator_id).map_err(|_| StoreError::Data)?,
+                place_key: row.place_key,
+                claimed_at: u64_col(row.claimed_at)?,
+                abandoned_at: row.abandoned_at.map(u64_col).transpose()?,
+                public_name: row.public_name,
+                public_description: row.public_description,
+            });
+        }
+        Ok(HomeState { homes })
     }
 
     async fn load_mail(&self) -> Result<Mailbox, StoreError> {
@@ -1430,6 +1492,17 @@ struct WaypointSql {
 }
 
 #[derive(sqlx::FromRow)]
+struct HomeSql {
+    id: String,
+    operator_id: String,
+    place_key: String,
+    claimed_at: i64,
+    abandoned_at: Option<i64>,
+    public_name: String,
+    public_description: String,
+}
+
+#[derive(sqlx::FromRow)]
 struct DiscoverySql {
     id: String,
     region_id: Option<String>,
@@ -1807,6 +1880,7 @@ mod tests {
         assert!(tables.iter().any(|name| name == "mail_seq"));
         assert!(tables.iter().any(|name| name == "shared_theories"));
         assert!(tables.iter().any(|name| name == "shared_theory_seq"));
+        assert!(tables.iter().any(|name| name == "personal_homes"));
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -2620,5 +2694,102 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(seq, 3);
+    }
+
+    #[tokio::test]
+    async fn personal_homes_survive_reopen_and_unique_active_indexes_hold() {
+        use crate::geography::{survey_position, WildernessPos};
+        use crate::home::{FORGOTTEN_MS, RECENTLY_ABANDONED_MS};
+        use terminus_core::{Permissions, SessionIdentity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("homes.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
+        let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "Robert");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+        store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.homes.homes.is_empty());
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_geography(loaded.geography);
+        world.install_homes(loaded.homes);
+        let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+        let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+        store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+        let first = survey_position();
+        let _ = world
+            .ensure_region(first.identity, Some(ada_id), first.local_x, first.local_y)
+            .unwrap();
+        world.operators.get_mut(&ada_id).unwrap().location_id = first.key();
+        let claim = world.apply(ada_session, "home claim").unwrap().ops;
+        store.commit(&claim).await.unwrap();
+
+        let mut second = first;
+        second.local_x = 6;
+        let _ = world
+            .ensure_region(second.identity, Some(ada_id), second.local_x, second.local_y)
+            .unwrap();
+        world.operators.get_mut(&ada_id).unwrap().location_id = second.key();
+        let moved = world.apply(ada_session, "home move confirm").unwrap().ops;
+        store.commit(&moved).await.unwrap();
+
+        // A second active claim for the same operator must fail the unique index.
+        let dup = store
+            .commit(&[PersistOp::HomeClaim {
+                id: Uuid::new_v4(),
+                operator_id: ada_id,
+                place_key: first.key(),
+                claimed_at: 99,
+                public_name: String::new(),
+                public_description: String::new(),
+            }])
+            .await;
+        assert!(dup.is_err());
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.homes.homes.len(), 2);
+        assert_eq!(loaded.homes.active_for(ada_id).unwrap().place_key, second.key());
+        let abandoned_at = loaded
+            .homes
+            .homes
+            .iter()
+            .find(|h| h.place_key == first.key())
+            .and_then(|h| h.abandoned_at)
+            .expect("old home abandoned");
+
+        let mut again = WorldState::for_tests();
+        again.install_loaded(loaded.operators, loaded.log);
+        again.install_geography(loaded.geography);
+        again.install_homes(loaded.homes);
+        again.now_ms = abandoned_at + RECENTLY_ABANDONED_MS;
+        let scene =
+            again.wild_scene_for_tests(WildernessPos::parse(&first.key()).unwrap(), Some(bob_id));
+        assert!(scene.contains("Dust covers"), "{scene}");
+        again.now_ms = abandoned_at + FORGOTTEN_MS;
+        let absorbed =
+            again.wild_scene_for_tests(WildernessPos::parse(&first.key()).unwrap(), Some(bob_id));
+        assert!(!absorbed.contains("Dust covers"), "{absorbed}");
+        assert!(!absorbed.contains("inhabited until recently"), "{absorbed}");
+
+        // Bob may reclaim the abandoned place; Ada's active home elsewhere stays.
+        let bob_again = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+        let bob_session = bob_again.session_id;
+        store.commit(&again.connect_player(bob_again).unwrap().0.ops).await.unwrap();
+        again.operators.get_mut(&bob_id).unwrap().location_id = first.key();
+        let bob_claim = again.apply(bob_session, "home claim").unwrap().ops;
+        store.commit(&bob_claim).await.unwrap();
+        assert_eq!(again.homes.active_for(bob_id).unwrap().place_key, first.key());
+        assert_eq!(again.homes.active_for(ada_id).unwrap().place_key, second.key());
     }
 }

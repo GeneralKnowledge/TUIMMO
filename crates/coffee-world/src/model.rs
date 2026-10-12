@@ -283,6 +283,21 @@ pub enum PersistOp {
         id: u64,
         author_id: PlayerId,
     },
+    /// Insert one active personal home. Partial unique indexes refuse a second active row.
+    HomeClaim {
+        id: Uuid,
+        operator_id: PlayerId,
+        place_key: String,
+        claimed_at: u64,
+        public_name: String,
+        public_description: String,
+    },
+    /// Mark an active home abandoned. Does not delete the row.
+    HomeAbandon {
+        id: Uuid,
+        operator_id: PlayerId,
+        abandoned_at: u64,
+    },
 }
 
 pub const STARTER_LOCATION: &str = "coffee-shop";

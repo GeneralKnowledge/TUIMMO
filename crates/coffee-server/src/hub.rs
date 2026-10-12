@@ -400,6 +400,7 @@ impl Actor {
         let social = self.world.social_snapshot();
         let settlements = self.world.settlement_snapshot();
         let waypoints = self.world.waypoint_snapshot();
+        let homes = self.world.home_snapshot();
         let mailbox = self.world.mail_snapshot();
         let theories = self.world.theory_snapshot();
         let overlays = self.world.overlay_snapshot();
@@ -414,6 +415,7 @@ impl Actor {
             self.world.restore_social(social);
             self.world.restore_settlements(settlements);
             self.world.restore_waypoints(waypoints);
+            self.world.restore_homes(homes);
             self.world.restore_mail(mailbox);
             self.world.restore_theories(theories);
             self.world.restore_overlays(overlays);

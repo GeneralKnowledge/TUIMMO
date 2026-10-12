@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod catalog;
 pub mod geography;
+pub mod home;
 pub mod mail;
 pub mod model;
 pub mod settlement;

@@ -22,6 +22,7 @@ use crate::geography::{
     Structure, Terrain, Tile, WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND,
     OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE, SURVEY_MARK_FLAG, WORKSHOP_KIND,
 };
+use crate::home::HomeState;
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::subway::{self, MetroEntrance};
 use crate::undernet::{self, ExitDef, ObjectDef, READ_TERMINAL_FLAG};
@@ -31,6 +32,7 @@ const SQUALOR_ALIAS: &str = "squalor";
 
 mod building_cmds;
 mod guide;
+mod home_cmds;
 mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
@@ -68,6 +70,7 @@ pub struct WorldState {
     pub(crate) social: crate::social::SocialState,
     pub(crate) settlements: crate::settlement::SettlementState,
     pub(crate) waypoints: Vec<Waypoint>,
+    pub(crate) homes: HomeState,
     pub(crate) mailbox: crate::mail::Mailbox,
     pub(crate) theories: crate::theories::TheoryBoard,
     pub(crate) region_cache: RefCell<RegionCache>,
@@ -97,6 +100,7 @@ impl WorldState {
             social: crate::social::SocialState::default(),
             settlements: crate::settlement::SettlementState::default(),
             waypoints: Vec::new(),
+            homes: HomeState::default(),
             mailbox: crate::mail::Mailbox::default(),
             theories: crate::theories::TheoryBoard::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
@@ -166,6 +170,18 @@ impl WorldState {
 
     pub fn restore_waypoints(&mut self, waypoints: Vec<Waypoint>) {
         self.waypoints = waypoints;
+    }
+
+    pub fn install_homes(&mut self, homes: HomeState) {
+        self.homes = homes;
+    }
+
+    pub fn home_snapshot(&self) -> HomeState {
+        self.homes.clone()
+    }
+
+    pub fn restore_homes(&mut self, homes: HomeState) {
+        self.homes = homes;
     }
 
     pub fn install_mail(&mut self, mailbox: crate::mail::Mailbox) {
@@ -1505,7 +1521,25 @@ impl WorldState {
             scene.description.push_str(survey_look_line());
             scene.objects.push(("mark".to_string(), "repeated mark".to_string()));
         }
+        let place_key = pos.key();
+        if let Some(home) = self.homes.presentation_at(&place_key, self.now_ms) {
+            let viewer_is_owner = viewer == Some(home.operator_id);
+            if let Some(line) = home.look_line(self.now_ms, viewer_is_owner) {
+                scene.description.push('\n');
+                scene.description.push_str(&line);
+                scene.objects.push(("home".to_string(), "personal home".to_string()));
+            }
+        }
         Ok(scene)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wild_scene_for_tests(
+        &self,
+        pos: WildernessPos,
+        viewer: Option<PlayerId>,
+    ) -> String {
+        self.wild_scene(pos, viewer).map(|scene| scene.description).unwrap_or_default()
     }
 
     pub(crate) fn settlement_note_for_structure(
