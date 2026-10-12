@@ -28,11 +28,11 @@ Tokens are random 128-bit values held in memory. A restart invalidates them. Ide
 
 ## Data
 
-State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, waypoints, mailbox, session overlays, and log back. The server does not rewrite every location on each command.
+State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, waypoints, mailbox, shared theories, session overlays, and log back. The server does not rewrite every location on each command.
 
 Frames are capped at 32 KiB. Session and connection counts are capped. Push queues drop when a client falls behind.
 
-Player text (speech, bios, signs, notices, cabin names) is length-capped and stripped of control characters before storage or display. Building and noticeboard posting have soft rate limits beyond the global command bucket.
+Player text (speech, bios, signs, notices, cabin names, shared theories) is length-capped and stripped of control characters before storage or display. Building, noticeboard posting, and theory posting have soft rate limits beyond the global command bucket.
 
 ## Privacy and abuse resistance
 
@@ -45,7 +45,8 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 - Players cannot grant themselves sharing rights over others' structures. Settlement membership alone never opens a private structure.
 - Settlement membership is one per player. Private settlements are not listed to outsiders. Disband never deletes cabins, workshops, or signs; it clears links and reverts settlement share to private.
 - Invitations are addressed to a specific invitee. `settle invites` only lists that player's pending invites. Expired invites cannot be accepted.
-- Noticeboard posts (Coffee Shop, settlement, and workshop) are bounded in length, rate, retained count, and lifetime.
+- Noticeboard posts (Coffee Shop, settlement, and workshop) are bounded in length, rate, retained count, and lifetime. They still expire after seven days.
+- Shared theories are a separate table. A post is at most 120 characters, the delisted-floor topic holds 32 entries, and one operator can post every 2 seconds. A full topic refuses the new row. Authors delete only their own entries. Reading or posting does not copy journal rows, flags, or items, and does not open the Black Archive. Ignore does not hide or block a theory post: the record is public, not a directed message. There is no moderator role; a post stays until its author removes it.
 - Waypoint names and notes are private to the owning operator. Commands look the row up by that operator's id, not by a client-supplied record id. The note is not written into public chat, signs, boards, or another operator's list. A saved place key does not let someone else read the note.
 
 ## What you should still do
@@ -61,7 +62,7 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 - No public-key login, second factor, or account recovery.
 - Whisper still requires an online recipient. Mail is the offline letter, capped at 400 characters and 32 letters per mailbox, with a 2 second send gap that resets on restart.
 - Display-name collisions are refused at resolve time rather than prevented at registration.
-- No moderation console beyond owner-delete for notices and owner cabin controls.
+- No moderation console beyond owner-delete for notices, owner-delete for shared theories, and owner cabin controls. A theory the author will not remove stays on the topic, and a full topic stays full.
 - No audit log beyond the world message table (which may retain recent private lines up to the log cap).
 - The SSH implementation is russh. Track its advisories.
 - Test builds of `coffee-world` use lighter Argon2 parameters. The server binary uses the crate defaults. Hashes produced by `cargo test` inside `coffee-world` are not interchangeable with the server.

@@ -31,6 +31,7 @@ mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
 mod social_cmds;
+mod theory_cmds;
 mod waypoint_cmds;
 
 /// Result of a state transition, including the rows that must be committed.
@@ -63,6 +64,7 @@ pub struct WorldState {
     pub(crate) settlements: crate::settlement::SettlementState,
     pub(crate) waypoints: Vec<Waypoint>,
     pub(crate) mailbox: crate::mail::Mailbox,
+    pub(crate) theories: crate::theories::TheoryBoard,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
     pub(crate) now_ms: u64,
@@ -91,6 +93,7 @@ impl WorldState {
             settlements: crate::settlement::SettlementState::default(),
             waypoints: Vec::new(),
             mailbox: crate::mail::Mailbox::default(),
+            theories: crate::theories::TheoryBoard::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -170,6 +173,18 @@ impl WorldState {
 
     pub fn restore_mail(&mut self, mailbox: crate::mail::Mailbox) {
         self.mailbox = mailbox;
+    }
+
+    pub fn install_theories(&mut self, theories: crate::theories::TheoryBoard) {
+        self.theories = theories;
+    }
+
+    pub fn theory_snapshot(&self) -> crate::theories::TheoryBoard {
+        self.theories.clone()
+    }
+
+    pub fn restore_theories(&mut self, theories: crate::theories::TheoryBoard) {
+        self.theories = theories;
     }
 
     pub fn overlay_snapshot(&self) -> HashMap<SessionId, String> {
@@ -1911,6 +1926,7 @@ fn handler(name: &str) -> Option<Handler> {
         "inventory" => WorldState::cmd_inventory,
         "inspect" => WorldState::cmd_inspect,
         "journal" => WorldState::cmd_journal,
+        "theory" => WorldState::cmd_theory,
         "waypoint" => WorldState::cmd_waypoint,
         "mail" => WorldState::cmd_mail,
         "mark" => WorldState::cmd_mark,

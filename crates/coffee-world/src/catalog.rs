@@ -138,6 +138,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
+            name: "theory",
+            aliases: &[],
+            summary: "Share an observation or theory about the delisted floor",
+            usage: "theory [list|read <id>|post <observation|theory> <text>|remove <id>]",
+            args: ArgMode::Rest { required: false },
+        },
+        CommandSpec {
             name: "waypoint",
             aliases: &[],
             summary: "Save a private name for where you are standing",

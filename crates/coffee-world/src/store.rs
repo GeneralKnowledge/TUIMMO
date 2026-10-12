@@ -24,6 +24,7 @@ use crate::settlement::{
 use crate::social::{
     Friendship, FriendshipStatus, IgnoreEdge, NoticePost, SocialState, StructureGrant,
 };
+use crate::theories::{TheoryBoard, TheoryEntry, TheoryKind};
 use crate::undernet::{ExitDef, LocationDef};
 use crate::waypoint::Waypoint;
 
@@ -49,6 +50,7 @@ pub struct LoadedWorld {
     pub settlements: SettlementState,
     pub waypoints: Vec<Waypoint>,
     pub mailbox: Mailbox,
+    pub theories: TheoryBoard,
 }
 
 impl Store {
@@ -114,7 +116,17 @@ impl Store {
         let settlements = self.load_settlements().await?;
         let waypoints = self.load_waypoints().await?;
         let mailbox = self.load_mail().await?;
-        Ok(LoadedWorld { operators, log, geography, social, settlements, waypoints, mailbox })
+        let theories = self.load_theories().await?;
+        Ok(LoadedWorld {
+            operators,
+            log,
+            geography,
+            social,
+            settlements,
+            waypoints,
+            mailbox,
+            theories,
+        })
     }
 
     pub async fn create_account(
@@ -746,6 +758,37 @@ impl Store {
                         .execute(&mut *tx)
                         .await?;
                 }
+                PersistOp::TheoryInsert { id, topic, author_id, kind, body, created_at } => {
+                    let id = i64::try_from(*id).map_err(|_| StoreError::Data)?;
+                    let next_id = id.checked_add(1).ok_or(StoreError::Data)?;
+                    sqlx::query(
+                        "INSERT INTO shared_theories (id, topic, author_id, kind, body, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    )
+                    .bind(id)
+                    .bind(topic)
+                    .bind(author_id.to_string())
+                    .bind(kind.as_str())
+                    .bind(body)
+                    .bind(*created_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "UPDATE shared_theory_seq
+                         SET next_id = CASE WHEN next_id < ?1 THEN ?1 ELSE next_id END
+                         WHERE singleton = 1",
+                    )
+                    .bind(next_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::TheoryDelete { id, author_id } => {
+                    sqlx::query("DELETE FROM shared_theories WHERE id = ?1 AND author_id = ?2")
+                        .bind(i64::try_from(*id).map_err(|_| StoreError::Data)?)
+                        .bind(author_id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
         sqlx::query(
@@ -1000,6 +1043,31 @@ impl Store {
                 .fetch_one(&self.pool)
                 .await?;
         Ok(Mailbox::from_stored(messages, u64_col(next_id)?))
+    }
+
+    async fn load_theories(&self) -> Result<TheoryBoard, StoreError> {
+        let rows = sqlx::query_as::<_, TheorySql>(
+            "SELECT id, topic, author_id, kind, body, created_at FROM shared_theories",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut entries = Vec::with_capacity(rows.len());
+        for row in rows {
+            entries.push(TheoryEntry {
+                id: u64_col(row.id)?,
+                topic: row.topic,
+                author_id: PlayerId::from_str(&row.author_id).map_err(|_| StoreError::Data)?,
+                kind: TheoryKind::parse(&row.kind).ok_or(StoreError::Data)?,
+                body: row.body,
+                created_at: u64_col(row.created_at)?,
+            });
+        }
+        let next_id = sqlx::query_scalar::<_, i64>(
+            "SELECT next_id FROM shared_theory_seq WHERE singleton = 1",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(TheoryBoard::from_stored(entries, u64_col(next_id)?))
     }
 
     async fn load_social(&self) -> Result<SocialState, StoreError> {
@@ -1337,6 +1405,16 @@ struct MailSql {
     body: String,
     created_at: i64,
     read_at: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct TheorySql {
+    id: i64,
+    topic: String,
+    author_id: String,
+    kind: String,
+    body: String,
+    created_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1727,6 +1805,8 @@ mod tests {
         assert!(tables.iter().any(|name| name == "waypoints"));
         assert!(tables.iter().any(|name| name == "mail"));
         assert!(tables.iter().any(|name| name == "mail_seq"));
+        assert!(tables.iter().any(|name| name == "shared_theories"));
+        assert!(tables.iter().any(|name| name == "shared_theory_seq"));
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -2417,5 +2497,128 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(seq, 2);
+    }
+
+    #[tokio::test]
+    async fn shared_theories_survive_reopen_and_a_failed_write_keeps_the_old_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
+        let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "Robert");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+        store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.theories.entries.is_empty());
+        assert_eq!(loaded.theories.next_id, 1);
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_theories(loaded.theories);
+        let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+        store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+        let token = "panel-token-441";
+        world.now_ms = world.now_ms.saturating_add(2_000);
+        let first = world
+            .apply(
+                ada_session,
+                &format!("theory post observation The panel still shows B-4. {token}"),
+            )
+            .unwrap()
+            .ops;
+        store.commit(&first).await.unwrap();
+        world.now_ms = world.now_ms.saturating_add(2_000);
+        let second = world
+            .apply(ada_session, "theory post theory The lock may still be with the relay.")
+            .unwrap()
+            .ops;
+        store.commit(&second).await.unwrap();
+        let leaked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE body LIKE ?1")
+            .bind(format!("%{token}%"))
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(leaked, 0);
+        let notices: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM noticeboard_posts")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(notices, 0);
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.theories.entries.len(), 2);
+        assert_eq!(loaded.theories.next_id, 3);
+        let observation = loaded.theories.entries.iter().find(|entry| entry.id == 1).unwrap();
+        assert_eq!(observation.author_id, ada_id);
+        assert_eq!(observation.kind, TheoryKind::Observation);
+        assert_eq!(observation.topic, "delisted-floor");
+        assert!(observation.body.contains(token));
+        let theory = loaded.theories.entries.iter().find(|entry| entry.id == 2).unwrap();
+        assert_eq!(theory.kind, TheoryKind::Theory);
+        assert_eq!(theory.author_id, ada_id);
+
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_theories(loaded.theories);
+        let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+        let bob_session = bob_ident.session_id;
+        world.connect_player(bob_ident).unwrap();
+        world.apply(bob_session, "theory read 1").unwrap();
+        let page = world.view(bob_session).unwrap().overlay.unwrap_or_default();
+        assert!(page.contains("Ada"));
+        assert!(page.contains("observation"));
+        assert!(page.contains(token));
+        let stolen = store.commit(&[PersistOp::TheoryDelete { id: 1, author_id: bob_id }]).await;
+        assert!(stolen.is_ok());
+        let still: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM shared_theories WHERE id = 1 AND author_id = ?1",
+        )
+        .bind(ada_id.to_string())
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(still, 1, "another operator cannot delete the row");
+
+        let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        world.connect_player(ada_ident).unwrap();
+        let delete_ops = world.apply(ada_session, "theory remove 1").unwrap().ops;
+        store.commit(&delete_ops).await.unwrap();
+        let after = store.load().await.unwrap();
+        assert!(after.theories.get("delisted-floor", 1).is_none());
+        assert!(after.theories.get("delisted-floor", 2).is_some());
+        assert_eq!(after.theories.next_id, 3);
+
+        let ghost = PlayerId::new();
+        let failed = store
+            .commit(&[PersistOp::TheoryInsert {
+                id: 3,
+                topic: "delisted-floor".into(),
+                author_id: ghost,
+                kind: TheoryKind::Theory,
+                body: "should roll back".into(),
+                created_at: 9,
+            }])
+            .await;
+        assert!(failed.is_err());
+        let kept = store.load().await.unwrap();
+        assert_eq!(kept.theories.entries.len(), 1);
+        assert_eq!(kept.theories.next_id, 3);
+        assert!(kept.theories.entries[0].body.contains("relay"));
+        let seq: i64 =
+            sqlx::query_scalar("SELECT next_id FROM shared_theory_seq WHERE singleton = 1")
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(seq, 3);
     }
 }

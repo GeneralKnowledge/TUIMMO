@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::settlement::{InviteStatus, MemberRole, SettlementVisibility};
 use crate::social::FriendshipStatus;
+use crate::theories::TheoryKind;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Item {
@@ -267,6 +268,20 @@ pub enum PersistOp {
     MailDelete {
         id: u64,
         recipient_id: PlayerId,
+    },
+    /// Insert one shared entry and advance the id sequence in the same transaction.
+    TheoryInsert {
+        id: u64,
+        topic: String,
+        author_id: PlayerId,
+        kind: TheoryKind,
+        body: String,
+        created_at: u64,
+    },
+    /// Delete the author's entry only. A different operator's id matches nothing.
+    TheoryDelete {
+        id: u64,
+        author_id: PlayerId,
     },
 }
 
