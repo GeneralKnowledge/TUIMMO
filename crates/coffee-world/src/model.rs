@@ -291,12 +291,29 @@ pub enum PersistOp {
         claimed_at: u64,
         public_name: String,
         public_description: String,
+        meaningful_returns: u32,
+        last_departed_at: Option<u64>,
+        last_returned_at: Option<u64>,
     },
     /// Mark an active home abandoned. Does not delete the row.
     HomeAbandon {
         id: Uuid,
         operator_id: PlayerId,
         abandoned_at: u64,
+    },
+    /// Replace the public name of an active home owned by this operator.
+    HomeRename {
+        id: Uuid,
+        operator_id: PlayerId,
+        public_name: String,
+    },
+    /// Persist departure/return counters used for habitation narrative.
+    HomeHabitation {
+        id: Uuid,
+        operator_id: PlayerId,
+        meaningful_returns: u32,
+        last_departed_at: Option<u64>,
+        last_returned_at: Option<u64>,
     },
 }
 

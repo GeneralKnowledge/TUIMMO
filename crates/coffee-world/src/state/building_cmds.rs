@@ -222,6 +222,14 @@ impl WorldState {
                 };
                 return self.home_abandon(session_id, confirm);
             }
+            "name" => {
+                if tail.is_empty() {
+                    return Err(GameError::Rejected(
+                        "usage: home name <name> | home name clear".into(),
+                    ));
+                }
+                return self.home_name(session_id, tail);
+            }
             _ => {}
         }
         let player = self.player(session_id)?;

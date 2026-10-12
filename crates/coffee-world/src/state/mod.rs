@@ -628,6 +628,7 @@ impl WorldState {
         if let Some(op) = self.operators.get_mut(&player) {
             op.location_id.clone_from(&target.to);
         }
+        ops.extend(self.note_home_travel(player, &from, &target.to));
         self.clear_overlay(session_id);
         let (leave, leave_op) = self.emit(
             Channel::System,
@@ -1524,7 +1525,14 @@ impl WorldState {
         let place_key = pos.key();
         if let Some(home) = self.homes.presentation_at(&place_key, self.now_ms) {
             let viewer_is_owner = viewer == Some(home.operator_id);
-            if let Some(line) = home.look_line(self.now_ms, viewer_is_owner) {
+            // Exploration traits for look prose: owner traits for distinctive public
+            // variants. Visitors never receive owner-only status lists.
+            let traits = if home.is_active() {
+                self.exploration_traits_for(home.operator_id)
+            } else {
+                crate::home::ExplorationTraits::default()
+            };
+            if let Some(line) = home.look_line(self.now_ms, viewer_is_owner, traits) {
                 scene.description.push('\n');
                 scene.description.push_str(&line);
                 scene.objects.push(("home".to_string(), "personal home".to_string()));

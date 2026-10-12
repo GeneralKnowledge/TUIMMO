@@ -196,8 +196,9 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "home",
             aliases: &[],
-            summary: "Claim, move, or abandon a personal home; manage cabin controls",
-            usage: "home [claim|move|abandon|inspect|access|share|allow|deny|rename|demolish] …",
+            summary: "Claim, name, move, or abandon a personal home; manage cabin controls",
+            usage:
+                "home [claim|name|move|abandon|inspect|access|share|allow|deny|rename|demolish] …",
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
