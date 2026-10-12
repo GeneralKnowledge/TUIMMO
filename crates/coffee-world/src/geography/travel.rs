@@ -329,6 +329,8 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "trail"
             | "home"
             | "door"
+            | "mark"
+            | "journal"
     )
 }
 

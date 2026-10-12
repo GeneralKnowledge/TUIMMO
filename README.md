@@ -20,7 +20,7 @@ ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@127.0.0.1
 
 There is no operating-system shell. The first login creates an account when registration is open (the default). The password must be 8–128 characters. Usernames are 3–16 characters: a letter, then letters, digits, or `_`. A second login with the same name returns the same operator, including their last location.
 
-Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `help` lists the commands.
+Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `inspect` a landmark or the roof mast, then `journal record` if it is worth keeping. `help` lists the commands.
 
 Stop the server with Ctrl-C and start it again. Both operators are still where they were.
 
@@ -84,6 +84,7 @@ Docs:
 - Coffee Shop and settlement noticeboards with bounded, expiring posts
 - Ten linked Undernet locations, including a sealed Black Archive
 - A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
+- Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
 - SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, and a bounded message log
 - Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices
 

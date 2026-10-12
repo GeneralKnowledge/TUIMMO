@@ -131,6 +131,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::RequiredWord,
         },
         CommandSpec {
+            name: "journal",
+            aliases: &[],
+            summary: "Read or record your private field journal",
+            usage: "journal [recent|read|record]",
+            args: ArgMode::Rest { required: false },
+        },
+        CommandSpec {
             name: "mark",
             aliases: &[],
             summary: "Leave a named marker on this outskirts tile",

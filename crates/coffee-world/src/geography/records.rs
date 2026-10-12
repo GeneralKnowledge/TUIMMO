@@ -14,6 +14,11 @@ pub const WORKSHOP_KIND: &str = "workshop";
 pub const SIGN_KIND: &str = "sign";
 pub const TRAIL_KIND: &str = "trail";
 
+/// First visit to a birth cell. Shared region history, not a personal note.
+pub const ENTERED_KIND: &str = "entered";
+/// A player's field journal entry. Private to `actor_id`.
+pub const FIELD_KIND: &str = "field";
+
 pub const ACCESS_PUBLIC: &str = "public";
 pub const ACCESS_PRIVATE: &str = "private";
 pub const ACCESS_FRIENDS: &str = "friends";
@@ -88,17 +93,25 @@ pub struct TerrainMod {
     pub created_at: u64,
 }
 
-/// A recorded visit or noted landmark. This is history, not the terrain itself.
+/// A recorded visit or a personal field note. This is history, not the terrain itself.
+///
+/// Visit rows (`entered`) keep a region id. Field notes may name a static Undernet
+/// room instead, in which case `region_id` is absent and `place_key` is the room id.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Discovery {
     pub id: Uuid,
-    pub region_id: Uuid,
+    pub region_id: Option<Uuid>,
     pub local_x: u8,
     pub local_y: u8,
     pub kind: String,
     pub note: String,
     pub actor_id: Option<PlayerId>,
     pub created_at: u64,
+    /// Stable authored identity. The same feature shares this key across players.
+    pub content_key: Option<String>,
+    pub title: Option<String>,
+    /// Wilderness place key or static location id. How the player returns.
+    pub place_key: Option<String>,
 }
 
 /// An explicit link that adjacency does not imply. Player links survive reseed.
@@ -182,5 +195,30 @@ impl GeographyState {
             .iter()
             .filter(|link| link.from_place == place || link.to_place == place)
             .collect()
+    }
+
+    /// Personal field notes, newest first. Other players' rows are omitted.
+    pub fn field_notes_for(&self, actor: PlayerId) -> Vec<&Discovery> {
+        let mut notes: Vec<&Discovery> = self
+            .discoveries
+            .iter()
+            .filter(|item| {
+                item.kind == FIELD_KIND
+                    && item.actor_id == Some(actor)
+                    && item.content_key.is_some()
+            })
+            .collect();
+        notes.sort_by(|left, right| {
+            right.created_at.cmp(&left.created_at).then_with(|| left.id.cmp(&right.id))
+        });
+        notes
+    }
+
+    pub fn field_note(&self, actor: PlayerId, content_key: &str) -> Option<&Discovery> {
+        self.discoveries.iter().find(|item| {
+            item.kind == FIELD_KIND
+                && item.actor_id == Some(actor)
+                && item.content_key.as_deref() == Some(content_key)
+        })
     }
 }

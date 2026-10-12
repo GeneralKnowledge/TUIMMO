@@ -13,17 +13,20 @@ use uuid::Uuid;
 
 use crate::catalog::coffee_registry;
 use crate::geography::{
-    derive_region_seed, describe_tile, effective_tile, epoch_spec, format_seed, frontier_epoch,
-    frontier_identity, is_reserved_word, map_symbol_for_structures, marker_sights, step_origin,
-    validate_marker_name, Cardinal, Discovery, GenerateError, GeneratedRegion, GeographyState,
-    MaterializedRegion, RegionCache, RegionCoordKey, RegionIdentity, Structure, Terrain, Tile,
-    WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD,
-    REGION_SIZE, SHARE_PRIVATE, WORKSHOP_KIND,
+    closure_inspect_text, derive_region_seed, describe_tile, effective_tile, epoch_spec,
+    format_seed, frontier_epoch, frontier_identity, is_reserved_word, is_survey_tile,
+    landmark_sight, map_symbol_for_structures, marker_sights, step_origin, survey_aliases,
+    survey_look_line, survey_sight, validate_marker_name, Cardinal, Discovery, EffectiveTile,
+    GenerateError, GeneratedRegion, GeographyState, LandmarkKind, MaterializedRegion, RegionCache,
+    RegionCoordKey, RegionIdentity, Structure, Terrain, Tile, WildernessPos, WorldConnection,
+    CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE,
+    SURVEY_MARK_FLAG, WORKSHOP_KIND,
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::undernet::{self, ExitDef, ObjectDef};
 
 mod building_cmds;
+mod journal_cmds;
 mod settlement_cmds;
 mod social_cmds;
 
@@ -786,11 +789,19 @@ impl WorldState {
                 extra = grant.first.to_string();
             }
         }
-        let text = if extra.is_empty() {
+        let mut text = if extra.is_empty() {
             object.description.to_string()
         } else {
             format!("{}\n{extra}", object.description)
         };
+        if object.keyword == "dish" {
+            let saw_mark =
+                self.operators.get(&player).is_some_and(|op| op.flags.contains(SURVEY_MARK_FLAG));
+            if saw_mark {
+                text.push('\n');
+                text.push_str(&closure_inspect_text());
+            }
+        }
         let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
         ops.push(op);
         let _ = session_id;
@@ -1139,13 +1150,16 @@ impl WorldState {
         let discovery_id = Uuid::new_v4();
         self.geography.discoveries.push(Discovery {
             id: discovery_id,
-            region_id: id,
+            region_id: Some(id),
             local_x,
             local_y,
-            kind: "entered".into(),
+            kind: crate::geography::ENTERED_KIND.into(),
             note: "Entered the region.".into(),
             actor_id: actor,
             created_at: discovered_at,
+            content_key: None,
+            title: None,
+            place_key: None,
         });
         Ok(vec![
             PersistOp::MaterializeRegion {
@@ -1162,13 +1176,16 @@ impl WorldState {
             },
             PersistOp::Discovery {
                 id: discovery_id,
-                region_id: id,
+                region_id: Some(id),
                 local_x,
                 local_y,
-                kind: "entered".into(),
+                kind: crate::geography::ENTERED_KIND.into(),
                 note: "Entered the region.".into(),
                 actor_id: actor,
                 created_at: discovered_at,
+                content_key: None,
+                title: None,
+                place_key: None,
             },
         ])
     }
@@ -1360,7 +1377,13 @@ impl WorldState {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        Ok(describe_tile(pos, &generated, &self.geography, &sights, &marks))
+        let mut scene = describe_tile(pos, &generated, &self.geography, &sights, &marks);
+        if is_survey_tile(pos) {
+            scene.description.push('\n');
+            scene.description.push_str(survey_look_line());
+            scene.objects.push(("mark".to_string(), "repeated mark".to_string()));
+        }
+        Ok(scene)
     }
 
     pub(crate) fn settlement_note_for_structure(
@@ -1461,7 +1484,8 @@ impl WorldState {
         let matched = scene.objects.iter().find(|(keyword, name)| {
             keyword.eq_ignore_ascii_case(target) || name.eq_ignore_ascii_case(target)
         });
-        if matched.is_none() {
+        let asks_ground = target == "ground";
+        if matched.is_none() && !asks_ground && !(is_survey_tile(pos) && survey_aliases(target)) {
             if let Some(other) =
                 self.names_in(&pos.key()).into_iter().find(|name| name.eq_ignore_ascii_case(target))
             {
@@ -1478,23 +1502,52 @@ impl WorldState {
             }
             return self.inspect_carried(player, target);
         }
-        let text = if let Some(kind) = self.effective_at(pos)?.landmark {
+        let tile = self.effective_at(pos)?;
+        let mut ops = Vec::new();
+        let text = if is_survey_tile(pos) && survey_aliases(target) {
+            self.note_survey_mark(player, &mut ops);
+            survey_sight().text
+        } else if let Some(kind) = tile.landmark {
             if target.eq_ignore_ascii_case(kind.keyword())
                 || target.eq_ignore_ascii_case(kind.name())
             {
-                kind.prose().to_string()
+                landmark_sight(pos, kind).text
+            } else if target == "ground"
+                || target.eq_ignore_ascii_case(tile.terrain.keyword())
+                || target.eq_ignore_ascii_case(tile.terrain.label())
+            {
+                ground_inspect(tile, kind)
             } else {
                 scene.description
+            }
+        } else if target.eq_ignore_ascii_case(tile.terrain.keyword())
+            || target.eq_ignore_ascii_case(tile.terrain.label())
+            || target == "ground"
+        {
+            if is_survey_tile(pos) {
+                format!(
+                    "{}\nA repeated mark lies in the grass. `inspect mark`.",
+                    terrain_inspect_line(tile)
+                )
+            } else {
+                format!("{}\nNothing unusual marks this ground.", terrain_inspect_line(tile))
             }
         } else {
             scene.description
         };
         let _ = session_id;
         let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
-        Ok(Transition {
-            outcome: CommandOutcome { events: vec![event], quit: false },
-            ops: vec![op],
-        })
+        ops.push(op);
+        Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
+    pub(crate) fn note_survey_mark(&mut self, player: PlayerId, ops: &mut Vec<PersistOp>) {
+        let Some(operator) = self.operators.get_mut(&player) else {
+            return;
+        };
+        if operator.flags.insert(SURVEY_MARK_FLAG.to_string()) {
+            ops.push(PersistOp::Flag { operator_id: player, flag: SURVEY_MARK_FLAG.to_string() });
+        }
     }
 
     fn inspect_carried(&mut self, player: PlayerId, target: &str) -> Result<Transition, GameError> {
@@ -1789,6 +1842,7 @@ fn handler(name: &str) -> Option<Handler> {
         "status" => WorldState::cmd_status,
         "inventory" => WorldState::cmd_inventory,
         "inspect" => WorldState::cmd_inspect,
+        "journal" => WorldState::cmd_journal,
         "mark" => WorldState::cmd_mark,
         "build" => WorldState::cmd_build,
         "enter" => WorldState::cmd_enter,
@@ -1836,6 +1890,30 @@ fn needs_speak(name: &str) -> bool {
 
 pub(crate) fn quiet() -> Transition {
     Transition { outcome: CommandOutcome::default(), ops: Vec::new() }
+}
+
+fn terrain_inspect_line(tile: EffectiveTile) -> String {
+    if tile.gate {
+        return "Packed earth and a break in the fencing. The roof array is still behind you."
+            .to_string();
+    }
+    match tile.terrain {
+        Terrain::Grass => "Open grass. The weather still smells like the city.",
+        Terrain::Forest => "Trees stand close. The wood would take a saw.",
+        Terrain::Scrub => "Low scrub and scattered wire-grass.",
+        Terrain::Water => "Dark water. There is no footing.",
+        Terrain::Rock => "Broken rock. There is no footing.",
+    }
+    .to_string()
+}
+
+fn ground_inspect(tile: EffectiveTile, kind: LandmarkKind) -> String {
+    format!(
+        "{}\nA {} is here. `inspect {}`.",
+        terrain_inspect_line(tile),
+        kind.name(),
+        kind.keyword()
+    )
 }
 
 fn unreadable_wilderness(err: &GenerateError) -> String {

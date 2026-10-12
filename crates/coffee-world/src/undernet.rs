@@ -201,7 +201,7 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "old-relay",
         name: "The Old Relay",
-        description: "A derelict communications node. Racks stand open. One relay sled is still seated, its cipher plate latched but loose.",
+        description: "A derelict communications node. Racks stand open. One relay sled is still seated, its cipher plate latched but loose. The dish cable is scuffed.",
         objects: &[
             ObjectDef {
                 keyword: "relay",
@@ -214,7 +214,7 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
                 keyword: "dish",
                 aliases: &["antenna"],
                 name: "dead dish",
-                description: "A status lamp on the dish feed is dark. The cable runs down into the floor.",
+                description: "A status lamp on the dish feed is dark. The cable runs down into the floor. The jacket is scuffed where it leaves the housing.",
                 grant: None,
             },
         ],
@@ -234,12 +234,12 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "roof-array",
         name: "Roof Array",
-        description: "The shop's roof. Antennae and a folding chair. The city is a circuit of wet light, and a break in the fencing opens onto the outskirts. The stair back down smells like coffee.",
+        description: "The shop's roof. Antennae and a folding chair. The city is a circuit of wet light, and a break in the fencing opens onto the outskirts. The stair back down smells like coffee. Fresh scratches mark the tape on the mast.",
         objects: &[ObjectDef {
             keyword: "antenna",
             aliases: &["array", "mast"],
             name: "antenna",
-            description: "The mast is lashed with tape. It still points at the old relay, a few blocks of rooftops away.",
+                description: "The mast is lashed with tape. It still points at the old relay, a few blocks of rooftops away. Under the newest wrap, a scratch reads: one step west of the gate. The mark repeats. `journal record` keeps a field note.",
             grant: None,
         }],
     },
