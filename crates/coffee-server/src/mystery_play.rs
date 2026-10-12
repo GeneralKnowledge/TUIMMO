@@ -8,8 +8,12 @@ use terminus_core::{Game, Permissions, PlayerId, SessionIdentity};
 use terminus_tui::{App, Theme};
 
 fn render(view: terminus_core::GameView) -> String {
+    render_size(view, 80, 24)
+}
+
+fn render_size(view: terminus_core::GameView, width: u16, height: u16) -> String {
     let app = App::play(Theme::neutral(), view);
-    let backend = TestBackend::new(80, 24);
+    let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).unwrap();
     terminal.draw(|frame| app.render(frame)).unwrap();
     let buffer = terminal.backend().buffer().clone();
@@ -100,4 +104,28 @@ fn delisted_floor_evidence_fits_an_eighty_by_twenty_four_terminal() {
     assert!(notes.contains("public list"), "{notes}");
     assert!(notes.contains("relay"), "{notes}");
     assert!(!world.operator(id).unwrap().flags.contains("cipher-plate"));
+}
+
+#[test]
+fn a_newcomer_can_read_the_shop_on_a_narrow_terminal() {
+    let mut world = WorldState::for_tests();
+    let id = PlayerId::new();
+    world.insert_operator(starter_operator(id, uuid::Uuid::new_v4(), "ada", "Ada"));
+    let identity = SessionIdentity::new(id, "Ada", Permissions::player());
+    let session = identity.session_id;
+    world.connect_player(identity).unwrap();
+    let view = world.view(session).unwrap();
+
+    let wide = render(view.clone());
+    assert!(wide.contains("Coffee Shop"), "{wide}");
+    assert!(wide.contains("alley"), "{wide}");
+    assert!(wide.contains("arrived") || wide.contains("help"), "{wide}");
+
+    let narrow = render_size(view.clone(), 60, 20);
+    assert!(narrow.contains("You arrived") || narrow.contains("help"), "{narrow}");
+    assert!(narrow.contains("Coffee") || narrow.contains("Undernet"), "{narrow}");
+
+    let tiny = render_size(view, 40, 12);
+    assert!(tiny.contains("Coffee") || tiny.contains("help") || tiny.contains("arrived"), "{tiny}");
+    assert!(!tiny.contains("Terminal too small"), "{tiny}");
 }
