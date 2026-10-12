@@ -8,6 +8,7 @@ mod field;
 mod generate;
 mod identity;
 mod records;
+mod route;
 mod travel;
 
 #[cfg(test)]
@@ -35,6 +36,7 @@ pub use records::{
     ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, ENTERED_KIND, FIELD_KIND,
     MARKER_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
+pub(crate) use route::{cross_region_hint, distant_cell_hint, local_path, LocalPath};
 pub use travel::{
     describe_tile, effective_tile, is_reserved_word, map_symbol_for_structures, marker_sights,
     step_origin, validate_marker_name, Cardinal, EffectiveTile, MarkerSight, TileScene,

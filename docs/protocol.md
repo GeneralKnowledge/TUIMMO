@@ -57,7 +57,7 @@ The JSON object is:
 
 The reference TUI treats snapshots as authoritative and ignores `events`. Both are sent so a simpler client can follow the feed.
 
-`GameView` may include `finding`, the latest inspection for that session, and `overlay`, for help, the map, or the journal. Both are optional. Older snapshots that omit `finding` are read as empty. The place text stays in `description`. Inspection is not a new feed channel: the private system line is still recorded, and `finding` is what the terminal keeps on screen.
+`GameView` may include `finding`, the latest inspection for that session, and `overlay`, for help, the map, the journal, or a waypoint list. Both are optional. Older snapshots that omit `finding` are read as empty. The place text stays in `description`. Inspection is not a new feed channel: the private system line is still recorded, and `finding` is what the terminal keeps on screen. Waypoint notes travel in that session's overlay, not in a shared feed.
 
 ## Sessions
 

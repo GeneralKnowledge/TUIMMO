@@ -24,6 +24,7 @@ use crate::social::{
     Friendship, FriendshipStatus, IgnoreEdge, NoticePost, SocialState, StructureGrant,
 };
 use crate::undernet::{ExitDef, LocationDef};
+use crate::waypoint::Waypoint;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -45,6 +46,7 @@ pub struct LoadedWorld {
     pub geography: GeographyState,
     pub social: SocialState,
     pub settlements: SettlementState,
+    pub waypoints: Vec<Waypoint>,
 }
 
 impl Store {
@@ -108,7 +110,8 @@ impl Store {
         let geography = self.load_geography().await?;
         let social = self.load_social().await?;
         let settlements = self.load_settlements().await?;
-        Ok(LoadedWorld { operators, log, geography, social, settlements })
+        let waypoints = self.load_waypoints().await?;
+        Ok(LoadedWorld { operators, log, geography, social, settlements, waypoints })
     }
 
     pub async fn create_account(
@@ -654,6 +657,52 @@ impl Store {
                     .execute(&mut *tx)
                     .await?;
                 }
+                PersistOp::WaypointInsert {
+                    id,
+                    operator_id,
+                    name_key,
+                    display_name,
+                    place_key,
+                    note,
+                    created_at,
+                    updated_at,
+                } => {
+                    sqlx::query(
+                        "INSERT INTO waypoints (
+                            id, operator_id, name_key, display_name, place_key, note,
+                            created_at, updated_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    )
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .bind(name_key)
+                    .bind(display_name)
+                    .bind(place_key)
+                    .bind(note)
+                    .bind(*created_at as i64)
+                    .bind(*updated_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::WaypointNote { id, operator_id, note, updated_at } => {
+                    sqlx::query(
+                        "UPDATE waypoints SET note = ?1, updated_at = ?2
+                         WHERE id = ?3 AND operator_id = ?4",
+                    )
+                    .bind(note)
+                    .bind(*updated_at as i64)
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::WaypointDelete { id, operator_id } => {
+                    sqlx::query("DELETE FROM waypoints WHERE id = ?1 AND operator_id = ?2")
+                        .bind(id.to_string())
+                        .bind(operator_id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
         sqlx::query(
@@ -860,6 +909,29 @@ impl Store {
             });
         }
         Ok(geography)
+    }
+
+    async fn load_waypoints(&self) -> Result<Vec<Waypoint>, StoreError> {
+        let rows = sqlx::query_as::<_, WaypointSql>(
+            "SELECT id, operator_id, name_key, display_name, place_key, note, created_at, updated_at
+             FROM waypoints",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut waypoints = Vec::with_capacity(rows.len());
+        for row in rows {
+            waypoints.push(Waypoint {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                operator_id: PlayerId::from_str(&row.operator_id).map_err(|_| StoreError::Data)?,
+                name_key: row.name_key,
+                display_name: row.display_name,
+                place_key: row.place_key,
+                note: row.note,
+                created_at: u64_col(row.created_at)?,
+                updated_at: u64_col(row.updated_at)?,
+            });
+        }
+        Ok(waypoints)
     }
 
     async fn load_social(&self) -> Result<SocialState, StoreError> {
@@ -1183,6 +1255,18 @@ struct ModSql {
     reason: String,
     actor_id: Option<String>,
     created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct WaypointSql {
+    id: String,
+    operator_id: String,
+    name_key: String,
+    display_name: String,
+    place_key: String,
+    note: String,
+    created_at: i64,
+    updated_at: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1558,6 +1642,7 @@ mod tests {
         assert!(tables.iter().any(|name| name == "settlements"));
         assert!(tables.iter().any(|name| name == "settlement_members"));
         assert!(tables.iter().any(|name| name == "settlement_invites"));
+        assert!(tables.iter().any(|name| name == "waypoints"));
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -1851,6 +1936,7 @@ mod tests {
 
         let store = Store::open(&path).await.unwrap();
         let loaded = store.load().await.unwrap();
+        assert!(loaded.waypoints.is_empty());
         let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
         let bob = loaded.operators.iter().find(|op| op.id == bob_id).unwrap();
         assert_eq!(ada.location_id, "coffee-shop");
@@ -1927,5 +2013,132 @@ mod tests {
         assert!(page.contains("Roof Array"));
         again.apply(session, "journal record").unwrap();
         assert_eq!(again.geography.field_notes_for(ada_id).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn waypoints_survive_reopen_and_stay_with_their_owner() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "ada");
+        let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "bob");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+        store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_geography(loaded.geography);
+        world.install_social(loaded.social);
+        world.install_settlements(loaded.settlements);
+        world.install_waypoints(loaded.waypoints);
+        let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let bob_ident = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        let bob_session = bob_ident.session_id;
+        let mut ops = world.connect_player(ada_ident).unwrap().0.ops;
+        ops.extend(world.connect_player(bob_ident).unwrap().0.ops);
+        store.commit(&ops).await.unwrap();
+
+        let mut ops = world.apply(ada_session, "waypoint add shop-door").unwrap().ops;
+        ops.extend(
+            world
+                .apply(ada_session, "waypoint note shop-door The counter faces the alley.")
+                .unwrap()
+                .ops,
+        );
+        ops.extend(world.apply(bob_session, "go up").unwrap().ops);
+        ops.extend(world.apply(bob_session, "waypoint add shop-door").unwrap().ops);
+        store.commit(&ops).await.unwrap();
+        sqlx::query(
+            "INSERT INTO waypoints (
+                id, operator_id, name_key, display_name, place_key, note, created_at, updated_at
+             ) VALUES (?1, ?2, 'old-epoch', 'old-epoch', 'w:undernet:9:0:0:1:4:4', 'keep me', 3, 3)",
+        )
+        .bind(Uuid::new_v4().to_string())
+        .bind(ada_id.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.waypoints.len(), 3);
+        let ada_mark = loaded
+            .waypoints
+            .iter()
+            .find(|row| row.operator_id == ada_id && row.name_key == "shop-door")
+            .unwrap();
+        assert_eq!(ada_mark.place_key, "coffee-shop");
+        assert_eq!(ada_mark.display_name, "shop-door");
+        assert_eq!(ada_mark.note, "The counter faces the alley.");
+        let bob_mark = loaded
+            .waypoints
+            .iter()
+            .find(|row| row.operator_id == bob_id && row.name_key == "shop-door")
+            .unwrap();
+        assert_eq!(bob_mark.place_key, "roof-array");
+        assert!(bob_mark.note.is_empty());
+        let stale = loaded.waypoints.iter().find(|row| row.name_key == "old-epoch").unwrap();
+        assert_eq!(stale.operator_id, ada_id);
+        assert_eq!(stale.place_key, "w:undernet:9:0:0:1:4:4");
+        assert_eq!(stale.note, "keep me");
+
+        let mut again = WorldState::for_tests();
+        again.install_loaded(loaded.operators, loaded.log);
+        again.install_geography(loaded.geography);
+        again.install_social(loaded.social);
+        again.install_settlements(loaded.settlements);
+        again.install_waypoints(loaded.waypoints);
+        let back = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let session = back.session_id;
+        again.connect_player(back).unwrap();
+        again.apply(session, "waypoint show shop-door").unwrap();
+        let page = again.view(session).unwrap().overlay.unwrap_or_default();
+        assert!(page.contains("The counter faces the alley."), "{page}");
+        assert!(page.contains("coffee-shop"), "{page}");
+        again.apply(session, "waypoint show old-epoch").unwrap();
+        let stale_page = again.view(session).unwrap().overlay.unwrap_or_default();
+        assert!(stale_page.contains("not moved"), "{stale_page}");
+        assert!(stale_page.contains("keep me"), "{stale_page}");
+        assert_eq!(
+            again.waypoints.iter().find(|row| row.name_key == "old-epoch").unwrap().place_key,
+            "w:undernet:9:0:0:1:4:4"
+        );
+        let bob_back = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let bob_session = bob_back.session_id;
+        again.connect_player(bob_back).unwrap();
+        let hidden = again.apply(bob_session, "waypoint show shop-door").unwrap();
+        let bob_page = again.view(bob_session).unwrap().overlay.unwrap_or_default();
+        assert!(bob_page.contains("roof-array"), "{bob_page}");
+        assert!(!bob_page.contains("faces the alley"), "{bob_page}");
+        assert!(hidden.ops.is_empty());
+    }
+
+    #[tokio::test]
+    async fn duplicate_waypoint_names_do_not_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let ada_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "ada");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+        let row = |id: Uuid| PersistOp::WaypointInsert {
+            id,
+            operator_id: ada_id,
+            name_key: "shop-door".into(),
+            display_name: "shop-door".into(),
+            place_key: "coffee-shop".into(),
+            note: String::new(),
+            created_at: 1,
+            updated_at: 1,
+        };
+        let err = store.commit(&[row(Uuid::new_v4()), row(Uuid::new_v4())]).await;
+        assert!(err.is_err());
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.waypoints.is_empty());
     }
 }

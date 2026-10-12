@@ -85,12 +85,13 @@ Docs:
 - Ten linked Undernet locations, including a sealed Black Archive
 - A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
 - Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
-- SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, and a bounded message log
+- Personal waypoints (`waypoint add`, `list`, `show`, `note`, `remove`) for places an operator has stood, with private notes and return hints
+- SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, waypoints, and a bounded message log
 - Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices
 
 ## What this version does not do
 
-No combat, economy, guild ranks, crafting, quests, generated NPCs, or personal waypoints. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, guild ranks, crafting, quests, or generated NPCs. Waypoints do not teleport, share a map, or reveal unexplored ground. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 

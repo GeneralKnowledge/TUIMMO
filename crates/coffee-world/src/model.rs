@@ -227,6 +227,28 @@ pub enum PersistOp {
         created_at: u64,
         expires_at: u64,
     },
+    /// Insert only. A repeated name fails the transaction instead of moving the mark.
+    WaypointInsert {
+        id: Uuid,
+        operator_id: PlayerId,
+        name_key: String,
+        display_name: String,
+        place_key: String,
+        note: String,
+        created_at: u64,
+        updated_at: u64,
+    },
+    /// Replace the note. The name and destination stay.
+    WaypointNote {
+        id: Uuid,
+        operator_id: PlayerId,
+        note: String,
+        updated_at: u64,
+    },
+    WaypointDelete {
+        id: Uuid,
+        operator_id: PlayerId,
+    },
 }
 
 pub const STARTER_LOCATION: &str = "coffee-shop";
