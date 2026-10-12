@@ -191,8 +191,7 @@ pub fn delisted_floor() -> AuthoredFinding {
     AuthoredFinding {
         content_key: DELISTED_FLOOR_ID.to_string(),
         title: "Delisted floor".into(),
-        note: "The service panel's lowest line is crossed out, but B-4 remains. \
-               The torn log uses the same code and says the room was struck from the public list. \
+        note: "Service line B-4 was struck from the public list. \
                The lock was left with the relay."
             .into(),
     }
@@ -210,18 +209,18 @@ pub fn delisted_terminal_waiting() -> &'static str {
 /// Personal rereading of the shared panel, once this operator holds the torn page.
 pub fn panel_after_log() -> String {
     format!(
-        "B-4 matches the scrap from the terminal. The marker struck that room off the public list and left the code where it was.\n{JOURNAL_HINT}"
+        "B-4 matches the torn page. Struck from the public list; the code was left.\n{JOURNAL_HINT}"
     )
 }
 
-/// The readable page, plus the journal hint. The carried item keeps the page alone.
+/// The readable page, then how to keep it. The carried item keeps the page alone.
 pub fn torn_page_text() -> String {
-    format!("{}\n{JOURNAL_HINT}", undernet::TORN_LOG_DETAIL)
+    format!("{}\nYou tear the page free. `journal record`.", undernet::TORN_LOG_DETAIL)
 }
 
 /// Corroboration on the archive shelf. The gap stays empty.
 pub fn stacks_after_log() -> &'static str {
-    "The gap's shelf tag is still B-4, the code from the torn log."
+    "The empty shelf is tagged B-4, the code from the torn log."
 }
 
 /// Readable label and a way back with existing movement commands.

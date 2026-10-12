@@ -793,15 +793,11 @@ impl WorldState {
                 ops: vec![op],
             });
         }
-        if let Some(item) = self.operators.get(&player).and_then(|op| {
-            op.items
-                .iter()
-                .find(|item| {
-                    item.keyword.eq_ignore_ascii_case(&target)
-                        || item.name.eq_ignore_ascii_case(&target)
-                })
-                .cloned()
-        }) {
+        if let Some(item) = self
+            .operators
+            .get(&player)
+            .and_then(|op| op.items.iter().find(|item| item_answers(item, &target)).cloned())
+        {
             let (event, op) =
                 self.inspect_note(session_id, player, format!("{}: {}", item.name, item.detail));
             return Ok(Transition {
@@ -854,9 +850,8 @@ impl WorldState {
         } else {
             format!("{}\n{extra}", object.description)
         };
-        if object.keyword == "terminal" && fresh_grant {
-            text.push('\n');
-            text.push_str(&torn_page_text());
+        if object.keyword == "terminal" && (fresh_grant || !extra.is_empty()) {
+            text = if fresh_grant { torn_page_text() } else { extra };
         }
         if object.keyword == "dish" {
             let saw_mark =
@@ -869,12 +864,10 @@ impl WorldState {
         let read_terminal =
             self.operators.get(&player).is_some_and(|op| op.flags.contains(READ_TERMINAL_FLAG));
         if read_terminal && object.keyword == "panel" {
-            text.push('\n');
-            text.push_str(&panel_after_log());
+            text = panel_after_log();
         }
         if read_terminal && object.keyword == "stacks" {
-            text.push('\n');
-            text.push_str(stacks_after_log());
+            text = format!("{}\n{}", stacks_after_log(), object.description);
         }
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
@@ -1628,15 +1621,11 @@ impl WorldState {
         player: PlayerId,
         target: &str,
     ) -> Result<Transition, GameError> {
-        if let Some(item) = self.operators.get(&player).and_then(|op| {
-            op.items
-                .iter()
-                .find(|item| {
-                    item.keyword.eq_ignore_ascii_case(target)
-                        || item.name.eq_ignore_ascii_case(target)
-                })
-                .cloned()
-        }) {
+        if let Some(item) = self
+            .operators
+            .get(&player)
+            .and_then(|op| op.items.iter().find(|item| item_answers(item, target)).cloned())
+        {
             let (event, op) =
                 self.inspect_note(session_id, player, format!("{}: {}", item.name, item.detail));
             return Ok(Transition {
@@ -2001,6 +1990,18 @@ fn unreadable_wilderness(err: &GenerateError) -> String {
     format!(
         "This land cannot be rebuilt ({err}). It has not been deleted. Walking it is closed until its generator is available."
     )
+}
+
+/// One-word inspect. The sidebar shows the item name, which may be two words,
+/// and the stored keyword may be hyphenated.
+fn item_answers(item: &Item, target: &str) -> bool {
+    if target.is_empty() {
+        return false;
+    }
+    item.keyword.eq_ignore_ascii_case(target)
+        || item.name.eq_ignore_ascii_case(target)
+        || item.keyword.split('-').any(|part| part.eq_ignore_ascii_case(target))
+        || item.name.split_whitespace().any(|part| part.eq_ignore_ascii_case(target))
 }
 
 fn find_object(location: &str, target: &str) -> Option<ObjectDef> {

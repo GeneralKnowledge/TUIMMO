@@ -10,6 +10,9 @@ mod hub;
 mod proto;
 mod theme;
 
+#[cfg(test)]
+mod mystery_play;
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

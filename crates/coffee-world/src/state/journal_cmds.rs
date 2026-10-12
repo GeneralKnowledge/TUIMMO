@@ -611,7 +611,9 @@ mod tests {
         world.apply(ada, "inspect computer").unwrap();
         let again = world.view(ada).unwrap().finding.unwrap_or_default();
         assert!(again.contains("nothing new"));
+        assert!(again.contains("inspect log"));
         assert!(!again.contains("public list"));
+        assert!(!again.contains("still mounted"));
         assert_eq!(
             world
                 .operator(ada_id)
@@ -622,6 +624,14 @@ mod tests {
                 .count(),
             1
         );
+        world.apply(ada, "inspect log").unwrap();
+        let by_log = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(by_log.starts_with("torn log:"));
+        assert!(by_log.contains("B-4"));
+        assert!(by_log.contains("left with the relay"));
+        assert!(!by_log.contains("journal record"));
+        world.apply(ada, "inspect torn").unwrap();
+        assert!(world.view(ada).unwrap().finding.as_deref().unwrap_or("").contains("B-4"));
         world.apply(ada, "inspect torn-log").unwrap();
         let scrap = world.view(ada).unwrap().finding.unwrap_or_default();
         assert!(scrap.contains("B-4"));
