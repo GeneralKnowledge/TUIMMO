@@ -189,6 +189,8 @@ A unique index on `(actor_id, content_key)` for `kind = 'field'` makes recording
 
 The unfiled-survey stone at birth `(0, 0)` tile `(7, 8)` is presentation layered on the version 1 tile. `generate_region` is unchanged, and the origin fingerprint stays `0x8812_F1DB_241C_39A1`. Landmark inspection variants are chosen by a fixed salt of absolute coordinates in `geography/field.rs`. That salt is not a generator input.
 
+The delisted floor uses those same rows. `inspect terminal` in the Abandoned Exchange sets the existing `read-terminal` flag and inserts one `torn-log` item for that operator. The Service Corridor panel always shows the code B-4; the sentence that matches it to a room struck from the public list is appended only when that operator holds the flag. `journal record` stores one `field` row with content key `delisted-floor`. A second operator can read the same terminal and keep a separate row. The object stays in the room. None of this writes a location, an exit, a generator input, or another player's journal. The Black Archive door still requires `cipher-plate`. A failed commit restores the operator and the geography snapshot, so a half-applied flag, item, or note is not kept.
+
 ### Region chat keys
 
 Regional speech uses physical proximity only. The server derives the key from the speaker's place; clients cannot subscribe to arbitrary regions.

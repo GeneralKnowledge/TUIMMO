@@ -15,15 +15,15 @@ use crate::catalog::coffee_registry;
 use crate::geography::{
     closure_inspect_text, derive_region_seed, describe_tile, effective_tile, epoch_spec,
     format_seed, frontier_epoch, frontier_identity, is_reserved_word, is_survey_tile,
-    landmark_sight, map_symbol_for_structures, marker_sights, step_origin, survey_aliases,
-    survey_look_line, survey_sight, validate_marker_name, Cardinal, Discovery, EffectiveTile,
-    GenerateError, GeneratedRegion, GeographyState, LandmarkKind, MaterializedRegion, RegionCache,
-    RegionCoordKey, RegionIdentity, Structure, Terrain, Tile, WildernessPos, WorldConnection,
-    CITY_KEYWORD, MARKER_KIND, OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE,
-    SURVEY_MARK_FLAG, WORKSHOP_KIND,
+    landmark_sight, map_symbol_for_structures, marker_sights, panel_after_log, stacks_after_log,
+    step_origin, survey_aliases, survey_look_line, survey_sight, torn_page_text,
+    validate_marker_name, Cardinal, Discovery, EffectiveTile, GenerateError, GeneratedRegion,
+    GeographyState, LandmarkKind, MaterializedRegion, RegionCache, RegionCoordKey, RegionIdentity,
+    Structure, Terrain, Tile, WildernessPos, WorldConnection, CITY_KEYWORD, MARKER_KIND,
+    OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE, SURVEY_MARK_FLAG, WORKSHOP_KIND,
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
-use crate::undernet::{self, ExitDef, ObjectDef};
+use crate::undernet::{self, ExitDef, ObjectDef, READ_TERMINAL_FLAG};
 use crate::waypoint::Waypoint;
 
 mod building_cmds;
@@ -820,6 +820,7 @@ impl WorldState {
     ) -> Result<Transition, GameError> {
         let mut ops = Vec::new();
         let mut extra = String::new();
+        let mut fresh_grant = false;
         if let Some(grant) = object.grant {
             let already = self
                 .operators
@@ -829,6 +830,7 @@ impl WorldState {
             if already {
                 extra = grant.already.to_string();
             } else if let Some(op) = self.operators.get_mut(&player) {
+                fresh_grant = true;
                 op.flags.insert(grant.flag.to_string());
                 ops.push(PersistOp::Flag { operator_id: player, flag: grant.flag.to_string() });
                 if !op.items.iter().any(|item| item.keyword == grant.item_key) {
@@ -852,6 +854,10 @@ impl WorldState {
         } else {
             format!("{}\n{extra}", object.description)
         };
+        if object.keyword == "terminal" && fresh_grant {
+            text.push('\n');
+            text.push_str(&torn_page_text());
+        }
         if object.keyword == "dish" {
             let saw_mark =
                 self.operators.get(&player).is_some_and(|op| op.flags.contains(SURVEY_MARK_FLAG));
@@ -859,6 +865,16 @@ impl WorldState {
                 text.push('\n');
                 text.push_str(&closure_inspect_text());
             }
+        }
+        let read_terminal =
+            self.operators.get(&player).is_some_and(|op| op.flags.contains(READ_TERMINAL_FLAG));
+        if read_terminal && object.keyword == "panel" {
+            text.push('\n');
+            text.push_str(&panel_after_log());
+        }
+        if read_terminal && object.keyword == "stacks" {
+            text.push('\n');
+            text.push_str(stacks_after_log());
         }
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);

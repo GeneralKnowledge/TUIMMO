@@ -45,11 +45,19 @@ const RELAY_GRANT: GrantDef = GrantDef {
     already: "The relay housing is empty. You already carry the plate.",
 };
 
+/// Set when this operator has read the abandoned-exchange terminal.
+/// The terminal stays mounted for everyone else.
+pub const READ_TERMINAL_FLAG: &str = "read-terminal";
+
+/// The page itself. Inspection may add a journal hint; the carried scrap does not.
+pub const TORN_LOG_DETAIL: &str = "The last readable line is B-4, the same short code left on the service panel. \
+A later hand wrote that the room was struck from the public list. The lock was left with the relay.";
+
 const LOG_GRANT: GrantDef = GrantDef {
-    flag: "read-terminal",
+    flag: READ_TERMINAL_FLAG,
     item_key: "torn-log",
     item_name: "torn log",
-    item_detail: "A scrap of maintenance log. The last line is just a room number.",
+    item_detail: TORN_LOG_DETAIL,
     first: "The terminal coughs up one readable page. You tear it free.",
     already: "The terminal has nothing new.",
 };
@@ -170,7 +178,8 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
             keyword: "panel",
             aliases: &["hatch"],
             name: "access panel",
-            description: "The panel lists floors. The lowest entry is crossed out in marker.",
+            description: "The panel lists floors. The lowest entry is crossed out in marker. \
+The stroke misses the end of the line, where B-4 is still readable.",
             grant: None,
         }],
     },
