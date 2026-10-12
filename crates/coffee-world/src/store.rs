@@ -2854,4 +2854,149 @@ mod tests {
         assert_eq!(again.homes.active_for(bob_id).unwrap().place_key, first.key());
         assert_eq!(again.homes.active_for(ada_id).unwrap().place_key, second.key());
     }
+
+    #[tokio::test]
+    async fn remote_world_acceptance_persists_without_intervening_regions() {
+        use crate::geography::{
+            describe_place, generate_region, landmark_sight, DensityBand, UrbanContext,
+            WildernessPos, WorldId, GENERATION_V1, REGION_SIZE, REMOTE_ACCEPTANCE_ORIGIN_X,
+            REMOTE_ACCEPTANCE_ORIGIN_Y,
+        };
+        use terminus_core::{Permissions, SessionIdentity};
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("remote.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+        let ada_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "ada");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+
+        let loaded = store.load().await.unwrap();
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_geography(loaded.geography);
+        world.install_homes(loaded.homes);
+        world.install_waypoints(loaded.waypoints);
+        let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+
+        let identity = crate::geography::RegionIdentity {
+            world: WorldId::Undernet,
+            epoch_id: 1,
+            origin_x: REMOTE_ACCEPTANCE_ORIGIN_X,
+            origin_y: REMOTE_ACCEPTANCE_ORIGIN_Y,
+            generation_version: GENERATION_V1,
+        };
+        assert_eq!(i64::from(REMOTE_ACCEPTANCE_ORIGIN_X) * i64::from(REGION_SIZE), 992);
+        let generated = generate_region(identity).unwrap();
+        let mut home_pos = None;
+        let mut landmark_pos = None;
+        for local_y in 0..16u8 {
+            for local_x in 0..16u8 {
+                let pos = WildernessPos { identity, local_x, local_y };
+                let baseline = generated.tile(local_x, local_y).unwrap();
+                let tile = world.effective_at(pos).unwrap();
+                if !tile.traversable() {
+                    continue;
+                }
+                if home_pos.is_none() {
+                    home_pos = Some(pos);
+                }
+                if landmark_pos.is_none() {
+                    if let Some(kind) = baseline.landmark {
+                        if landmark_sight(pos, kind).finding.is_some() {
+                            landmark_pos = Some(pos);
+                        }
+                    }
+                }
+            }
+        }
+        let home_pos = home_pos.expect("walkable remote tile");
+        let ctx = UrbanContext::at(home_pos);
+        assert_eq!(ctx.band, DensityBand::Deep);
+        assert!(ctx.familiarity().contains("deep Squalor"));
+
+        // Materialize only the remote birth cell — not the path from the Hub.
+        let mut ops = world
+            .ensure_region(home_pos.identity, Some(ada_id), home_pos.local_x, home_pos.local_y)
+            .unwrap();
+        assert_eq!(world.geography.regions.len(), 1);
+        assert!(world.geography.region(identity.coord_key()).is_some());
+        assert!(world
+            .geography
+            .regions
+            .keys()
+            .all(|key| key.origin_x == REMOTE_ACCEPTANCE_ORIGIN_X
+                && key.origin_y == REMOTE_ACCEPTANCE_ORIGIN_Y));
+
+        world.operators.get_mut(&ada_id).unwrap().location_id = home_pos.key();
+        ops.extend(world.apply(ada_session, "home claim").unwrap().ops);
+        ops.extend(world.apply(ada_session, "waypoint add far-home").unwrap().ops);
+        ops.extend(
+            world
+                .apply(ada_session, "waypoint note far-home Deep stacks beyond the Hub's maps.")
+                .unwrap()
+                .ops,
+        );
+
+        if let Some(mark) = landmark_pos {
+            world.operators.get_mut(&ada_id).unwrap().location_id = mark.key();
+            let _ = world
+                .ensure_region(mark.identity, Some(ada_id), mark.local_x, mark.local_y)
+                .unwrap();
+            let kind = generated.tile(mark.local_x, mark.local_y).unwrap().landmark.unwrap();
+            world.apply(ada_session, &format!("inspect {}", kind.keyword())).unwrap();
+            ops.extend(world.apply(ada_session, "journal record").unwrap().ops);
+        }
+
+        // Looking at a remote place does not grant knowledge of an unvisited neighbour.
+        let neighbour = crate::geography::RegionIdentity {
+            origin_x: REMOTE_ACCEPTANCE_ORIGIN_X + 1,
+            ..identity
+        };
+        assert!(world.geography.region(neighbour.coord_key()).is_none());
+
+        store.commit(&ops).await.unwrap();
+        drop(store);
+
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.geography.regions.len(), 1);
+        assert_eq!(
+            loaded.geography.regions.values().next().unwrap().identity.origin_x,
+            REMOTE_ACCEPTANCE_ORIGIN_X
+        );
+        assert_eq!(loaded.homes.active_for(ada_id).unwrap().place_key, home_pos.key());
+        let mark = loaded
+            .waypoints
+            .iter()
+            .find(|row| row.operator_id == ada_id && row.name_key == "far-home")
+            .unwrap();
+        assert_eq!(mark.place_key, home_pos.key());
+        assert!(mark.note.contains("Deep stacks"));
+        let (label, hint) = describe_place(&home_pos.key());
+        assert!(label.contains("deep Squalor"), "{label}");
+        assert!(hint.contains("not a route"), "{hint}");
+
+        let mut again = WorldState::for_tests();
+        again.install_loaded(loaded.operators, loaded.log);
+        again.install_geography(loaded.geography);
+        again.install_homes(loaded.homes);
+        again.install_waypoints(loaded.waypoints);
+        let back = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let session = back.session_id;
+        again.connect_player(back).unwrap();
+        again.apply(session, "home").unwrap();
+        let home_page = again.view(session).unwrap().overlay.unwrap_or_default();
+        assert!(home_page.contains("Your home"), "{home_page}");
+        assert!(home_page.contains("deep Squalor"), "{home_page}");
+        again.apply(session, "waypoint show far-home").unwrap();
+        let way_page = again.view(session).unwrap().overlay.unwrap_or_default();
+        assert!(way_page.contains("Deep stacks"), "{way_page}");
+        assert!(way_page.contains("not a route"), "{way_page}");
+        // Neighbour still unvisited after restart.
+        assert!(again.geography.region(neighbour.coord_key()).is_none());
+    }
 }

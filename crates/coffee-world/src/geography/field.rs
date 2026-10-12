@@ -4,6 +4,7 @@
 //! Notable landmarks are chosen by a fixed salt of absolute coordinates, so the
 //! same place always yields the same text.
 
+use super::density::UrbanContext;
 use super::generate::LandmarkKind;
 use super::identity::{gate_identity, WildernessPos, GATE_LOCAL_X, GATE_LOCAL_Y};
 use crate::undernet;
@@ -226,19 +227,26 @@ pub fn stacks_after_log() -> &'static str {
 /// Readable label and a way back with existing movement commands.
 pub fn describe_place(place_key: &str) -> (String, String) {
     if let Some(pos) = WildernessPos::parse(place_key) {
+        let urban = UrbanContext::at(pos);
         let label = format!(
-            "Squalor, birth ({}, {}), tile {},{}",
-            pos.identity.origin_x, pos.identity.origin_y, pos.local_x, pos.local_y
+            "Squalor, {}, birth ({}, {}), tile {},{}",
+            urban.familiarity(),
+            pos.identity.origin_x,
+            pos.identity.origin_y,
+            pos.local_x,
+            pos.local_y
         );
         let hint = if pos.identity == gate_identity() {
             gate_return(pos.local_x, pos.local_y)
         } else {
             format!(
-                "Birth region ({}, {}), tile {},{}. The Hub gate is birth (0, 0), tile {},{}.",
+                "Birth region ({}, {}), tile {},{} — {}. The Hub gate is birth (0, 0), tile {},{}. \
+This is not a route.",
                 pos.identity.origin_x,
                 pos.identity.origin_y,
                 pos.local_x,
                 pos.local_y,
+                urban.familiarity(),
                 GATE_LOCAL_X,
                 GATE_LOCAL_Y
             )

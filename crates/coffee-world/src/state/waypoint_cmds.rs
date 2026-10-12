@@ -327,9 +327,14 @@ impl WorldState {
     }
 
     fn wild_dest(&self, from: &str, pos: WildernessPos) -> DestView {
+        let urban = crate::geography::UrbanContext::at(pos);
         let locality = format!(
-            "birth ({}, {}), tile {},{}",
-            pos.identity.origin_x, pos.identity.origin_y, pos.local_x, pos.local_y
+            "{}, birth ({}, {}), tile {},{}",
+            urban.familiarity(),
+            pos.identity.origin_x,
+            pos.identity.origin_y,
+            pos.local_x,
+            pos.local_y
         );
         if let Err(reason) = wild_is_fresh(&self.geography, pos) {
             return DestView {

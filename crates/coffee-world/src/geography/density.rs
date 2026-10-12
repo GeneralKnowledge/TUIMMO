@@ -17,8 +17,17 @@ const GATE_ABS_X: i64 = GATE_LOCAL_X as i64;
 const GATE_ABS_Y: i64 = GATE_LOCAL_Y as i64;
 
 /// Chebyshev bands from the Hub gate.
+///
+/// Distance changes atmosphere and texture frequency, not the underlying
+/// district/block vocabulary. Origin 62 (~992 tiles east) is deep Squalor and
+/// still receives full urban composition — never an empty remote fallback.
 const NEAR_HUB_MAX: i64 = 20;
 const FRINGE_MAX: i64 = 48;
+
+/// Birth cell used by the remote-world acceptance scenario (~1000 tiles east).
+/// Absolute x ≈ `62 * REGION_SIZE` = 992.
+pub const REMOTE_ACCEPTANCE_ORIGIN_X: i32 = 62;
+pub const REMOTE_ACCEPTANCE_ORIGIN_Y: i32 = 0;
 
 /// Authored clinic story — three walkable tiles in the origin region, clear of
 /// the gate, survey stone (7,8), and Ash Plaza metro (2,8).
@@ -416,6 +425,12 @@ impl UrbanContext {
 
     pub fn map_header_district(self) -> String {
         format!("{} / {}", self.district.short(), self.block.name())
+    }
+
+    /// Compact familiarity line for journals, homes, and waypoints.
+    /// Pure presentation — does not require the region to be materialized.
+    pub fn familiarity(self) -> String {
+        format!("{}, {}, {}", self.district.name(), self.block.name(), self.band.label())
     }
 }
 
