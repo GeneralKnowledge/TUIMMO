@@ -10,7 +10,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-`cargo test` covers command parsing, Undernet rules, the SQLite store, the frame codec, SSH connection limits, two simulated clients, and an SSH session that must render the game.
+`cargo test` covers command parsing, Undernet rules, the SQLite store, the frame codec, SSH connection limits, two simulated clients, and an SSH session that must render the game. `geography::explore` measures landmark spacing and reachability without changing the generator. `coffee_server::hub` tests the per-session command bucket (burst 20, refill 8 per second, reject rather than queue).
 
 `examples/minimal-game` prints a scripted walk when stdout is not a terminal:
 

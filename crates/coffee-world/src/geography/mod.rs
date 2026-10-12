@@ -10,6 +10,9 @@ mod identity;
 mod records;
 mod travel;
 
+#[cfg(test)]
+mod explore;
+
 pub use field::{
     closure_inspect_text, describe_place, format_entry, format_overview, format_recent,
     is_survey_tile, landmark_sight, roof_scratch, survey_aliases, survey_closure, survey_finding,

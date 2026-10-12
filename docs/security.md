@@ -16,7 +16,7 @@ Usernames are canonicalised to lowercase. Operator names are a separate display 
 
 The host key is generated on first boot at `data/keys/ssh_host_ed25519` (mode `0600`) with a `.pub` file beside it. Nothing in the repository is a production host key, and there is no default administrative password.
 
-SSH offers password authentication only. Failed attempts are limited per address (gateway) and per username (hub). Commands are limited to about 8 per second with a small burst. Auth replies are delayed so missing accounts do not return faster than a bad password.
+SSH offers password authentication only. Failed attempts are limited per address (gateway) and per username (hub). Each live session has its own command bucket: 20 commands may arrive at once, then the bucket refills at 8 per second, up to that same burst. A command past the limit is rejected with "You are sending commands too quickly." It is not queued, delayed, or applied, and the terminal keeps the previous view with that notice on the prompt. Another operator's bucket is separate. Disconnecting drops the bucket; the next login starts full. Auth replies are delayed so missing accounts do not return faster than a bad password. The limit is left at these numbers because a person walking and reading stays inside them; a script that sends the 21st command in the same instant is what the burst is for.
 
 ## Registration and sessions
 

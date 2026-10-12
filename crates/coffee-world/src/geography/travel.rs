@@ -97,6 +97,13 @@ pub fn effective_tile(pos: WildernessPos, baseline: Tile, geo: &GeographyState) 
             tile.modified = true;
         }
     }
+    // The fence break is packed earth. The generated baseline is left alone, so the
+    // origin fingerprint still reports whatever tile the generator produced here.
+    // A stored terrain modification is shown as recorded; the seam stays walkable.
+    if tile.gate && !tile.modified {
+        tile.terrain = Terrain::Grass;
+        tile.landmark = None;
+    }
     tile
 }
 
@@ -134,7 +141,7 @@ pub fn describe_tile(
     let tile = effective_tile(pos, baseline, geo);
     let title =
         if pos.is_gate() { "The Outskirts".to_string() } else { tile.terrain.label().to_string() };
-    let mut lines = vec![terrain_prose(tile)];
+    let mut lines = vec![terrain_prose(pos, tile, generated, geo)];
     if let Some(kind) = tile.landmark {
         lines.push(kind.prose().to_string());
     }
@@ -200,12 +207,18 @@ pub fn describe_tile(
     }
 }
 
-fn terrain_prose(tile: EffectiveTile) -> String {
+fn terrain_prose(
+    pos: WildernessPos,
+    tile: EffectiveTile,
+    generated: &GeneratedRegion,
+    geo: &GeographyState,
+) -> String {
     if tile.gate {
-        let mut text =
-            "Packed earth and a break in the fencing. The roof array is still a dark shape \
-             behind you. The land ahead is not on any Undernet map."
-                .to_string();
+        let mut text = format!(
+            "Packed earth where the fence breaks. The roof array is a dark shape behind you. \
+             {} city returns to the roof.",
+            gate_opening(pos, generated, geo)
+        );
         if tile.modified {
             text.push_str(
                 "\nSomeone has worked the ground, but the track back to the city remains.",
@@ -280,6 +293,68 @@ epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}
 }
 
 const EDGE_LINES: usize = 20;
+
+/// What a step off the gate actually does, in the same terms movement uses.
+fn gate_opening(pos: WildernessPos, generated: &GeneratedRegion, geo: &GeographyState) -> String {
+    let mut open = Vec::new();
+    let mut water = Vec::new();
+    let mut rock = Vec::new();
+    let mut closed = Vec::new();
+    for dir in [Cardinal::West, Cardinal::North, Cardinal::East, Cardinal::South] {
+        let word = dir.keyword();
+        let Ok((origin_x, origin_y, local_x, local_y)) = step_origin(pos, dir) else {
+            closed.push(word);
+            continue;
+        };
+        if origin_x != pos.identity.origin_x || origin_y != pos.identity.origin_y {
+            closed.push(word);
+            continue;
+        }
+        let here = WildernessPos { identity: pos.identity, local_x, local_y };
+        let baseline = generated
+            .tile(local_x, local_y)
+            .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
+        let neighbor = effective_tile(here, baseline, geo);
+        if neighbor.traversable() {
+            open.push(word);
+        } else {
+            match neighbor.terrain {
+                Terrain::Water => water.push(word),
+                Terrain::Rock => rock.push(word),
+                Terrain::Grass | Terrain::Forest | Terrain::Scrub => closed.push(word),
+            }
+        }
+    }
+    let mut parts = Vec::new();
+    if open.is_empty() {
+        parts.push("No cardinal step leaves the gate.".to_string());
+    } else {
+        parts.push(format!("Open: {}.", join_words(&open)));
+    }
+    if !water.is_empty() {
+        parts.push(format!("Water blocks the way {}.", join_words(&water)));
+    }
+    if !rock.is_empty() {
+        parts.push(format!("Rock blocks the way {}.", join_words(&rock)));
+    }
+    if !closed.is_empty() {
+        parts.push(format!("You cannot go {}.", join_words(&closed)));
+    }
+    parts.join(" ")
+}
+
+fn join_words(words: &[&str]) -> String {
+    match words {
+        [] => String::new(),
+        [one] => (*one).to_string(),
+        [first, second] => format!("{first} and {second}"),
+        _ => {
+            let last = words[words.len() - 1];
+            let rest = &words[..words.len() - 1];
+            format!("{}, and {last}", rest.join(", "))
+        }
+    }
+}
 
 pub fn validate_marker_name(raw: &str) -> Result<String, &'static str> {
     if raw.len() < 2 || raw.len() > 16 {
@@ -375,20 +450,64 @@ pub fn map_symbol_for_structures(structures: &[&Structure]) -> Option<char> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::geography::generate::{generate_region, Terrain};
-    use crate::geography::identity::{gate_identity, gate_position, WildernessPos};
+    use crate::geography::generate::{fingerprint, generate_region, Terrain};
+    use crate::geography::identity::{gate_identity, gate_position, RegionIdentity, WildernessPos};
     use crate::geography::records::{GeographyState, MaterializedRegion, TerrainMod};
     use uuid::Uuid;
 
     #[test]
-    fn gate_overlay_does_not_rewrite_the_baseline() {
+    fn gate_seam_is_packed_earth_and_leaves_the_baseline_alone() {
         let generated = generate_region(gate_identity()).unwrap();
+        assert_eq!(fingerprint(&generated), 0x8812_F1DB_241C_39A1);
         let baseline = generated.tile(8, 8).unwrap();
+        assert_eq!(baseline.terrain, Terrain::Water);
         let geo = GeographyState::default();
         let effective = effective_tile(gate_position(), baseline, &geo);
         assert!(effective.gate);
         assert!(effective.traversable());
-        assert_eq!(effective.terrain, baseline.terrain);
+        assert_eq!(effective.terrain, Terrain::Grass);
+        assert!(effective.landmark.is_none());
+
+        let elsewhere = RegionIdentity { origin_x: 3, origin_y: -2, ..gate_identity() };
+        let other = generate_region(elsewhere).unwrap();
+        let other_base = other.tile(8, 8).unwrap();
+        let other_pos = WildernessPos { identity: elsewhere, local_x: 8, local_y: 8 };
+        let other_effective = effective_tile(other_pos, other_base, &geo);
+        assert!(!other_effective.gate);
+        assert_eq!(other_effective.terrain, other_base.terrain);
+    }
+
+    #[test]
+    fn gate_look_matches_the_only_open_step() {
+        let generated = generate_region(gate_identity()).unwrap();
+        let scene =
+            describe_tile(gate_position(), &generated, &GeographyState::default(), &[], &[]);
+        assert!(scene.description.contains("Open: west"), "{}", scene.description);
+        assert!(
+            scene.description.contains("Water blocks the way north, east, and south"),
+            "{}",
+            scene.description
+        );
+        assert!(scene.description.contains("city returns to the roof"), "{}", scene.description);
+        assert!(!scene.description.contains("land ahead"), "{}", scene.description);
+        assert!(scene.objects.iter().any(|(keyword, _)| keyword == "ground"));
+        assert!(scene.objects.iter().all(|(keyword, _)| keyword != "water"));
+        let west = map_symbol(&scene.map, 7, 8);
+        let north = map_symbol(&scene.map, 8, 9);
+        let east = map_symbol(&scene.map, 9, 8);
+        let south = map_symbol(&scene.map, 8, 7);
+        assert_ne!(west, '~', "west of the gate is the opening");
+        assert_ne!(west, '^');
+        assert_eq!(north, '~');
+        assert_eq!(east, '~');
+        assert_eq!(south, '~');
+        assert_eq!(map_symbol(&scene.map, 8, 8), '@');
+    }
+
+    fn map_symbol(map: &str, local_x: u8, local_y: u8) -> char {
+        let grid: Vec<&str> = map.lines().skip(1).take(16).collect();
+        let row = grid[15 - usize::from(local_y)];
+        row.chars().nth(usize::from(local_x)).unwrap_or('?')
     }
 
     #[test]

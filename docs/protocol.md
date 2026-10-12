@@ -57,6 +57,8 @@ The JSON object is:
 
 The reference TUI treats snapshots as authoritative and ignores `events`. Both are sent so a simpler client can follow the feed.
 
+`GameView` may include `finding`, the latest inspection for that session, and `overlay`, for help, the map, or the journal. Both are optional. Older snapshots that omit `finding` are read as empty. The place text stays in `description`. Inspection is not a new feed channel: the private system line is still recorded, and `finding` is what the terminal keeps on screen.
+
 ## Sessions
 
 A token is 64 hex characters, stored only in the hub. Restarting the server drops every token. The account, operator, and location remain, so the next `login` restores them.

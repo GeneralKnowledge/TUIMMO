@@ -20,7 +20,7 @@ The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
 
 `map` inside the city prints this graph with your room marked. The archive door is hidden until you are carrying a cipher plate.
 
-From the Roof Array, `outskirts` steps through a break in the fencing onto generated land. `map` there draws the 16 by 16 region you are standing in. `city`, from the gate tile, returns to the roof. The ten rooms are unchanged. The land beyond them is described in [world architecture](world-architecture.md).
+From the Roof Array, `outskirts` steps through a break in the fencing onto the gate. The gate is packed earth. West is open ground. Water blocks north, east, and south, and the description says so. `map` draws the 16 by 16 region you are standing in. `city`, from the gate tile, returns to the roof. The ten rooms are unchanged. The land beyond them is described in [world architecture](world-architecture.md).
 
 ## Commands
 
@@ -104,7 +104,7 @@ Spectators, if a future mode adds them, can look and read. They cannot move, ins
 
 Ids such as `survey-mark` or `lm:undernet:1:stone:0:0:5:13` name the discovery, not the database row. Two operators can record the same id. `journal read` only opens the caller's own entry. A missing id, including another operator's, answers `No journal entry matches`.
 
-Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator.
+Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator. The place description stays put. The same inspection is kept in a `noticed` panel (and still copied to your private feed) until you inspect something else, so a later `say` or step does not hide it. `journal` opens in a notes panel beside that place. `look` closes the notes and returns to the place alone. Help, the map, and `who` use the same return.
 
 A journal entry is not a sign, a trail post, or a region visit. `region_discoveries` rows with kind `entered` are shared history of who first opened a birth cell. Kind `field` is the personal note. Signs and structures stay world-visible. Journal text is not copied into chat, settlement boards, or another operator's journal.
 
