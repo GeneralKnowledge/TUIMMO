@@ -118,11 +118,12 @@ A repeatable walk of version 1, including that seam, is locked in `geography::ex
 | `world_structures` | Structures per tile and kind (`marker`, `cabin`, `workshop`, `sign`, `trail`). Unique on `(region_id, local_x, local_y, kind)`. Enterables carry `access`, `interior_place`, and `share` (`private` / `shared` / `communal`). `owner_id` is attribution, not a foreign key, so history can outlive an account. |
 | `terrain_modifications` | One override per tile. The baseline is not copied. |
 | `region_discoveries` | Visits and personal field notes. Entering a region records an `entered` discovery. A player's journal is additional `field` rows in the same table. |
+| `waypoints` | One operator's names for places they have stood. The destination is a place key, not a stored map. |
 | `world_connections` | Explicit links. Unique on `(from_place, keyword)`. |
 
 Indexes cover atlas placement, structure owner, discoveries by region, and connections by origin place.
 
-`Store::seed` still upserts static locations and replaces static exits. It does not touch the five world tables. A close-and-reopen cycle reloads regions, structures, modifications, discoveries, connections, accounts, and operator positions.
+`Store::seed` still upserts static locations and replaces static exits. It does not touch the world tables or waypoints. A close-and-reopen cycle reloads regions, structures, modifications, discoveries, connections, waypoints, accounts, and operator positions.
 
 Materializing a region is ordered before the structure, modification, or discovery that references it, inside the same transaction. A failed commit restores the operator, the log, and the geography snapshot. A command that returns `Err` does not mutate first.
 
@@ -159,6 +160,7 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 - choose a generation version or seed
 - write another player's `owner_id`
 - read another player's field journal (`journal read` only returns the caller's rows)
+- read or edit another operator's waypoint (`waypoint` commands are scoped to the caller)
 - overwrite a generated grid except through `apply_terrain_mod`, which records an override
 - open an operating-system shell (the SSH gateway still refuses `exec`)
 
@@ -178,6 +180,8 @@ Every persistent change is validated in `WorldState` and committed by the hub. A
 | `region_id` | Now nullable. Static-room notes (the roof, the Old Relay) have no region row. |
 
 A unique index on `(actor_id, content_key)` for `kind = 'field'` makes recording idempotent. Visit rows are not part of that index. Field notes do not write terrain, landmarks, or another player's rows. A failed commit rolls the note back with the rest of the transaction.
+
+`0007_waypoints.sql` adds `waypoints`, unique on `(operator_id, name_key)` and referencing `operators`. A row stores the display name, the normalized key, the place key, and an optional private note. It does not store a region grid. The same coordinates in another epoch or generation version are a different place key. If that key no longer resolves, the row is kept and is not rewritten onto a new tile. Showing a waypoint does not materialize a region. Hub rollback snapshots waypoints with the rest of the world.
 
 The unfiled-survey stone at birth `(0, 0)` tile `(7, 8)` is presentation layered on the version 1 tile. `generate_region` is unchanged, and the origin fingerprint stays `0x8812_F1DB_241C_39A1`. Landmark inspection variants are chosen by a fixed salt of absolute coordinates in `geography/field.rs`. That salt is not a generator input.
 

@@ -38,7 +38,7 @@ The TUI renders `GameView` and sends command lines. It does not decide whether a
 
 Hand-authored locations and exits are defined in `coffee-world` and upserted on boot. That reseed updates location text and replaces the static exit graph. It does not touch procedural tables.
 
-The database is the record of accounts, operators, positions, flags, items, the recent message log (capped at 200), and persistent geography: materialized regions, structures, terrain modifications, discoveries, and explicit connections. Generated tiles are not stored. A command does not rewrite the whole world.
+The database is the record of accounts, operators, positions, flags, items, the recent message log (capped at 200), personal waypoints, and persistent geography: materialized regions, structures, terrain modifications, discoveries, and explicit connections. Generated tiles are not stored. A command does not rewrite the whole world.
 
 Migrations live in `crates/coffee-world/migrations` and run when the store opens. `0001_init.sql` is the original schema. `0002_world.sql` adds the geography tables. A new `data/` directory is created on first start.
 

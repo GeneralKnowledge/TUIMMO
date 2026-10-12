@@ -28,7 +28,7 @@ Tokens are random 128-bit values held in memory. A restart invalidates them. Ide
 
 ## Data
 
-State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, and log back. The server does not rewrite every location on each command.
+State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, waypoints, and log back. The server does not rewrite every location on each command.
 
 Frames are capped at 32 KiB. Session and connection counts are capped. Push queues drop when a client falls behind.
 
@@ -45,6 +45,7 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 - Settlement membership is one per player. Private settlements are not listed to outsiders. Disband never deletes cabins, workshops, or signs; it clears links and reverts settlement share to private.
 - Invitations are addressed to a specific invitee. `settle invites` only lists that player's pending invites. Expired invites cannot be accepted.
 - Noticeboard posts (Coffee Shop, settlement, and workshop) are bounded in length, rate, retained count, and lifetime.
+- Waypoint names and notes are private to the owning operator. Commands look the row up by that operator's id, not by a client-supplied record id. The note is not written into public chat, signs, boards, or another operator's list. A saved place key does not let someone else read the note.
 
 ## What you should still do
 

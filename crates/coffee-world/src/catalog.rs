@@ -138,6 +138,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
+            name: "waypoint",
+            aliases: &[],
+            summary: "Save a private name for where you are standing",
+            usage: "waypoint [add|list|show|note|remove]",
+            args: ArgMode::Rest { required: false },
+        },
+        CommandSpec {
             name: "mark",
             aliases: &[],
             summary: "Leave a named marker on this outskirts tile",

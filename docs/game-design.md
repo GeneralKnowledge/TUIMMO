@@ -44,6 +44,7 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto the g
 | `inventory` | `inv`, `i` | What you carry |
 | `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, landmark, or item |
 | `journal [recent\|read <id>\|record]` | | Private field journal of authored discoveries |
+| `waypoint [add\|list\|show\|note\|remove]` | | Private name and note for where you are standing |
 | `mark <name>` | | Leave a named marker on the outskirts tile |
 | `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
 | `enter <name>` / `leave` | | Enter or leave a cabin or workshop |
@@ -107,6 +108,20 @@ Ids such as `survey-mark` or `lm:undernet:1:stone:0:0:5:13` name the discovery, 
 Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator. The place description stays put. The same inspection is kept in a `noticed` panel (and still copied to your private feed) until you inspect something else, so a later `say` or step does not hide it. `journal` opens in a notes panel beside that place. `look` closes the notes and returns to the place alone. Help, the map, and `who` use the same return.
 
 A journal entry is not a sign, a trail post, or a region visit. `region_discoveries` rows with kind `entered` are shared history of who first opened a birth cell. Kind `field` is the personal note. Signs and structures stay world-visible. Journal text is not copied into chat, settlement boards, or another operator's journal.
+
+## Waypoints
+
+A waypoint answers where a place was. A journal entry answers what it meant. Either can exist without the other, and removing one leaves the other.
+
+- `waypoint` explains the commands.
+- `waypoint add <name>` saves the server's current place under a name you choose. The client does not send coordinates.
+- `waypoint list` shows your names. `waypoint show <name>` adds a return hint, a private note, and the journal ids recorded at that same place.
+- `waypoint note <name> <text>` replaces the note only. Notes are at most 160 characters.
+- `waypoint remove <name>` deletes your mark. It does not delete the room, the landmark, or a journal entry.
+
+Names are 2–24 characters: a letter, then letters, digits, or hyphens. Matching ignores case and keeps the typed spelling. A second `waypoint add` of the same name does not move the mark; remove it first. Two operators may use the same name. Neither can read the other's note.
+
+Hints walk open tiles inside the current birth cell. Water and rock are not steps. Another birth cell is named by its offset and called out as not a route. A place that no longer matches its epoch or generator version stays in the list as unavailable and is not pointed at a different tile. `look` returns to the place. Nothing in these commands moves you.
 
 ## A short discovery
 

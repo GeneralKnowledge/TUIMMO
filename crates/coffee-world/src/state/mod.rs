@@ -24,11 +24,13 @@ use crate::geography::{
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::undernet::{self, ExitDef, ObjectDef};
+use crate::waypoint::Waypoint;
 
 mod building_cmds;
 mod journal_cmds;
 mod settlement_cmds;
 mod social_cmds;
+mod waypoint_cmds;
 
 /// Result of a state transition, including the rows that must be committed.
 #[derive(Clone, Debug)]
@@ -58,6 +60,7 @@ pub struct WorldState {
     pub(crate) geography: GeographyState,
     pub(crate) social: crate::social::SocialState,
     pub(crate) settlements: crate::settlement::SettlementState,
+    pub(crate) waypoints: Vec<Waypoint>,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
     pub(crate) now_ms: u64,
@@ -84,6 +87,7 @@ impl WorldState {
             geography: GeographyState::default(),
             social: crate::social::SocialState::default(),
             settlements: crate::settlement::SettlementState::default(),
+            waypoints: Vec::new(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -139,6 +143,18 @@ impl WorldState {
 
     pub fn restore_settlements(&mut self, settlements: crate::settlement::SettlementState) {
         self.settlements = settlements;
+    }
+
+    pub fn install_waypoints(&mut self, waypoints: Vec<Waypoint>) {
+        self.waypoints = waypoints;
+    }
+
+    pub fn waypoint_snapshot(&self) -> Vec<Waypoint> {
+        self.waypoints.clone()
+    }
+
+    pub fn restore_waypoints(&mut self, waypoints: Vec<Waypoint>) {
+        self.waypoints = waypoints;
     }
 
     /// Physical region chat key for the player's current place.
@@ -1863,6 +1879,7 @@ fn handler(name: &str) -> Option<Handler> {
         "inventory" => WorldState::cmd_inventory,
         "inspect" => WorldState::cmd_inspect,
         "journal" => WorldState::cmd_journal,
+        "waypoint" => WorldState::cmd_waypoint,
         "mark" => WorldState::cmd_mark,
         "build" => WorldState::cmd_build,
         "enter" => WorldState::cmd_enter,

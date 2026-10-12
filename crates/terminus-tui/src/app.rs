@@ -724,6 +724,9 @@ fn contextual_candidates(view: &GameView, command: &str) -> Vec<String> {
         "help" | "?" => view.commands.iter().map(|hint| hint.name.clone()).collect(),
         "who" => vec!["here".into(), "all".into()],
         "journal" => vec!["recent".into(), "read".into(), "record".into()],
+        "waypoint" => {
+            vec!["add".into(), "list".into(), "show".into(), "note".into(), "remove".into()]
+        }
         _ => Vec::new(),
     }
 }
@@ -822,6 +825,28 @@ mod tests {
         assert!(text.contains("survey-mark"), "{text}");
         assert!(text.contains("look returns"), "{text}");
         assert!(text.contains("relay insulation"), "{text}");
+    }
+
+    #[test]
+    fn waypoint_overlay_keeps_the_place_on_screen() {
+        let mut view = sample_view();
+        view.overlay = Some(
+            "Waypoint: marked-stone\n\
+             Destination: open grass\n\
+             Where: birth (0, 0), tile 7,8\n\
+             Note: fiber under the stone\n\
+             Direction: From the Roof Array, go outskirts. From the city gate: west.\n\
+             `look` returns to the place."
+                .into(),
+        );
+        let app = App::play(Theme::neutral(), view);
+        let text = draw(&app, 100, 32);
+        assert!(text.contains("The Coffee Shop"), "{text}");
+        assert!(text.contains("Steam and terminals"), "{text}");
+        assert!(text.contains("Waypoint: marked-stone"), "{text}");
+        assert!(text.contains("Destination: open grass"), "{text}");
+        assert!(text.contains("fiber under the stone"), "{text}");
+        assert!(text.contains("look returns"), "{text}");
     }
 
     #[test]
