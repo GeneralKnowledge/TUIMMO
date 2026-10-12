@@ -1472,7 +1472,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let op_id = PlayerId::new();
         let account_id = Uuid::new_v4();
         let operator = Operator {
@@ -1514,7 +1514,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
 
         let mut world = WorldState::for_tests();
         let op_id = PlayerId::new();
@@ -1570,7 +1570,7 @@ mod tests {
 
         drop(store);
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let loaded = store.load().await.unwrap();
         assert_eq!(loaded.operators.len(), 1);
         assert_eq!(loaded.operators[0].username, "ada");
@@ -1626,7 +1626,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
 
         let mut world = WorldState::for_tests();
         let ada_id = PlayerId::new();
@@ -1683,7 +1683,7 @@ mod tests {
 
         drop(store);
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let loaded = store.load().await.unwrap();
         assert!(loaded.social.are_friends(ada_id, bob_id));
         assert_eq!(loaded.operators.iter().find(|op| op.id == ada_id).unwrap().bio, "Homesteader");
@@ -1719,7 +1719,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
 
         let mut world = WorldState::for_tests();
         let ada_id = PlayerId::new();
@@ -1775,7 +1775,7 @@ mod tests {
 
         drop(store);
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let loaded = store.load().await.unwrap();
         assert_eq!(loaded.settlements.settlements.len(), 1);
         assert_eq!(loaded.settlements.settlements[0].name, "Havenhold");
@@ -2243,7 +2243,7 @@ mod tests {
         drop(store);
 
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let loaded = store.load().await.unwrap();
         let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
         assert_eq!(ada.location_id, "roof-array");
@@ -2285,7 +2285,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let ada_id = PlayerId::new();
         let bob_id = PlayerId::new();
         let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "ada");
@@ -2412,7 +2412,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let ada_id = PlayerId::new();
         let bob_id = PlayerId::new();
         let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
@@ -2504,7 +2504,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("coffee.sqlite");
         let store = Store::open(&path).await.unwrap();
-        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
         let ada_id = PlayerId::new();
         let bob_id = PlayerId::new();
         let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");

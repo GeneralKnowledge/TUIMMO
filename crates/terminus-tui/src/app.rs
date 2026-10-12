@@ -848,10 +848,10 @@ mod tests {
         let mut view = sample_view();
         view.overlay = Some(
             "Waypoint: marked-stone\n\
-             Destination: open grass\n\
+             Destination: open street\n\
              Where: birth (0, 0), tile 7,8\n\
              Note: fiber under the stone\n\
-             Direction: From the Roof Array, go outskirts. From the city gate: west.\n\
+             Direction: From the Roof Array, go outskirts. From the Hub gate: west.\n\
              `look` returns to the place."
                 .into(),
         );
@@ -860,7 +860,7 @@ mod tests {
         assert!(text.contains("The Coffee Shop"), "{text}");
         assert!(text.contains("Steam and terminals"), "{text}");
         assert!(text.contains("Waypoint: marked-stone"), "{text}");
-        assert!(text.contains("Destination: open grass"), "{text}");
+        assert!(text.contains("Destination: open street"), "{text}");
         assert!(text.contains("fiber under the stone"), "{text}");
         assert!(text.contains("look returns"), "{text}");
     }

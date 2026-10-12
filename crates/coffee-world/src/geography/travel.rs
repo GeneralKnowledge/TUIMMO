@@ -8,6 +8,7 @@ use super::identity::{shift, IdentityError, WildernessPos, REGION_SIZE};
 use super::records::{
     GeographyState, Structure, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
+use crate::subway;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Cardinal {
@@ -56,19 +57,21 @@ impl Cardinal {
     }
 }
 
-/// What a player actually walks on: baseline, plus mods, plus the city seam.
+/// What a player actually walks on: baseline, plus mods, plus authored seams.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EffectiveTile {
     pub terrain: Terrain,
     pub landmark: Option<LandmarkKind>,
     pub gate: bool,
+    /// Authored subway stair on the surface. Stays walkable like the city gate.
+    pub metro: bool,
     pub modified: bool,
 }
 
 impl EffectiveTile {
-    /// The gate stays walkable so a terrain edit cannot seal the city.
+    /// The gate and metro stairs stay walkable so a terrain edit cannot seal them.
     pub const fn traversable(self) -> bool {
-        self.gate || self.terrain.traversable()
+        self.gate || self.metro || self.terrain.traversable()
     }
 
     pub const fn block_reason(self) -> Option<&'static str> {
@@ -76,8 +79,8 @@ impl EffectiveTile {
             return None;
         }
         Some(match self.terrain {
-            Terrain::Water => "Water blocks the way",
-            Terrain::Rock => "Rock blocks the way",
+            Terrain::Water => "Floodwater blocks the way",
+            Terrain::Rock => "A sealed structure blocks the way",
             Terrain::Grass | Terrain::Forest | Terrain::Scrub => "You cannot go that way",
         })
     }
@@ -88,6 +91,7 @@ pub fn effective_tile(pos: WildernessPos, baseline: Tile, geo: &GeographyState) 
         terrain: baseline.terrain,
         landmark: baseline.landmark,
         gate: pos.is_gate(),
+        metro: subway::entrance_at(pos).is_some(),
         modified: false,
     };
     if let Some(region) = geo.region(pos.identity.coord_key()) {
@@ -101,6 +105,11 @@ pub fn effective_tile(pos: WildernessPos, baseline: Tile, geo: &GeographyState) 
     // origin fingerprint still reports whatever tile the generator produced here.
     // A stored terrain modification is shown as recorded; the seam stays walkable.
     if tile.gate && !tile.modified {
+        tile.terrain = Terrain::Grass;
+        tile.landmark = None;
+    }
+    // Metro stairs are concrete landings. Baseline fingerprint is unchanged.
+    if tile.metro && !tile.gate && !tile.modified {
         tile.terrain = Terrain::Grass;
         tile.landmark = None;
     }
@@ -139,9 +148,23 @@ pub fn describe_tile(
         .tile(pos.local_x, pos.local_y)
         .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
     let tile = effective_tile(pos, baseline, geo);
-    let title =
-        if pos.is_gate() { "The Outskirts".to_string() } else { tile.terrain.label().to_string() };
+    let title = if pos.is_gate() {
+        "The Squalor".to_string()
+    } else if let Some(entrance) = subway::entrance_at(pos) {
+        entrance.surface_label.to_string()
+    } else {
+        tile.terrain.label().to_string()
+    };
     let mut lines = vec![terrain_prose(pos, tile, generated, geo)];
+    if tile.metro {
+        if let Some(entrance) = subway::entrance_at(pos) {
+            lines.push(format!(
+                "A municipal stair sinks into shadow. Dust on the railings is undisturbed. \
+`go {}` enters {}. `inspect stair` reads the entrance.",
+                entrance.down_keyword, entrance.station_label
+            ));
+        }
+    }
     if let Some(kind) = tile.landmark {
         lines.push(kind.prose().to_string());
     }
@@ -185,6 +208,11 @@ pub fn describe_tile(
         format!("tile {},{}", pos.local_x, pos.local_y),
     ];
     let mut objects = vec![(tile.terrain.keyword().to_string(), tile.terrain.label().to_string())];
+    if tile.metro {
+        objects.push(("stair".into(), "subway stair".into()));
+        objects.push(("metro".into(), "subway entrance".into()));
+        objects.push(("entrance".into(), "subway entrance".into()));
+    }
     if let Some(kind) = tile.landmark {
         objects.push((kind.keyword().to_string(), kind.name().to_string()));
     }
@@ -215,23 +243,28 @@ fn terrain_prose(
 ) -> String {
     if tile.gate {
         let mut text = format!(
-            "Packed earth where the fence breaks. The roof array is a dark shape behind you. \
-             {} city returns to the roof.",
+            "Broken paving where the Hub fence fails. The Roof Array is a dark shape behind you. \
+Beyond it, abandoned towers stretch without an end you can trust. \
+{} `city` returns to the roof.",
             gate_opening(pos, generated, geo)
         );
         if tile.modified {
             text.push_str(
-                "\nSomeone has worked the ground, but the track back to the city remains.",
+                "\nSomeone has worked the ground, but the track back to the Hub remains.",
             );
         }
         return text;
     }
     let base = match tile.terrain {
-        Terrain::Grass => "Open grass, bent by weather that still smells like the city.",
-        Terrain::Forest => "Trees stand close enough to slow you. The wood would take a saw.",
-        Terrain::Scrub => "Low scrub and scattered wire-grass. Something in it could be salvaged.",
-        Terrain::Water => "Dark water. There is no footing.",
-        Terrain::Rock => "Broken rock. There is no footing.",
+        Terrain::Grass => {
+            "Open street and cracked courtyard. Wind still carries the Hub's dust this far."
+        }
+        Terrain::Forest => "Derelict residential towers crowd the lane. Walkways sag between them.",
+        Terrain::Scrub => {
+            "Rubble yard and stripped shopfronts. Cable and sheet metal wait to be claimed."
+        }
+        Terrain::Water => "A flooded cut. There is no footing.",
+        Terrain::Rock => "A sealed or collapsed structure. There is no footing.",
     };
     if tile.modified {
         format!("{base}\nThe ground here has been changed.")
@@ -270,6 +303,8 @@ fn render_map(
                     '*'
                 } else if tile.gate {
                     '+'
+                } else if tile.metro {
+                    'm'
                 } else {
                     tile.terrain.symbol()
                 }
@@ -280,10 +315,10 @@ fn render_map(
     }
     format!(
         "\
-epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}
+epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}  surface
 {}
-@ you  + city gate  * landmark  M marker  C cabin  S sign  T trail
-. grass  t trees  , scrub  ~ water  ^ rock",
+@ you  + Hub gate  m metro  * landmark  M marker  C cabin  S sign  T trail
+. street  t towers  , rubble  ~ flood  ^ sealed",
         pos.identity.epoch_id,
         pos.identity.origin_x,
         pos.identity.origin_y,
@@ -332,10 +367,10 @@ fn gate_opening(pos: WildernessPos, generated: &GeneratedRegion, geo: &Geography
         parts.push(format!("Open: {}.", join_words(&open)));
     }
     if !water.is_empty() {
-        parts.push(format!("Water blocks the way {}.", join_words(&water)));
+        parts.push(format!("Floodwater blocks the way {}.", join_words(&water)));
     }
     if !rock.is_empty() {
-        parts.push(format!("Rock blocks the way {}.", join_words(&rock)));
+        parts.push(format!("Sealed structures block the way {}.", join_words(&rock)));
     }
     if !closed.is_empty() {
         parts.push(format!("You cannot go {}.", join_words(&closed)));
@@ -387,15 +422,24 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "west"
             | "city"
             | "outskirts"
+            | "squalor"
             | "ground"
             | "trees"
+            | "blocks"
             | "water"
+            | "flood"
             | "rock"
+            | "sealed"
             | "scrub"
+            | "rubble"
             | "spring"
             | "stone"
             | "mast"
             | "milepost"
+            | "metro"
+            | "surface"
+            | "stair"
+            | "entrance"
             | "enter"
             | "leave"
             | "cabin"
@@ -484,11 +528,11 @@ mod tests {
             describe_tile(gate_position(), &generated, &GeographyState::default(), &[], &[]);
         assert!(scene.description.contains("Open: west"), "{}", scene.description);
         assert!(
-            scene.description.contains("Water blocks the way north, east, and south"),
+            scene.description.contains("Floodwater blocks the way north, east, and south"),
             "{}",
             scene.description
         );
-        assert!(scene.description.contains("city returns to the roof"), "{}", scene.description);
+        assert!(scene.description.contains("returns to the roof"), "{}", scene.description);
         assert!(!scene.description.contains("land ahead"), "{}", scene.description);
         assert!(scene.objects.iter().any(|(keyword, _)| keyword == "ground"));
         assert!(scene.objects.iter().all(|(keyword, _)| keyword != "water"));
@@ -584,6 +628,6 @@ mod tests {
         assert!(scene.map.contains("birth (0, 0)"));
         assert!(scene.map.contains("atlas (40, -3)"));
         assert!(scene.map.contains('@'));
-        assert_eq!(scene.title, "The Outskirts");
+        assert_eq!(scene.title, "The Squalor");
     }
 }

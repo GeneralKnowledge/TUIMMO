@@ -115,6 +115,7 @@ const LOCATIONS: [LocationDef; 10] = [
         id: "coffee-shop",
         name: "The Coffee Shop",
         description: "Steam, cheap ceramic, and a row of terminals that still boot. \
+The Coffee Shop sits in the Hub — the last inhabited core after the X Disaster emptied most of the city. \
 Operators treat the shop as neutral ground. The windows look onto wet neon, and a stair behind the counter climbs toward the roof.",
         objects: &[
             ObjectDef {
@@ -137,7 +138,8 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "neon-alley",
         name: "Neon Alley",
-        description: "A service alley between the shop and the exchange. Signage buzzes. Rain collects in a gutter that smells like hot dust.",
+        description: "A service alley between the shop and the exchange, still inside the Hub. \
+Signage buzzes. Rain collects in a gutter that smells like hot dust and distant fires quenched decades ago.",
         objects: &[ObjectDef {
             keyword: "poster",
             aliases: &["wall"],
@@ -149,7 +151,9 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "exchange",
         name: "The Exchange",
-        description: "A trading floor gone half-dark. A few screens still scroll prices nobody here can settle. People come for rumours, not fills.",
+        description: "A trading floor gone half-dark in the Hub's commercial spine. \
+A few screens still scroll prices nobody here can settle. People come for rumours, not fills. \
+Records of what failed during the X Disaster are incomplete; nobody claims a full account.",
         objects: &[ObjectDef {
             keyword: "ticker",
             aliases: &["screens"],
@@ -161,7 +165,8 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "stack-market",
         name: "Stack Market",
-        description: "Stalls built from server racks sell cables, batteries, and stories. The awnings are foil blankets.",
+        description: "Stalls built from server racks sell cables, batteries, and stories in a Hub arcade that never fully closed. \
+The awnings are foil blankets. Beyond the Hub fence, the Squalor's towers stand empty.",
         objects: &[ObjectDef {
             keyword: "stall",
             aliases: &["rack"],
@@ -173,7 +178,8 @@ Use `board` to read them, `board post <text>` to leave one, or `board remove <id
     LocationDef {
         id: "service-corridor",
         name: "Service Corridor",
-        description: "A maintenance hall under the exchange. Cable trays run overhead. One hatch in the floor has been forced and then abandoned.",
+        description: "A municipal maintenance hall under the exchange. Cable trays run overhead. \
+One hatch in the floor has been forced and then abandoned. Utility marks still name floors the public maps no longer list.",
         objects: &[ObjectDef {
             keyword: "panel",
             aliases: &["hatch"],
@@ -186,7 +192,8 @@ The stroke misses the end of the line, where B-4 is still readable.",
     LocationDef {
         id: "abandoned-exchange",
         name: "The Abandoned Exchange",
-        description: "The lower floor. Desks are shoved aside and the carpet is ash-coloured. A single terminal still has power.",
+        description: "The lower floor of a derelict commercial complex. Desks are shoved aside and the carpet is ash-coloured. \
+A single terminal still has power. Whatever emptied this floor after the X Disaster was never filed cleanly.",
         objects: &[ObjectDef {
             keyword: "terminal",
             aliases: &["screen", "computer"],
@@ -198,7 +205,8 @@ The stroke misses the end of the line, where B-4 is still readable.",
     LocationDef {
         id: "cooling-tunnels",
         name: "Cooling Tunnels",
-        description: "Round concrete and a constant fan-hum. Condensate drips in time. The tunnel runs from the alley toward an old communications node.",
+        description: "Round concrete and a constant fan-hum — Hub utility tunnels that still move air. \
+Condensate drips in time. The passage runs from the alley toward an obsolete municipal relay.",
         objects: &[ObjectDef {
             keyword: "grate",
             aliases: &["fan"],
@@ -210,7 +218,9 @@ The stroke misses the end of the line, where B-4 is still readable.",
     LocationDef {
         id: "old-relay",
         name: "The Old Relay",
-        description: "A derelict communications node. Racks stand open. One relay sled is still seated, its cipher plate latched but loose. The dish cable is scuffed.",
+        description: "An obsolete municipal communications relay. Racks stand open. \
+One relay sled is still seated, its cipher plate latched but loose. The dish cable is scuffed. \
+The facility outlived the crews that staffed it before the city contracted to the Hub.",
         objects: &[
             ObjectDef {
                 keyword: "relay",
@@ -231,7 +241,8 @@ The stroke misses the end of the line, where B-4 is still readable.",
     LocationDef {
         id: "black-archive",
         name: "The Black Archive",
-        description: "A quiet room of sealed stacks. The air is dry and the lights are low. You should not be able to hear the city from here, but you can.",
+        description: "A sealed archive whose precise history remains uncertain. The air is dry and the lights are low. \
+You should not be able to hear the Hub from here, but you can. What was locked away before — or after — the X Disaster is not labelled for visitors.",
         objects: &[ObjectDef {
             keyword: "stacks",
             aliases: &["shelves", "archive"],
@@ -243,12 +254,15 @@ The stroke misses the end of the line, where B-4 is still readable.",
     LocationDef {
         id: "roof-array",
         name: "Roof Array",
-        description: "The shop's roof. Antennae and a folding chair. The city is a circuit of wet light, and a break in the fencing opens onto the outskirts. The stair back down smells like coffee. Fresh scratches mark the tape on the mast.",
+        description: "The shop's roof at the Hub's edge. Antennae and a folding chair. \
+Beyond the fence, the Squalor — abandoned towers, dark streets, and empty walkways — stretches without a visible end. \
+A break in the fencing opens onto that urban wilderness. The stair back down smells like coffee. Fresh scratches mark the tape on the mast.",
         objects: &[ObjectDef {
             keyword: "antenna",
             aliases: &["array", "mast"],
             name: "antenna",
-                description: "The mast is lashed with tape. It still points at the old relay, a few blocks of rooftops away. Under the newest wrap, a scratch reads: one step west of the gate. The mark repeats. `journal record` keeps a field note.",
+            description: "The mast is lashed with tape. It still points at the old relay, a few blocks of Hub rooftops away. \
+Under the newest wrap, a scratch reads: one step west of the gate. The mark repeats. `journal record` keeps a field note.",
             grant: None,
         }],
     },

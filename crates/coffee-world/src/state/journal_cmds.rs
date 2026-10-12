@@ -366,7 +366,7 @@ mod tests {
         world.apply(ada, "journal record").unwrap();
         world.apply(ada, "journal read survey-mark").unwrap();
         let entry = overlay(&world, ada);
-        assert!(entry.contains("From the city gate: west."));
+        assert!(entry.contains("From the Hub gate: west."));
         assert!(entry.contains(&survey_position().key()));
         assert!(entry.contains("Repeated mark"));
 
@@ -452,18 +452,21 @@ mod tests {
     #[test]
     fn landmark_inspections_are_deterministic_and_idempotent() {
         let region = generate_region(gate_identity()).unwrap();
-        assert_eq!(LandmarkKind::Milepost.prose(), "An old milepost. The number has worn off.");
+        assert_eq!(
+            LandmarkKind::Milepost.prose(),
+            "An old district post. The sector number has worn off."
+        );
         assert_eq!(
             LandmarkKind::FallenMast.prose(),
-            "A fallen antenna mast lies half-buried in the dirt."
+            "A fallen antenna mast lies across a broken walkway."
         );
         assert_eq!(
             LandmarkKind::StandingStone.prose(),
-            "A standing stone, older than the city, marks the spot."
+            "A civic monument, plaque gone, still marks the corner."
         );
         assert_eq!(
             LandmarkKind::Spring.prose(),
-            "A spring leaks clear water from a crack in the ground."
+            "A hydrant leaks into a cracked curb. The water is still cold."
         );
         let mut notable = None;
         let mut ordinary = None;

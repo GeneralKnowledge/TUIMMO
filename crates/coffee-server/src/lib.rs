@@ -85,7 +85,7 @@ pub async fn start(config: ServerConfig) -> anyhow::Result<Running> {
     let store =
         Store::open(&db_path).await.with_context(|| format!("open {}", db_path.display()))?;
     store
-        .seed(coffee_world::undernet::locations(), &coffee_world::undernet::all_exits())
+        .seed(&coffee_world::seed_locations(), &coffee_world::seed_exits())
         .await
         .context("seed world")?;
     let loaded = store.load().await.context("load world")?;
@@ -152,7 +152,7 @@ pub async fn create_account(
         .map_err(|err| anyhow::anyhow!(err))?;
     let db_path = data_dir.join("coffee.sqlite");
     let store = Store::open(&db_path).await?;
-    store.seed(coffee_world::undernet::locations(), &coffee_world::undernet::all_exits()).await?;
+    store.seed(&coffee_world::seed_locations(), &coffee_world::seed_exits()).await?;
     let account_id = Uuid::new_v4();
     let operator_id = PlayerId::new();
     let operator = starter_operator(operator_id, account_id, &username, &operator_name);

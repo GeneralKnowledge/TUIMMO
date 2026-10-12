@@ -2,6 +2,8 @@
 
 This document records the geography that existed before this milestone, then the model that now sits beside it. The generator creates the baseline. Players create the history. Terminus is only the way they inhabit it.
 
+For the megacity re-theme (Hub / Squalor / X Disaster) and the subway vertical slice (static stations, surface seams, eight-times hop), see [setting and subway](setting-and-subway.md). Player-facing labels for terrain and landmarks are urban; generation version `1`, terrain tokens, and the origin fingerprint are unchanged.
+
 ## Assessment of the starting architecture
 
 Coffee.shop was one process. `WorldState` implemented `terminus_core::Game`. `Hub` owned that state and applied one login, command, or disconnect at a time. A successful command returned a `PersistOp` list. The hub committed that list in one SQLite transaction and, on failure, restored the in-memory operator and message log.

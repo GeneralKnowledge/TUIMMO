@@ -23,8 +23,11 @@ use crate::geography::{
     OUTSKIRTS_FROM, OUTSKIRTS_KEYWORD, REGION_SIZE, SHARE_PRIVATE, SURVEY_MARK_FLAG, WORKSHOP_KIND,
 };
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
+use crate::subway::{self, MetroEntrance};
 use crate::undernet::{self, ExitDef, ObjectDef, READ_TERMINAL_FLAG};
 use crate::waypoint::Waypoint;
+
+const SQUALOR_ALIAS: &str = "squalor";
 
 mod building_cmds;
 mod guide;
@@ -32,6 +35,7 @@ mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
 mod social_cmds;
+mod subway_cmds;
 mod theory_cmds;
 mod waypoint_cmds;
 
@@ -233,7 +237,7 @@ impl WorldState {
             .find(|link| link.from_place == location)
             .map(|link| link.to_place.clone())
             .filter(|place| {
-                WildernessPos::parse(place).is_some() || undernet::location(place).is_some()
+                WildernessPos::parse(place).is_some() || crate::static_location(place).is_some()
             })
             .unwrap_or_else(|| STARTER_LOCATION.to_string());
         if let Some(op) = self.operators.get_mut(&player) {
@@ -408,8 +412,20 @@ impl WorldState {
                 return true;
             }
         }
-        if location == OUTSKIRTS_FROM && key == OUTSKIRTS_KEYWORD {
+        if location == OUTSKIRTS_FROM && is_squalor_keyword(&key) {
             return true;
+        }
+        if let Some(pos) = WildernessPos::parse(&location) {
+            if let Some(entrance) = subway::entrance_at(pos) {
+                if key == entrance.down_keyword || key == "down" {
+                    return true;
+                }
+            }
+        }
+        if let Some(entrance) = subway::entrance_for_station(&location) {
+            if key == entrance.up_keyword || key == "up" {
+                return true;
+            }
         }
         if self.exit_list().iter().any(|exit| exit.from == location && exit.keyword == key) {
             return true;
@@ -418,7 +434,9 @@ impl WorldState {
     }
 
     fn exit_list(&self) -> Vec<ExitDef> {
-        undernet::all_exits()
+        let mut exits = undernet::all_exits();
+        exits.extend(subway::station_exits().iter().copied());
+        exits
     }
 
     pub(crate) fn emit(
@@ -507,6 +525,10 @@ impl WorldState {
             .get(&player)
             .map(|op| op.flags.contains("cipher-plate"))
             .unwrap_or(false);
+        if subway::is_station(&location) {
+            self.set_overlay(session_id, subway_map_text(&location));
+            return Ok(quiet());
+        }
         self.set_overlay(session_id, undernet::map_text(&location, open));
         Ok(quiet())
     }
@@ -969,7 +991,10 @@ impl WorldState {
         }
         if let Some(pos) = WildernessPos::parse(id) {
             if pos.is_gate() {
-                return "The Outskirts".to_string();
+                return "The Squalor".to_string();
+            }
+            if let Some(entrance) = subway::entrance_at(pos) {
+                return entrance.surface_label.to_string();
             }
             return match self.generated(pos.identity) {
                 Ok(region) => {
@@ -978,10 +1003,10 @@ impl WorldState {
                         .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
                     effective_tile(pos, baseline, &self.geography).terrain.label().to_string()
                 }
-                Err(_) => "Unreadable wilderness".to_string(),
+                Err(_) => "Unreadable Squalor".to_string(),
             };
         }
-        undernet::location(id).map(|loc| loc.name.to_string()).unwrap_or_else(|| id.to_string())
+        crate::static_location(id).map(|loc| loc.name.to_string()).unwrap_or_else(|| id.to_string())
     }
 
     fn identity_for_birth(
@@ -1028,14 +1053,26 @@ impl WorldState {
                 });
             }
         }
-        if from == OUTSKIRTS_FROM && key == OUTSKIRTS_KEYWORD {
+        if from == OUTSKIRTS_FROM && is_squalor_keyword(&key) {
             let gate = crate::geography::gate_position();
             return Ok(TravelTarget {
                 to: gate.key(),
                 from_label: self.place_title(from),
-                to_label: "The Outskirts".to_string(),
+                to_label: "The Squalor".to_string(),
                 open: Some((gate.identity, gate.local_x, gate.local_y)),
             });
+        }
+        if let Some(pos) = WildernessPos::parse(from) {
+            if let Some(entrance) = subway::entrance_at(pos) {
+                if key == entrance.down_keyword || key == "down" {
+                    return self.finish_static(from, entrance.station_id, entrance.station_label);
+                }
+            }
+        }
+        if let Some(entrance) = subway::entrance_for_station(from) {
+            if key == entrance.up_keyword || key == "up" {
+                return self.finish_static(from, &entrance.surface.key(), entrance.surface_label);
+            }
         }
         if let Some(exit) =
             self.exit_list().into_iter().find(|exit| exit.from == from && exit.keyword == key)
@@ -1048,6 +1085,7 @@ impl WorldState {
                     ));
                 }
             }
+            // Subway hops never open sealed Hub rooms; stations only link to stations here.
             return self.finish_static(from, exit.to, exit.label);
         }
         if let Some(link) = self.geography.connection(from, &key).cloned() {
@@ -1150,6 +1188,13 @@ impl WorldState {
                     destination: "Roof Array".to_string(),
                 });
             }
+            if let Some(entrance) = subway::entrance_at(pos) {
+                exits.push(ExitView {
+                    keyword: entrance.down_keyword.to_string(),
+                    label: entrance.station_label.to_string(),
+                    destination: entrance.station_label.to_string(),
+                });
+            }
         } else {
             for exit in self.exit_list() {
                 if exit.from != location {
@@ -1169,8 +1214,15 @@ impl WorldState {
             if location == OUTSKIRTS_FROM {
                 exits.push(ExitView {
                     keyword: OUTSKIRTS_KEYWORD.to_string(),
-                    label: "The Outskirts".to_string(),
-                    destination: "The Outskirts".to_string(),
+                    label: "The Squalor".to_string(),
+                    destination: "The Squalor".to_string(),
+                });
+            }
+            if let Some(entrance) = subway::entrance_for_station(location) {
+                exits.push(ExitView {
+                    keyword: entrance.up_keyword.to_string(),
+                    label: entrance.surface_label.to_string(),
+                    destination: entrance.surface_label.to_string(),
                 });
             }
         }
@@ -1393,7 +1445,7 @@ impl WorldState {
     }
 
     fn require_place(&self, place: &str) -> Result<(), GameError> {
-        if WildernessPos::parse(place).is_some() || undernet::location(place).is_some() {
+        if WildernessPos::parse(place).is_some() || crate::static_location(place).is_some() {
             return Ok(());
         }
         if self.geography.structure_by_interior(place).is_some() {
@@ -1574,7 +1626,11 @@ impl WorldState {
         }
         let tile = self.effective_at(pos)?;
         let mut ops = Vec::new();
-        let text = if is_survey_tile(pos) && survey_aliases(target) {
+        let text = if let Some(entrance) =
+            subway::entrance_at(pos).filter(|_| metro_inspect_target(target))
+        {
+            metro_entrance_inspect(entrance)
+        } else if is_survey_tile(pos) && survey_aliases(target) {
             self.note_survey_mark(player, &mut ops);
             survey_sight().text
         } else if let Some(kind) = tile.landmark {
@@ -1791,6 +1847,13 @@ impl WorldState {
             format!("carried: {}", op.items.len()),
             format!("cipher plate: {cipher}"),
         ];
+        if WildernessPos::parse(&op.location_id).is_some() {
+            lines.push("layer: surface".into());
+        } else if subway::is_station(&op.location_id) {
+            lines.push("layer: underground".into());
+        } else if crate::static_location(&op.location_id).is_some() {
+            lines.push("layer: Hub".into());
+        }
         if !op.status.is_empty() {
             lines.push(format!("status: {}", op.status));
         }
@@ -1811,7 +1874,7 @@ impl WorldState {
         if let Some(structure) = self.geography.structure_by_interior(&op.location_id) {
             return self.interior_view(session_id, player, &name, structure);
         }
-        let loc = undernet::location(&op.location_id)
+        let loc = crate::static_location(&op.location_id)
             .ok_or_else(|| GameError::Rejected("you are standing nowhere known".into()))?;
         let mut present = self
             .names_in(&op.location_id)
@@ -2011,11 +2074,54 @@ fn item_answers(item: &Item, target: &str) -> bool {
 }
 
 fn find_object(location: &str, target: &str) -> Option<ObjectDef> {
-    let loc = undernet::location(location)?;
+    let loc = crate::static_location(location)?;
     loc.objects.iter().copied().find(|object| {
         object.keyword.eq_ignore_ascii_case(target)
             || object.aliases.iter().any(|alias| alias.eq_ignore_ascii_case(target))
     })
+}
+
+fn is_squalor_keyword(key: &str) -> bool {
+    key == OUTSKIRTS_KEYWORD || key == SQUALOR_ALIAS
+}
+
+fn metro_inspect_target(target: &str) -> bool {
+    matches!(target, "stair" | "metro" | "entrance" | "subway" | "stairs")
+}
+
+fn metro_entrance_inspect(entrance: &MetroEntrance) -> String {
+    format!(
+        "Municipal subway stair. The landing is dry dust over painted concrete. \
+A faded plate names {}. `go {}` descends to the platform. \
+The stair is a fixed entrance — not a random shaft.",
+        entrance.station_label, entrance.down_keyword
+    )
+}
+
+fn subway_map_text(current_id: &str) -> String {
+    let mark = |id: &str, label: &str| -> String {
+        if id == current_id {
+            format!("*{label}*")
+        } else {
+            label.to_string()
+        }
+    };
+    format!(
+        "\
+Subway (Line 8 fragment)
+{} --- tunnel --- {}
+   |                    |
+ surface              surface
+ (Ash Plaza)        (Ward West)
+
+One hop covers {} surface tiles.
+`surface` returns up. `map` in the Hub shows Hub rooms.
+
+* marks where you are standing.",
+        mark(subway::ASH_STATION, "Ash Plaza"),
+        mark(subway::WARD_STATION, "Ward West"),
+        subway::SUBWAY_SURFACE_SCALE,
+    )
 }
 
 fn audience_parts(audience: &Audience) -> (&'static str, String) {
@@ -2199,8 +2305,8 @@ mod tests {
         assert!(roof.exits.iter().any(|exit| exit.keyword == "outskirts"));
         world.apply(ada, "outskirts").unwrap();
         let arrived = world.view(ada).unwrap();
-        assert_eq!(arrived.location_name, "The Outskirts");
-        assert!(arrived.description.contains("roof array"));
+        assert_eq!(arrived.location_name, "The Squalor");
+        assert!(arrived.description.contains("Roof Array"));
         assert!(arrived.exits.iter().any(|exit| exit.keyword == "city"));
         assert!(world.location_key(ada).unwrap().starts_with("w:undernet:1:0:0:1:"));
         assert_eq!(world.geography.regions.len(), 1);
@@ -2250,7 +2356,7 @@ mod tests {
         assert_eq!(exits, ["west", "city"]);
         assert!(arrived.description.contains("Open: west"), "{}", arrived.description);
         assert!(
-            arrived.description.contains("Water blocks the way north, east, and south"),
+            arrived.description.contains("Floodwater blocks the way north, east, and south"),
             "{}",
             arrived.description
         );
@@ -2258,7 +2364,7 @@ mod tests {
         assert!(arrived.objects.iter().all(|object| object.keyword != "water"));
         for dir in ["north", "east", "south"] {
             let err = world.apply(ada, dir).unwrap_err().to_string();
-            assert!(err.contains("Water blocks"), "{dir}: {err}");
+            assert!(err.contains("Floodwater blocks"), "{dir}: {err}");
             assert_eq!(world.location_key(ada).unwrap(), gate_position_key());
         }
         world.apply(ada, "west").unwrap();
@@ -2267,7 +2373,7 @@ mod tests {
         world.apply(ada, "city").unwrap();
         assert_eq!(world.view(ada).unwrap().location_name, "Roof Array");
         world.apply(ada, "outskirts").unwrap();
-        assert_eq!(world.view(ada).unwrap().location_name, "The Outskirts");
+        assert_eq!(world.view(ada).unwrap().location_name, "The Squalor");
     }
 
     fn gate_position_key() -> String {
@@ -2365,7 +2471,10 @@ mod tests {
             WildernessPos { identity: crate::geography::gate_identity(), local_x: sx, local_y: sy };
         world.operators.get_mut(&ada_id).unwrap().location_id = pos.key();
         let err = world.apply(ada, back).unwrap_err();
-        assert!(err.to_string().contains("Water"), "{err}");
+        assert!(
+            err.to_string().contains("Floodwater") || err.to_string().contains("Water"),
+            "{err}"
+        );
 
         world.ensure_region(pos.identity, Some(ada_id), sx, sy).unwrap();
         world.apply_terrain_mod(pos.identity, wx, wy, Terrain::Grass, "ford", ada_id).unwrap();

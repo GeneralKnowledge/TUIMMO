@@ -1,12 +1,12 @@
 # Coffee.shop — the Undernet
 
-Ten rooms, one shared world. The Coffee Shop is the safe room where new operators appear.
+A persistent megacity after the X Disaster. The **Hub** is the inhabited core; the Coffee Shop is the safe room where new operators appear. Beyond the Roof Array fence lies the **Squalor** — abandoned urban districts, not wilderness forest. A short municipal subway fragment compresses long travel (one hop ≈ eight surface tiles). Setting detail: [setting and subway](setting-and-subway.md).
 
 ```text
-Outskirts (generated)
-    |
-Roof Array
-    |
+Squalor (generated)          Subway (Line 8 fragment)
+    |                           Ash Plaza --- Ward West
+Roof Array                         |              |
+    |                           surface        surface
 The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
                        |              |
                        |        Service Corridor
@@ -18,7 +18,7 @@ The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
                                The Black Archive   (sealed)
 ```
 
-`map` inside the city prints this graph with your room marked. The archive door is hidden until you are carrying a cipher plate.
+`map` inside the Hub prints this graph with your room marked. Underground, `map` shows the Line 8 fragment. The archive door is hidden until you are carrying a cipher plate.
 
 ## Arriving
 
@@ -30,7 +30,7 @@ A new operator who is still in the Coffee Shop, carrying only the loyalty chip a
 
 `help` with no arguments lists topics: `around`, `people`, `explore`, `commands`, and `stuck`. `help <command>` still explains that command, including why someone might use it. `help chat` is the chat command. `help move` is `go`, because `move` is already an alias.
 
-From the Roof Array, `outskirts` steps through a break in the fencing onto the gate. The gate is packed earth. West is open ground. Water blocks north, east, and south, and the description says so. `map` draws the 16 by 16 region you are standing in. `city`, from the gate tile, returns to the roof. The ten rooms are unchanged. The land beyond them is described in [world architecture](world-architecture.md).
+From the Roof Array, `outskirts` or `squalor` steps through a break in the fencing onto the Hub gate. West is open street; floodwater blocks north, east, and south. `map` draws the 16 by 16 region. `city`, from the gate tile, returns to the roof. West of the gate, a municipal stair (`go metro`) reaches Ash Plaza Station; one tunnel hop west emerges eight surface tiles farther at Ward West. Geography rules: [world architecture](world-architecture.md).
 
 ## Commands
 

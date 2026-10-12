@@ -35,7 +35,7 @@ pub fn is_survey_tile(pos: WildernessPos) -> bool {
 }
 
 pub fn survey_look_line() -> &'static str {
-    "A flat stone lies in the grass, cut twice with the same short mark. `inspect mark`."
+    "A flat stone lies in the pavement, cut twice with the same short mark. `inspect mark`."
 }
 
 /// Something an operator can keep. The note is the finding, without command hints.
@@ -98,36 +98,36 @@ pub fn landmark_sight(pos: WildernessPos, kind: LandmarkKind) -> Sight {
 fn landmark_copy(kind: LandmarkKind, notable: bool) -> (&'static str, &'static str) {
     match (kind, notable) {
         (LandmarkKind::Spring, false) => (
-            "Spring",
-            "Spring. Clear water beads from a crack. The ground around it is darker and cold.",
+            "Leaking hydrant",
+            "Leaking hydrant. Water beads from a cracked curb. The pavement around it is darker and cold.",
         ),
         (LandmarkKind::Spring, true) => (
-            "Wire in the spring",
-            "Spring. Clear water beads from a crack, and a length of insulated wire is caught in it, still cold.",
+            "Wire in the hydrant leak",
+            "Leaking hydrant. Water beads from a cracked curb, and a length of insulated wire is caught in it, still cold.",
         ),
         (LandmarkKind::StandingStone, false) => (
-            "Standing stone",
-            "Standing stone. It is waist-high, with lichen on the lee side. No inscription you can read.",
+            "Civic monument",
+            "Civic monument. Waist-high, plaque missing. No inscription you can read.",
         ),
         (LandmarkKind::StandingStone, true) => (
             "Repeated cut",
-            "Standing stone. The same short mark is cut twice, one above the other, fresh enough to catch a nail.",
+            "Civic monument. The same short mark is cut twice, one above the other, fresh enough to catch a nail.",
         ),
         (LandmarkKind::FallenMast, false) => (
             "Fallen mast",
-            "Fallen mast. The aluminum is bent and half buried. The elements point at the dirt. There is no power.",
+            "Fallen mast. The aluminum is bent across a broken walkway. The elements point at the street. There is no power.",
         ),
         (LandmarkKind::FallenMast, true) => (
             "Clean connector",
             "Fallen mast. A coax connector at the base is cleaner than the rest. Someone seated a cable here and pulled it free.",
         ),
         (LandmarkKind::Milepost, false) => (
-            "Milepost",
-            "Milepost. The post is city-issue. The mileage plate is blank from weather. No destination remains.",
+            "District post",
+            "District post. City-issue. The sector plate is blank from weather. No destination remains.",
         ),
         (LandmarkKind::Milepost, true) => (
-            "Scratched mile",
-            "Milepost. One destination is scratched out. Under it, a newer hand has cut a dash and stopped.",
+            "Scratched sector",
+            "District post. One destination is scratched out. Under it, a newer hand has cut a dash and stopped.",
         ),
     }
 }
@@ -140,7 +140,7 @@ pub fn survey_finding() -> AuthoredFinding {
     AuthoredFinding {
         content_key: SURVEY_MARK_ID.to_string(),
         title: "Repeated mark".into(),
-        note: "A flat stone one step west of the city gate is cut twice with the same mark. \
+        note: "A flat stone one step west of the Hub gate is cut twice with the same mark. \
                A scrap of relay insulation is pinched under it."
             .into(),
     }
@@ -172,7 +172,7 @@ pub fn survey_closure() -> AuthoredFinding {
     AuthoredFinding {
         content_key: SURVEY_CLOSURE_ID.to_string(),
         title: "Unfiled survey".into(),
-        note: "The scuffed dish cable matches the fiber under the outskirts stone. \
+        note: "The scuffed dish cable matches the fiber under the Squalor stone. \
                The relay crew turned the dish toward the gate, closed the survey with \
                the repeated mark, and never filed it. The archive was already sealed."
             .into(),
@@ -227,14 +227,14 @@ pub fn stacks_after_log() -> &'static str {
 pub fn describe_place(place_key: &str) -> (String, String) {
     if let Some(pos) = WildernessPos::parse(place_key) {
         let label = format!(
-            "outskirts, birth ({}, {}), tile {},{}",
+            "Squalor, birth ({}, {}), tile {},{}",
             pos.identity.origin_x, pos.identity.origin_y, pos.local_x, pos.local_y
         );
         let hint = if pos.identity == gate_identity() {
             gate_return(pos.local_x, pos.local_y)
         } else {
             format!(
-                "Birth region ({}, {}), tile {},{}. The city gate is birth (0, 0), tile {},{}.",
+                "Birth region ({}, {}), tile {},{}. The Hub gate is birth (0, 0), tile {},{}.",
                 pos.identity.origin_x,
                 pos.identity.origin_y,
                 pos.local_x,
@@ -245,15 +245,21 @@ pub fn describe_place(place_key: &str) -> (String, String) {
         };
         return (label, hint);
     }
-    if let Some(loc) = undernet::location(place_key) {
+    if let Some(loc) = crate::static_location(place_key) {
         let hint = match place_key {
             "roof-array" => "From the Coffee Shop, go up.",
             "old-relay" => "From the Cooling Tunnels or the Abandoned Exchange, go relay.",
             "abandoned-exchange" => "From the Service Corridor, go down.",
             "service-corridor" => "From the Exchange, go service.",
-            "coffee-shop" => "New operators appear here.",
+            "coffee-shop" => "New operators appear here in the Hub.",
             "black-archive" => "From the Old Relay, go archive, once the door answers.",
-            _ => "map shows the Undernet exits.",
+            "metro-ash-plaza" => {
+                "From the Ash Plaza entrance in the Squalor, go metro. surface returns up."
+            }
+            "metro-ward-west" => {
+                "From the Ward West entrance, go metro. surface returns up. east returns to Ash Plaza."
+            }
+            _ => "map shows Hub and subway exits.",
         };
         return (loc.name.to_string(), hint.to_string());
     }
@@ -264,12 +270,12 @@ fn gate_return(local_x: u8, local_y: u8) -> String {
     let dx = i32::from(local_x) - i32::from(GATE_LOCAL_X);
     let dy = i32::from(local_y) - i32::from(GATE_LOCAL_Y);
     if dx == 0 && dy == 0 {
-        return "You are on the city gate. city returns to the Roof Array.".into();
+        return "You are on the Hub gate. city returns to the Roof Array.".into();
     }
     let mut steps = Vec::new();
     push_steps(&mut steps, if dx > 0 { "east" } else { "west" }, dx.unsigned_abs());
     push_steps(&mut steps, if dy > 0 { "north" } else { "south" }, dy.unsigned_abs());
-    format!("From the city gate: {}. city returns to the Roof Array.", steps.join(", "))
+    format!("From the Hub gate: {}. city returns to the Roof Array.", steps.join(", "))
 }
 
 fn push_steps(steps: &mut Vec<String>, word: &str, count: u32) {
@@ -391,13 +397,13 @@ mod tests {
         let first = landmark_sight(pos, LandmarkKind::StandingStone);
         let again = landmark_sight(pos, LandmarkKind::StandingStone);
         assert_eq!(first, again);
-        assert!(first.text.starts_with("Standing stone."));
+        assert!(first.text.starts_with("Civic monument."));
         let spring = landmark_sight(pos, LandmarkKind::Spring);
-        assert!(spring.text.starts_with("Spring."));
+        assert!(spring.text.starts_with("Leaking hydrant."));
         assert_ne!(first.text, spring.text);
         let mile = landmark_sight(pos, LandmarkKind::Milepost);
         let mast = landmark_sight(pos, LandmarkKind::FallenMast);
-        assert!(mile.text.starts_with("Milepost."));
+        assert!(mile.text.starts_with("District post."));
         assert!(mast.text.starts_with("Fallen mast."));
         assert_ne!(first.text, mile.text);
         assert_ne!(mile.text, mast.text);
@@ -467,9 +473,9 @@ mod tests {
         assert!(overview.contains(SURVEY_MARK_ID));
         assert!(!overview.contains("relay insulation"));
         let recent = format_recent(std::slice::from_ref(&entry));
-        assert!(recent.contains("outskirts"));
+        assert!(recent.contains("Squalor"));
         let full = format_entry(&entry);
-        assert!(full.contains("From the city gate: west."));
+        assert!(full.contains("From the Hub gate: west."));
         assert!(full.contains("sequence 4"));
         assert!(full.contains(&survey_position().key()));
         assert!(format_overview(&[]).contains("empty"));

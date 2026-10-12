@@ -1,4 +1,4 @@
-//! Procedural geography for the Undernet's outskirts.
+//! Procedural geography for the Undernet's Squalor (abandoned urban sectors).
 //!
 //! Generated terrain is a pure function of epoch, birth coordinates, and a
 //! generation version. Player changes live in [`GeographyState`] and are stored

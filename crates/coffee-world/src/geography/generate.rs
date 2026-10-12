@@ -45,11 +45,11 @@ pub struct EpochSpec {
 
 pub static EPOCH_1: EpochSpec = EpochSpec {
     id: 1,
-    name: "First Wilderness",
+    name: "First Squalor",
     world_seed: EPOCH1_WORLD_SEED,
     generation_version: GENERATION_V1,
-    notes: "Absolute-coordinate elevation lattice. Borders match inside version 1. \
-            A later epoch does not rewrite these regions.",
+    notes: "Abandoned urban sectors on an absolute-coordinate elevation lattice. \
+            Borders match inside version 1. A later epoch does not rewrite these regions.",
 };
 
 pub fn epoch_spec(id: u32) -> Option<&'static EpochSpec> {
@@ -120,20 +120,20 @@ impl Terrain {
     pub const fn keyword(self) -> &'static str {
         match self {
             Self::Grass => "ground",
-            Self::Forest => "trees",
-            Self::Scrub => "scrub",
-            Self::Water => "water",
-            Self::Rock => "rock",
+            Self::Forest => "blocks",
+            Self::Scrub => "rubble",
+            Self::Water => "flood",
+            Self::Rock => "sealed",
         }
     }
 
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Grass => "open grass",
-            Self::Forest => "forest",
-            Self::Scrub => "scrub",
-            Self::Water => "water",
-            Self::Rock => "rock",
+            Self::Grass => "open street",
+            Self::Forest => "tower blocks",
+            Self::Scrub => "rubble yard",
+            Self::Water => "flooded cut",
+            Self::Rock => "sealed structure",
         }
     }
 }
@@ -158,19 +158,19 @@ impl LandmarkKind {
 
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Spring => "spring",
-            Self::StandingStone => "standing stone",
+            Self::Spring => "leaking hydrant",
+            Self::StandingStone => "civic monument",
             Self::FallenMast => "fallen mast",
-            Self::Milepost => "milepost",
+            Self::Milepost => "district post",
         }
     }
 
     pub const fn prose(self) -> &'static str {
         match self {
-            Self::Spring => "A spring leaks clear water from a crack in the ground.",
-            Self::StandingStone => "A standing stone, older than the city, marks the spot.",
-            Self::FallenMast => "A fallen antenna mast lies half-buried in the dirt.",
-            Self::Milepost => "An old milepost. The number has worn off.",
+            Self::Spring => "A hydrant leaks into a cracked curb. The water is still cold.",
+            Self::StandingStone => "A civic monument, plaque gone, still marks the corner.",
+            Self::FallenMast => "A fallen antenna mast lies across a broken walkway.",
+            Self::Milepost => "An old district post. The sector number has worn off.",
         }
     }
 
