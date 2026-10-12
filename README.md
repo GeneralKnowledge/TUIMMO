@@ -78,7 +78,7 @@ Docs:
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
 - Header, location, a noticed panel for the latest inspection, status, scrollable feed, and a command prompt with history and completion
-- Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, `emote`, profiles, mutual friends, and ignore/block
+- Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, persistent `mail`, `emote`, profiles, mutual friends, and ignore/block
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts
 - Settlements: named membership groups anchored to outskirts tiles, invites, claim/unclaim of structures, discovery without a global directory
 - Coffee Shop and settlement noticeboards with bounded, expiring posts
@@ -86,12 +86,12 @@ Docs:
 - A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
 - Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
 - Personal waypoints (`waypoint add`, `list`, `show`, `note`, `remove`) for places an operator has stood, with private notes and return hints
-- SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, waypoints, and a bounded message log
+- SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, waypoints, private mail, and a bounded message log
 - Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices
 
 ## What this version does not do
 
-No combat, economy, guild ranks, crafting, quests, or generated NPCs. Waypoints do not teleport, share a map, or reveal unexplored ground. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, guild ranks, crafting, quests, or generated NPCs. Waypoints do not teleport, share a map, or reveal unexplored ground. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. `mail` is a private letter that waits for an offline operator; `whisper` is still live and is not stored. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, signs, and mailbox remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 

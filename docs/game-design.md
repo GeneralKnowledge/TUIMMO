@@ -34,12 +34,13 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto the g
 | `say <text>` | `'` | Speech heard in this location |
 | `chat <text>` | `gsay` | Speech heard everywhere |
 | `region <text>` | `rsay` | Speech heard across this physical region |
-| `whisper <player> <text>` | `tell` | Private message to one online operator |
+| `whisper <player> <text>` | `tell` | Private message to one online operator. Not stored |
+| `mail [list\|read\|send\|delete]` | | Private letter, kept for an offline operator |
 | `emote <action>` | `me`, `em` | Action text heard in this location |
 | `profile [player\|bio …\|status …]` | | View or edit a short public profile |
 | `friend <add\|accept\|decline\|remove> <player>` | | Mutual friendship requests |
 | `friends` | | List friends and pending requests |
-| `ignore <player>` / `unignore` / `ignores` | `block` | Filter say, chat, region, emote, whisper, and friend/settle invites |
+| `ignore <player>` / `unignore` / `ignores` | `block` | Filter say, chat, region, emote, whisper, mail, and friend/settle invites |
 | `status` | `st` | Your name and location |
 | `inventory` | `inv`, `i` | What you carry |
 | `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, landmark, or item |
@@ -59,12 +60,12 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto the g
 
 `exit` is not an alias of `quit`.
 
-In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Water and rock refuse the step. `say` is heard by people on the same tile (or cabin interior). `region`/`rsay` is heard by anyone in the same birth region (cabin interiors share their exterior region's key) or the same Undernet room. `chat` is still heard everywhere. Whispers are never written to room or global feeds; offline recipients are refused (messages are not stored for later delivery).
+In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Water and rock refuse the step. `say` is heard by people on the same tile (or cabin interior). `region`/`rsay` is heard by anyone in the same birth region (cabin interiors share their exterior region's key) or the same Undernet room. `chat` is still heard everywhere. Whispers are never written to room or global feeds; an offline recipient is refused and the whisper is not stored. `mail` is a separate letter that waits in the recipient's mailbox.
 
 ### Social rules
 
 - Friend requests need explicit acceptance. Identity is the operator id, not the display name.
-- `ignore` is directional. Ignored operators cannot whisper you or send friend/settlement invites, and their local/global/region/emote lines are hidden from your feed.
+- `ignore` is directional for room, region, and global lines. Whisper and mail use the same either-direction check: if either operator ignores the other, delivery is refused, and the refusal does not say which side set it. Mail already in the mailbox is left there.
 - Profiles expose only display name, optional bio/status, and online/offline to friends. Email, passwords, and recovery material are never shown.
 - Friend lists show online/offline only. They do not reveal exact location.
 
@@ -108,6 +109,28 @@ Ids such as `survey-mark` or `lm:undernet:1:stone:0:0:5:13` name the discovery, 
 Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator. The place description stays put. The same inspection is kept in a `noticed` panel (and still copied to your private feed) until you inspect something else, so a later `say` or step does not hide it. `journal` opens in a notes panel beside that place. `look` closes the notes and returns to the place alone. Help, the map, and `who` use the same return.
 
 A journal entry is not a sign, a trail post, or a region visit. `region_discoveries` rows with kind `entered` are shared history of who first opened a birth cell. Kind `field` is the personal note. Signs and structures stay world-visible. Journal text is not copied into chat, settlement boards, or another operator's journal.
+
+## Mail
+
+`mail` leaves a private letter for one existing operator. It is not a whisper, a noticeboard, or a journal entry.
+
+```text
+mail
+mail list
+mail read 42
+mail send bob I found the old relay. The dish still faces the gate.
+mail delete 42
+```
+
+`mail` with no arguments shows the command help and `Mailbox: N unread of M.` `mail list` is newest first. `#42` and `42` are the same id. Ids are not reused after delete.
+
+A letter is at most 400 characters and is refused rather than trimmed. A mailbox holds 32 letters. When it is full, new mail is refused and nothing already stored is deleted. A sender can write one letter every 2 seconds. That gap is not kept across a server restart. The 32-letter cap is.
+
+The recipient is resolved the same way as whisper: username or display name, case-insensitive, to an operator id. Sending does not create an account. You cannot mail yourself. The recipient may be offline. The letter is stored before the command reports success.
+
+Only the recipient can list, read, or delete a letter. Reading marks it read for that operator and keeps the mark across restart. There is no sent folder and no read receipt. The letter body is not written into room, region, or global chat. A login status line shows `mail: N unread` when N is at least one.
+
+Ignore in either direction refuses a new letter with the same wording whisper uses. Deleting a letter removes that recipient's row only.
 
 ## Waypoints
 

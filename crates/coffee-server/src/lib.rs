@@ -92,6 +92,7 @@ pub async fn start(config: ServerConfig) -> anyhow::Result<Running> {
     world.install_social(loaded.social);
     world.install_settlements(loaded.settlements);
     world.install_waypoints(loaded.waypoints);
+    world.install_mail(loaded.mailbox);
     let hub = Hub::spawn(world, store, config.allow_registration);
 
     let socket_path = config.data_dir.join("game.sock");

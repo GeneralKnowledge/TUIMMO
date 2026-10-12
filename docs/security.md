@@ -28,7 +28,7 @@ Tokens are random 128-bit values held in memory. A restart invalidates them. Ide
 
 ## Data
 
-State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, waypoints, and log back. The server does not rewrite every location on each command.
+State changes commit in a SQLite transaction. A failed commit rolls the in-memory operator, geography, social graph, settlements, waypoints, mailbox, session overlays, and log back. The server does not rewrite every location on each command.
 
 Frames are capped at 32 KiB. Session and connection counts are capped. Push queues drop when a client falls behind.
 
@@ -37,8 +37,9 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 ## Privacy and abuse resistance
 
 - Private whispers use `Audience::Player` and `Channel::Private`. Their bodies are not published on location or global feeds. Offline whispers are refused; contents are not queued.
+- Private mail is a separate `mail` table addressed by operator id. The body is not copied into the shared message log, room feed, region feed, or global chat. Only the recipient can list, read, or delete a row. Knowing another letter's id does not open it. There is no sent folder and no read receipt.
 - Regional chat uses `Audience::Region` with a server-derived region key. Clients cannot subscribe to arbitrary regions.
-- `ignore`/`block` is enforced server-side across say, chat, region, emote, whisper, friend requests, and settlement invites.
+- `ignore`/`block` is enforced server-side across say, chat, region, emote, whisper, mail, friend requests, and settlement invites. Mail uses the same either-direction check as whisper. The refusal does not say which operator set the ignore. Letters already delivered are not deleted.
 - Friend lists expose online/offline only, never coordinates or account credentials.
 - Cabin/workshop visitor access (`public` / `friends` / `private` + grants) and settlement share (`private` / `shared` / `communal`) are checked when entering an interior, including bare `go <name>` through a stored connection. All entry paths use the same server-side precedence.
 - Players cannot grant themselves sharing rights over others' structures. Settlement membership alone never opens a private structure.
@@ -58,7 +59,7 @@ Player text (speech, bios, signs, notices, cabin names) is length-capped and str
 ## Known prototype limits
 
 - No public-key login, second factor, or account recovery.
-- No offline private-message mailbox; whispers require an online recipient.
+- Whisper still requires an online recipient. Mail is the offline letter, capped at 400 characters and 32 letters per mailbox, with a 2 second send gap that resets on restart.
 - Display-name collisions are refused at resolve time rather than prevented at registration.
 - No moderation console beyond owner-delete for notices and owner cabin controls.
 - No audit log beyond the world message table (which may retain recent private lines up to the log cap).

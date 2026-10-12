@@ -727,6 +727,7 @@ fn contextual_candidates(view: &GameView, command: &str) -> Vec<String> {
         "waypoint" => {
             vec!["add".into(), "list".into(), "show".into(), "note".into(), "remove".into()]
         }
+        "mail" => vec!["list".into(), "read".into(), "send".into(), "delete".into()],
         _ => Vec::new(),
     }
 }

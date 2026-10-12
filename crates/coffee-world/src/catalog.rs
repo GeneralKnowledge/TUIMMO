@@ -145,6 +145,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
+            name: "mail",
+            aliases: &[],
+            summary: "Leave a private letter, including for someone who is offline",
+            usage: "mail [list|read|send|delete]",
+            args: ArgMode::Rest { required: false },
+        },
+        CommandSpec {
             name: "mark",
             aliases: &[],
             summary: "Leave a named marker on this outskirts tile",
