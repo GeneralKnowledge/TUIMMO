@@ -130,14 +130,18 @@ The ten rooms and their exits are unchanged, including the sealed Black Archive.
 
 From the Roof Array, `outskirts` (or `go outskirts`) enters the gate tile. From that tile, `city` returns to the Roof Array. That seam is code. It is not a row in `exits`, because those rows have foreign keys to static location ids, and a wilderness key must not be forced into that table.
 
-Cardinal movement in the wilderness is `n`/`north`, `s`/`south`, `e`/`east`, `w`/`west`. Impassable directions are omitted from the exit list. A blocked step says which terrain stopped it. `say` is heard by operators on the same place key. `region`/`rsay` is heard across the physical region (birth cell or Undernet room). `chat` is still global. `map` in the wilderness draws the current region:
+Cardinal movement in the wilderness is `n`/`north`, `s`/`south`, `e`/`east`, `w`/`west`. Impassable directions are omitted from the exit list. A blocked step says which terrain stopped it. `say` is heard by operators on the same place key. `region`/`rsay` is heard across the physical region (birth cell or Undernet room). `chat` is still global. `map` in the wilderness draws the current region. North is the top row. The player is `@`. Known landmarks and player-built structures use the symbols below. Ordinary terrain uses the rest. Nothing is drawn that the tile itself does not already show.
 
 ```text
-@ you  + city gate  * landmark  M marker
-. grass  t trees  , scrub  ~ water  ^ rock
+N
+@ you   + gate   * landmark
+C cabin  W workshop  S sign
+T trail  M marker
+. grass  t trees  , scrub
+~ water  ^ rock
 ```
 
-The header shows epoch, birth coordinates, atlas placement, and generator version. The Undernet map is unchanged inside the city.
+The header shows epoch, birth coordinates, atlas placement, and generator version. The city map is a separate compact tree. It marks the current room with `@` and keeps the archive line as `(sealed)` until that operator is carrying a cipher plate.
 
 `mark <name>` leaves one marker on the current tile. The name is 2–16 characters, starts with a letter, and is letters, digits, or hyphens. Reserved words (`north`, `city`, `water`, landmark keywords, and the rest listed in `is_reserved_word`) are rejected. The owner is the session player. A second marker on the same tile is rejected. Spectators cannot mark.
 

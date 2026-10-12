@@ -1,15 +1,18 @@
 //! Screen state: header, location, status, feed, and the command prompt.
 
-use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::layout::Position;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
-use terminus_core::{CommandHint, ConnectionState, ExitView, FeedLine, GameView, Key};
+use terminus_core::{CommandHint, GameView, Key};
 use unicode_width::UnicodeWidthStr;
 
 use crate::editor::LineEditor;
-use crate::theme::Theme;
+use crate::present::{
+    feed_lines, fit, header_line, heading, inner_size, input_window, location_lines, panel,
+    screen_plan, side_lines, PROMPT_HINT,
+};
+use crate::theme::{Role, Theme};
 
 #[derive(Clone, Debug)]
 pub struct LoginForm {
@@ -140,141 +143,187 @@ impl App {
 
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
-        if area.width < 40 || area.height < 10 {
-            frame.render_widget(
-                Paragraph::new("Terminal too small. Resize to at least 40x10."),
-                area,
-            );
+        frame.render_widget(Paragraph::new("").style(self.theme.ink()), area);
+        let Some(plan) = screen_plan(area) else {
+            frame.render_widget(Paragraph::new("Too small").style(self.theme.ink()), area);
             return;
-        }
-        let [header, body, prompt] =
-            Layout::vertical([Constraint::Length(3), Constraint::Min(4), Constraint::Length(3)])
-                .areas(area);
-
-        self.render_header(frame, header);
-        if body.width >= 70 {
-            let [main, side] =
-                Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)])
-                    .areas(body);
-            let [status, feed] =
-                Layout::vertical([Constraint::Length(9), Constraint::Min(3)]).areas(side);
-            self.render_location(frame, main);
-            self.render_status(frame, status);
-            self.render_feed(frame, feed);
-        } else {
-            let [main, status, feed] = Layout::vertical([
-                Constraint::Percentage(40),
-                Constraint::Length(6),
-                Constraint::Min(3),
-            ])
-            .areas(body);
-            self.render_location(frame, main);
-            self.render_status(frame, status);
-            self.render_feed(frame, feed);
-        }
-        self.render_prompt(frame, prompt);
-    }
-
-    fn render_header(&self, frame: &mut Frame, area: Rect) {
-        let state = match self.view.connection {
-            ConnectionState::Connected => "connected",
-            ConnectionState::Offline => "offline",
         };
-        let title = format!(" {} ", self.view.world_name);
-        let right = format!(" {state} ");
-        let line = Line::from(vec![
-            Span::styled(title, Style::default().fg(self.theme.title).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
-            Span::styled(self.view.location_name.clone(), Style::default().fg(self.theme.accent)),
-            Span::raw(" ".repeat(area.width.saturating_sub(8) as usize)),
-        ]);
-        let block = self
-            .block("")
-            .title_bottom(Line::from(Span::styled(right, Style::default().fg(self.theme.accent))));
-        frame.render_widget(Paragraph::new(line).block(block), area);
+        self.render_header(frame, plan.header, plan.bordered);
+        self.render_location(frame, plan.location, plan.bordered);
+        if let Some(side) = plan.side {
+            self.render_side(frame, side, plan.bordered);
+        }
+        self.render_feed(frame, plan.feed, plan.bordered);
+        self.render_prompt(frame, plan.prompt, plan.bordered, plan.show_hint);
     }
 
-    fn render_location(&self, frame: &mut Frame, area: Rect) {
-        let text = if let Screen::Login(form) = &self.screen {
-            login_help(form)
-        } else if let Some(overlay) = &self.view.overlay {
-            overlay.clone()
+    fn render_header(&self, frame: &mut Frame, area: ratatui::layout::Rect, bordered: bool) {
+        let boxed = panel(&self.theme, "", area, bordered);
+        let inner = inner_size(area, boxed.is_some()).0;
+        let line = header_line(&self.view, &self.theme, inner);
+        let paragraph = Paragraph::new(line).style(self.theme.ink());
+        frame.render_widget(
+            match boxed {
+                Some(block) => paragraph.block(block),
+                None => paragraph,
+            },
+            area,
+        );
+    }
+
+    fn render_location(&self, frame: &mut Frame, area: ratatui::layout::Rect, bordered: bool) {
+        let title = if matches!(self.screen, Screen::Login(_)) {
+            "link"
         } else {
-            location_body(&self.view)
+            self.view.location_name.as_str()
         };
-        let paragraph = Paragraph::new(text)
-            .block(self.block("location"))
-            .wrap(Wrap { trim: false })
-            .style(Style::default().fg(self.theme.text));
-        frame.render_widget(paragraph, area);
-    }
-
-    fn render_status(&self, frame: &mut Frame, area: Rect) {
+        let boxed = panel(&self.theme, title, area, bordered);
         let mut lines = Vec::new();
-        if self.view.operator_name.is_empty() {
-            lines.push(Line::from("no operator"));
-        } else {
-            lines.push(Line::styled(
-                self.view.operator_name.clone(),
-                Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD),
-            ));
+        if boxed.is_none() {
+            lines.push(heading(&self.theme, title));
         }
-        for line in &self.view.status {
-            lines
-                .push(Line::from(Span::styled(line.clone(), Style::default().fg(self.theme.text))));
-        }
-        if !self.view.inventory.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::styled("carried", Style::default().fg(self.theme.muted)));
-            for item in self.view.inventory.iter().take(4) {
-                lines.push(Line::from(item.name.clone()));
+        if let Screen::Login(form) = &self.screen {
+            for line in login_help(form).lines() {
+                lines.push(Line::styled(line.to_string(), self.theme.ink()));
             }
-        }
-        frame.render_widget(
-            Paragraph::new(lines).block(self.block("operator")).wrap(Wrap { trim: false }),
-            area,
-        );
-    }
-
-    fn render_feed(&self, frame: &mut Frame, area: Rect) {
-        let inner_height = area.height.saturating_sub(2) as usize;
-        let lines = feed_window(&self.view.feed, inner_height, self.feed_scroll, &self.theme);
-        frame.render_widget(
-            Paragraph::new(lines).block(self.block("feed")).wrap(Wrap { trim: false }),
-            area,
-        );
-    }
-
-    fn render_prompt(&self, frame: &mut Frame, area: Rect) {
-        let (label, value, secret) = self.prompt_parts();
-        let shown = if secret { "*".repeat(value.chars().count()) } else { value.to_string() };
-        let notice =
-            self.notice.clone().or_else(|| self.completion_note.clone()).unwrap_or_default();
-        let block = self.block(if notice.is_empty() { "command" } else { "" });
-        let prefix = label.width() as u16;
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(label, Style::default().fg(self.theme.accent)),
-            Span::styled(shown, Style::default().fg(self.theme.text)),
-        ]))
-        .block(block.title_bottom(Line::from(Span::styled(
-            truncate(&notice, area.width.saturating_sub(4) as usize),
-            Style::default().fg(self.theme.warn),
-        ))));
-        frame.render_widget(paragraph, area);
-
-        let cursor_cells = if secret {
-            value.chars().count() as u16
-        } else if matches!(self.screen, Screen::Play) {
-            self.editor.cursor_width() as u16
         } else {
-            value.chars().count() as u16
+            lines.extend(location_lines(&self.view, &self.theme));
+        }
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false }).style(self.theme.ink());
+        frame.render_widget(
+            match boxed {
+                Some(block) => paragraph.block(block),
+                None => paragraph,
+            },
+            area,
+        );
+    }
+
+    fn render_side(&self, frame: &mut Frame, area: ratatui::layout::Rect, bordered: bool) {
+        let boxed = panel(&self.theme, "operator", area, bordered);
+        let mut lines = Vec::new();
+        if boxed.is_none() {
+            lines.push(heading(&self.theme, "operator"));
+        }
+        lines.extend(side_lines(&self.view, &self.theme));
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false }).style(self.theme.ink());
+        frame.render_widget(
+            match boxed {
+                Some(block) => paragraph.block(block),
+                None => paragraph,
+            },
+            area,
+        );
+    }
+
+    fn render_feed(&self, frame: &mut Frame, area: ratatui::layout::Rect, bordered: bool) {
+        let boxed = panel(&self.theme, "activity", area, bordered);
+        let mut lines = Vec::new();
+        if boxed.is_none() {
+            lines.push(heading(&self.theme, "activity"));
+        }
+        let inner_height =
+            inner_size(area, boxed.is_some()).1.saturating_sub(if boxed.is_none() { 1 } else { 0 });
+        lines.extend(feed_lines(&self.view.feed, inner_height, self.feed_scroll, &self.theme));
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false }).style(self.theme.ink());
+        frame.render_widget(
+            match boxed {
+                Some(block) => paragraph.block(block),
+                None => paragraph,
+            },
+            area,
+        );
+    }
+
+    fn render_prompt(
+        &self,
+        frame: &mut Frame,
+        area: ratatui::layout::Rect,
+        bordered: bool,
+        show_hint: bool,
+    ) {
+        let (label, value, secret) = self.prompt_parts();
+        let raw = if secret { "*".repeat(value.chars().count()) } else { value };
+        let boxed = panel(&self.theme, "command", area, bordered);
+        let inner = inner_size(area, boxed.is_some()).0;
+        let prefix_width = label.width();
+        let room = inner.saturating_sub(prefix_width);
+        let cursor_chars = if secret || !matches!(self.screen, Screen::Play) {
+            raw.chars().count()
+        } else {
+            self.editor_cursor_chars()
         };
-        let x = area.x.saturating_add(1).saturating_add(prefix).saturating_add(cursor_cells);
-        let y = area.y.saturating_add(1);
+        let (shown, cursor_cells) = input_window(&raw, cursor_chars, room);
+        let (foot, foot_role) = self.prompt_foot(inner, show_hint);
+        let has_box = boxed.is_some();
+        let mut paragraph = Paragraph::new(Line::from(vec![
+            Span::styled(label, self.theme.style(Role::Focused)),
+            Span::styled(shown, self.theme.ink()),
+        ]))
+        .style(self.theme.ink());
+        if let Some(block) = boxed {
+            let block = if foot.is_empty() {
+                block
+            } else {
+                block.title_bottom(Line::from(Span::styled(
+                    format!(" {foot} "),
+                    self.theme.style(foot_role),
+                )))
+            };
+            paragraph = paragraph.block(block);
+        }
+        frame.render_widget(paragraph, area);
+        if !has_box && show_hint && !foot.is_empty() && area.height > 1 {
+            let hint_area = ratatui::layout::Rect {
+                x: area.x,
+                y: area.y.saturating_add(1),
+                width: area.width,
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new(Line::styled(foot, self.theme.style(foot_role))),
+                hint_area,
+            );
+        }
+
+        let border_pad: u16 = if has_box { 1 } else { 0 };
+        let x = area
+            .x
+            .saturating_add(border_pad)
+            .saturating_add(u16::try_from(prefix_width).unwrap_or(0))
+            .saturating_add(u16::try_from(cursor_cells).unwrap_or(0));
+        let y = area.y.saturating_add(border_pad);
         if x < area.x.saturating_add(area.width.saturating_sub(1))
             && y < area.y.saturating_add(area.height)
         {
             frame.set_cursor_position(Position::new(x, y));
+        }
+    }
+
+    fn editor_cursor_chars(&self) -> usize {
+        let width = self.editor.cursor_width();
+        let text = self.editor.text();
+        let mut seen = 0usize;
+        for (index, ch) in text.chars().enumerate() {
+            if seen >= width {
+                return index;
+            }
+            seen = seen.saturating_add(unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0));
+        }
+        text.chars().count()
+    }
+
+    fn prompt_foot(&self, width: usize, show_hint: bool) -> (String, Role) {
+        if let Some(notice) = &self.notice {
+            return (fit(notice, width), Role::Error);
+        }
+        if let Some(note) = &self.completion_note {
+            return (fit(note, width), Role::Accent);
+        }
+        if show_hint {
+            (fit(PROMPT_HINT, width), Role::Muted)
+        } else {
+            (String::new(), Role::Muted)
         }
     }
 
@@ -290,20 +339,6 @@ impl App {
                 (label.into(), value, secret)
             }
         }
-    }
-
-    fn block<'a>(&self, title: &'a str) -> Block<'a> {
-        let mut block = Block::bordered()
-            .border_type(self.theme.border_type())
-            .border_style(Style::default().fg(self.theme.border))
-            .style(Style::default().fg(self.theme.text));
-        if !title.is_empty() {
-            block = block.title(Line::from(Span::styled(
-                format!(" {title} "),
-                Style::default().fg(self.theme.title),
-            )));
-        }
-        block
     }
 
     fn handle_play(&mut self, key: Key) -> Effect {
@@ -500,90 +535,6 @@ New accounts begin in the Coffee Shop."
     )
 }
 
-fn location_body(view: &GameView) -> String {
-    let exits = if view.exits.is_empty() {
-        "none".to_string()
-    } else {
-        view.exits.iter().map(exit_label).collect::<Vec<_>>().join("   ")
-    };
-    let present = if view.present.is_empty() {
-        "nobody else".to_string()
-    } else {
-        view.present.iter().map(|person| person.name.clone()).collect::<Vec<_>>().join(", ")
-    };
-    let objects = if view.objects.is_empty() {
-        "nothing obvious".to_string()
-    } else {
-        view.objects.iter().map(|object| object.keyword.clone()).collect::<Vec<_>>().join(", ")
-    };
-    format!(
-        "{}\n\n{}\n\nExits: {exits}\nHere: {present}\nObjects: {objects}",
-        view.location_name, view.description
-    )
-}
-
-fn exit_label(exit: &ExitView) -> String {
-    format!("{} ({})", exit.keyword, exit.destination)
-}
-
-fn feed_window(
-    feed: &[FeedLine],
-    height: usize,
-    scroll: usize,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
-    if height == 0 {
-        return Vec::new();
-    }
-    let max_scroll = feed.len().saturating_sub(height);
-    let scroll = scroll.min(max_scroll);
-    let end = feed.len().saturating_sub(scroll);
-    let start = end.saturating_sub(height);
-    feed[start..end]
-        .iter()
-        .map(|line| {
-            let stamp = format_hms(line.at_ms);
-            let (style, body) = match line.channel {
-                terminus_core::Channel::System => {
-                    (Style::default().fg(theme.system), line.text.clone())
-                }
-                terminus_core::Channel::Local => (
-                    Style::default().fg(theme.local),
-                    match &line.speaker {
-                        Some(name) => format!("{name}: {}", line.text),
-                        None => line.text.clone(),
-                    },
-                ),
-                terminus_core::Channel::Global => (
-                    Style::default().fg(theme.global),
-                    match &line.speaker {
-                        Some(name) => format!("[all] {name}: {}", line.text),
-                        None => format!("[all] {}", line.text),
-                    },
-                ),
-                terminus_core::Channel::Region => (
-                    Style::default().fg(theme.region),
-                    match &line.speaker {
-                        Some(name) => format!("[region] {name}: {}", line.text),
-                        None => format!("[region] {}", line.text),
-                    },
-                ),
-                terminus_core::Channel::Private => (
-                    Style::default().fg(theme.private),
-                    match &line.speaker {
-                        Some(name) => format!("[whisper] {name}: {}", line.text),
-                        None => format!("[whisper] {}", line.text),
-                    },
-                ),
-            };
-            Line::from(vec![
-                Span::styled(format!("{stamp} "), Style::default().fg(theme.muted)),
-                Span::styled(body, style),
-            ])
-        })
-        .collect()
-}
-
 fn command_candidates(commands: &[CommandHint], prefix: &str) -> Vec<String> {
     let prefix = prefix.to_ascii_lowercase();
     let mut words = Vec::new();
@@ -619,38 +570,15 @@ fn contextual_candidates(view: &GameView, command: &str) -> Vec<String> {
     }
 }
 
-fn format_hms(ms: u64) -> String {
-    let secs = ms / 1000;
-    let h = (secs / 3600) % 24;
-    let m = (secs / 60) % 60;
-    let s = secs % 60;
-    format!("{h:02}:{m:02}:{s:02}")
-}
-
-fn truncate(text: &str, width: usize) -> String {
-    if text.width() <= width {
-        return text.to_string();
-    }
-    let mut out = String::new();
-    for ch in text.chars() {
-        if out.width() + unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0) > width {
-            break;
-        }
-        out.push(ch);
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use ratatui::backend::TestBackend;
+    use ratatui::style::Color;
     use ratatui::Terminal;
-    use terminus_core::{ConnectionState, ExitView, PresenceView};
+    use terminus_core::{Channel, ConnectionState, ExitView, FeedLine, ItemView, PresenceView};
 
-    #[test]
-    fn renders_location_status_and_prompt() {
-        let theme = Theme::neutral();
+    fn sample_view() -> GameView {
         let mut view = GameView::empty("Undernet");
         view.connection = ConnectionState::Connected;
         view.operator_name = "ada".into();
@@ -663,16 +591,63 @@ mod tests {
         }];
         view.present = vec![PresenceView { name: "bob".into() }];
         view.status = vec!["place: The Coffee Shop".into()];
-        let mut app = App::play(theme, view);
-        app.handle_key(Key::Char('l'));
-        let backend = TestBackend::new(100, 30);
+        view.inventory = vec![ItemView {
+            keyword: "chip".into(),
+            name: "loyalty chip".into(),
+            detail: "warm".into(),
+        }];
+        view.commands = vec![CommandHint {
+            name: "help".into(),
+            aliases: vec!["?".into()],
+            usage: "help".into(),
+            summary: "List commands".into(),
+        }];
+        view.feed = vec![
+            FeedLine {
+                at_ms: 1_000,
+                channel: Channel::Local,
+                speaker: Some("bob".into()),
+                text: "the counter is free".into(),
+            },
+            FeedLine {
+                at_ms: 2_000,
+                channel: Channel::Local,
+                speaker: None,
+                text: "nods at the door".into(),
+            },
+            FeedLine {
+                at_ms: 3_000,
+                channel: Channel::Global,
+                speaker: Some("ada".into()),
+                text: "heading up".into(),
+            },
+            FeedLine {
+                at_ms: 4_000,
+                channel: Channel::Region,
+                speaker: Some("cam".into()),
+                text: "north of the gate".into(),
+            },
+            FeedLine {
+                at_ms: 5_000,
+                channel: Channel::Private,
+                speaker: Some("bob".into()),
+                text: "meet at the roof".into(),
+            },
+            FeedLine {
+                at_ms: 6_000,
+                channel: Channel::System,
+                speaker: None,
+                text: "recorded in the journal".into(),
+            },
+        ];
+        view
+    }
+
+    fn draw(app: &App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
-        let text = buffer_text(terminal.backend().buffer());
-        assert!(text.contains("The Coffee Shop"), "{text}");
-        assert!(text.contains("ada"), "{text}");
-        assert!(text.contains("alley"), "{text}");
-        assert!(text.contains("bob"), "{text}");
+        terminal.backend().buffer().clone()
     }
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
@@ -682,8 +657,141 @@ mod tests {
             for x in 0..buffer.area().width {
                 line.push_str(buffer[(x, y)].symbol());
             }
-            lines.push(line);
+            lines.push(line.trim_end().to_string());
         }
         lines.join("\n")
+    }
+
+    fn fg_of(buffer: &ratatui::buffer::Buffer, needle: &str) -> Option<Color> {
+        let width = buffer.area().width;
+        let height = buffer.area().height;
+        for y in 0..height {
+            let mut row = String::new();
+            for x in 0..width {
+                row.push_str(buffer[(x, y)].symbol());
+            }
+            if let Some(index) = row.find(needle) {
+                return Some(buffer[(u16::try_from(index).unwrap_or(0), y)].fg);
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn renders_location_activity_and_prompt() {
+        let mut app = App::play(Theme::undernet(false), sample_view());
+        app.handle_key(Key::Char('l'));
+        let buffer = draw(&app, 110, 32);
+        let text = buffer_text(&buffer);
+        assert!(text.contains("The Coffee Shop"), "{text}");
+        assert!(text.contains("Undernet"), "{text}");
+        assert!(text.contains("connected"), "{text}");
+        assert!(text.contains("ada"), "{text}");
+        assert!(text.contains("alley"), "{text}");
+        assert!(text.contains("bob"), "{text}");
+        assert!(text.contains("activity"), "{text}");
+        assert!(text.contains("operator"), "{text}");
+        assert!(text.contains("loyalty chip"), "{text}");
+        assert!(text.contains("[all]"), "{text}");
+        assert!(text.contains("[region]"), "{text}");
+        assert!(text.contains("[whisper]"), "{text}");
+        assert!(text.contains("[note]"), "{text}");
+        assert!(text.contains("command") || text.contains('>'), "{text}");
+        assert!(text.contains("history"), "{text}");
+    }
+
+    #[test]
+    fn ascii_theme_uses_plain_borders() {
+        let app = App::play(Theme::undernet(true), sample_view());
+        let text = buffer_text(&draw(&app, 80, 24));
+        assert!(text.contains('+'), "{text}");
+        assert!(!text.contains('╭'), "{text}");
+        assert!(text.contains("exits"), "{text}");
+        assert!(text.contains("alley"), "{text}");
+        let rounded = App::play(Theme::undernet(false), sample_view());
+        let fancy = buffer_text(&draw(&rounded, 80, 24));
+        assert!(fancy.contains('╭'), "{fancy}");
+    }
+
+    #[test]
+    fn channel_colours_do_not_depend_on_message_text() {
+        let app = App::play(Theme::undernet(true), sample_view());
+        let buffer = draw(&app, 110, 36);
+        assert_eq!(fg_of(&buffer, "[all]"), Some(Color::Cyan));
+        assert_eq!(fg_of(&buffer, "[note]"), Some(Color::Yellow));
+        assert_eq!(fg_of(&buffer, "[whisper]"), Some(Color::Magenta));
+        assert_eq!(fg_of(&buffer, "[region]"), Some(Color::Green));
+        let text = buffer_text(&buffer);
+        assert!(text.contains("meet at the roof"));
+        assert!(!text.contains("[whisper] meet at the roof\n[whisper]"));
+    }
+
+    #[test]
+    fn narrow_short_and_resize_do_not_panic() {
+        let mut view = sample_view();
+        view.description = "d".repeat(2_000);
+        view.feed.push(FeedLine {
+            at_ms: 9_000,
+            channel: Channel::System,
+            speaker: None,
+            text: "m".repeat(2_000),
+        });
+        view.operator_name = "n".repeat(80);
+        let app = App::play(Theme::neutral(), view);
+        for (width, height) in [(110, 32), (80, 24), (60, 20), (40, 8), (20, 8), (10, 4)] {
+            let text = buffer_text(&draw(&app, width, height));
+            if width < 20 || height < 8 {
+                assert!(
+                    text.contains("Too small") || text.contains("small"),
+                    "{width}x{height}: {text}"
+                );
+            } else {
+                assert!(!text.contains("too small"), "{width}x{height}: {text}");
+            }
+        }
+        let wide = buffer_text(&draw(&app, 110, 32));
+        let narrow = buffer_text(&draw(&app, 60, 24));
+        assert!(wide.contains("operator"), "{wide}");
+        assert!(!narrow.contains("operator"), "{narrow}");
+    }
+
+    #[test]
+    fn history_completion_scroll_and_masked_password() {
+        let mut app = App::play(Theme::neutral(), sample_view());
+        for ch in "look".chars() {
+            app.handle_key(Key::Char(ch));
+        }
+        assert!(
+            matches!(app.handle_key(Key::Enter), Effect::SubmitCommand(line) if line == "look")
+        );
+        app.handle_key(Key::Up);
+        assert_eq!(app.editor.text(), "look");
+        app.handle_key(Key::Down);
+        for ch in "he".chars() {
+            app.handle_key(Key::Char(ch));
+        }
+        app.handle_key(Key::Tab);
+        assert_eq!(app.editor.text(), "help ");
+        app.handle_key(Key::PageUp);
+        let scrolled = buffer_text(&draw(&app, 80, 16));
+        assert!(
+            scrolled.contains("activity")
+                || scrolled.contains("quiet")
+                || scrolled.contains("[note]")
+        );
+
+        let mut login = App::login();
+        login.set_theme(Theme::undernet(true));
+        for ch in "ada".chars() {
+            login.handle_key(Key::Char(ch));
+        }
+        login.handle_key(Key::Tab);
+        for ch in "s3cret!".chars() {
+            login.handle_key(Key::Char(ch));
+        }
+        let text = buffer_text(&draw(&login, 80, 24));
+        assert!(!text.contains("s3cret"), "{text}");
+        assert!(text.contains("*******"), "{text}");
+        assert!(text.contains("pass>"), "{text}");
     }
 }

@@ -267,15 +267,20 @@ fn render_map(
     }
     format!(
         "\
-epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}
-{}
-@ you  + city gate  * landmark  M marker  C cabin  S sign  T trail
-. grass  t trees  , scrub  ~ water  ^ rock",
-        pos.identity.epoch_id,
-        pos.identity.origin_x,
-        pos.identity.origin_y,
-        pos.identity.generation_version,
-        rows.join("\n"),
+N
+{grid}
+birth ({ox}, {oy})  atlas ({placement_x}, {placement_y})
+epoch {epoch}  generator v{ver}
+@ you   + gate   * landmark
+C cabin  W workshop  S sign
+T trail  M marker
+. grass  t trees  , scrub
+~ water  ^ rock",
+        ox = pos.identity.origin_x,
+        oy = pos.identity.origin_y,
+        epoch = pos.identity.epoch_id,
+        ver = pos.identity.generation_version,
+        grid = rows.join("\n"),
     )
 }
 
@@ -465,6 +470,8 @@ mod tests {
         assert!(scene.map.contains("birth (0, 0)"));
         assert!(scene.map.contains("atlas (40, -3)"));
         assert!(scene.map.contains('@'));
+        assert!(scene.map.starts_with('N'));
+        assert!(scene.map.contains("W workshop"));
         assert_eq!(scene.title, "The Outskirts");
     }
 }

@@ -26,6 +26,8 @@ cargo tree -p minimal-game -i coffee-world
 
 That command should report that `coffee-world` is not a dependency.
 
+`coffee-server --ascii` (or `COFFEE_ASCII=1`) switches the Undernet palette to named colours and ASCII borders. The default palette is indexed colour, not true colour.
+
 ## Database
 
 The server creates `data/coffee.sqlite` on startup and applies migrations embedded in `coffee-world`. To begin again, stop the server and remove the `data/` directory. The next start generates a new host key. Tell players the new fingerprint.
