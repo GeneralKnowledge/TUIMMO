@@ -1,7 +1,7 @@
 //! Screen state: header, location, status, feed, and the command prompt.
 
 use ratatui::layout::{Constraint, Layout, Position, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::Modifier;
 use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
@@ -141,9 +141,11 @@ impl App {
 
     pub fn render(&self, frame: &mut Frame) {
         let area = frame.area();
+        frame.buffer_mut().set_style(area, self.theme.ink(self.theme.text));
         if area.width < 40 || area.height < 10 {
             frame.render_widget(
-                Paragraph::new("Terminal too small. Resize to at least 40x10."),
+                Paragraph::new("Terminal too small. Resize to at least 40x10.")
+                    .style(self.theme.ink(self.theme.warn)),
                 area,
             );
             return;
@@ -184,15 +186,21 @@ impl App {
         let title = format!(" {} ", self.view.world_name);
         let right = format!(" {state} ");
         let line = Line::from(vec![
-            Span::styled(title, Style::default().fg(self.theme.title).add_modifier(Modifier::BOLD)),
-            Span::raw("  "),
-            Span::styled(self.view.location_name.clone(), Style::default().fg(self.theme.accent)),
-            Span::raw(" ".repeat(area.width.saturating_sub(8) as usize)),
+            Span::styled(title, self.theme.ink(self.theme.title).add_modifier(Modifier::BOLD)),
+            Span::styled("  ", self.theme.ink(self.theme.text)),
+            Span::styled(self.view.location_name.clone(), self.theme.ink(self.theme.accent)),
+            Span::styled(
+                " ".repeat(area.width.saturating_sub(8) as usize),
+                self.theme.ink(self.theme.text),
+            ),
         ]);
         let block = self
             .block("")
-            .title_bottom(Line::from(Span::styled(right, Style::default().fg(self.theme.accent))));
-        frame.render_widget(Paragraph::new(line).block(block), area);
+            .title_bottom(Line::from(Span::styled(right, self.theme.ink(self.theme.accent))));
+        frame.render_widget(
+            Paragraph::new(line).block(block).style(self.theme.ink(self.theme.text)),
+            area,
+        );
     }
 
     fn render_location(&self, frame: &mut Frame, area: Rect) {
@@ -275,13 +283,13 @@ impl App {
         if let Some(footer) = footer {
             block = block.title_bottom(Line::from(Span::styled(
                 format!(" {footer} "),
-                Style::default().fg(self.theme.muted),
+                self.theme.ink(self.theme.muted),
             )));
         }
         let paragraph = Paragraph::new(text)
             .block(block)
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(color));
+            .style(self.theme.ink(color));
         frame.render_widget(paragraph, area);
     }
 
@@ -292,22 +300,27 @@ impl App {
         } else {
             lines.push(Line::styled(
                 self.view.operator_name.clone(),
-                Style::default().fg(self.theme.accent).add_modifier(Modifier::BOLD),
+                self.theme.ink(self.theme.accent).add_modifier(Modifier::BOLD),
             ));
         }
         for line in &self.view.status {
-            lines
-                .push(Line::from(Span::styled(line.clone(), Style::default().fg(self.theme.text))));
+            lines.push(Line::from(Span::styled(line.clone(), self.theme.ink(self.theme.text))));
         }
         if !self.view.inventory.is_empty() {
             lines.push(Line::from(""));
-            lines.push(Line::styled("carried", Style::default().fg(self.theme.muted)));
+            lines.push(Line::styled("carried", self.theme.ink(self.theme.muted)));
             for item in self.view.inventory.iter().take(4) {
-                lines.push(Line::from(item.name.clone()));
+                lines.push(Line::from(Span::styled(
+                    item.name.clone(),
+                    self.theme.ink(self.theme.text),
+                )));
             }
         }
         frame.render_widget(
-            Paragraph::new(lines).block(self.block("operator")).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(self.block("operator"))
+                .wrap(Wrap { trim: false })
+                .style(self.theme.ink(self.theme.text)),
             area,
         );
     }
@@ -316,7 +329,10 @@ impl App {
         let inner_height = area.height.saturating_sub(2) as usize;
         let lines = feed_window(&self.view.feed, inner_height, self.feed_scroll, &self.theme);
         frame.render_widget(
-            Paragraph::new(lines).block(self.block("feed")).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(self.block("feed"))
+                .wrap(Wrap { trim: false })
+                .style(self.theme.ink(self.theme.text)),
             area,
         );
     }
@@ -329,12 +345,13 @@ impl App {
         let block = self.block(if notice.is_empty() { "command" } else { "" });
         let prefix = label.width() as u16;
         let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled(label, Style::default().fg(self.theme.accent)),
-            Span::styled(shown, Style::default().fg(self.theme.text)),
+            Span::styled(label, self.theme.ink(self.theme.accent)),
+            Span::styled(shown, self.theme.ink(self.theme.text)),
         ]))
+        .style(self.theme.ink(self.theme.text))
         .block(block.title_bottom(Line::from(Span::styled(
             truncate(&notice, area.width.saturating_sub(4) as usize),
-            Style::default().fg(self.theme.warn),
+            self.theme.ink(self.theme.warn),
         ))));
         frame.render_widget(paragraph, area);
 
@@ -375,12 +392,12 @@ impl App {
             Block::bordered().border_type(BorderType::Rounded)
         };
         block = block
-            .border_style(Style::default().fg(self.theme.border))
-            .style(Style::default().fg(self.theme.text));
+            .border_style(self.theme.ink(self.theme.border))
+            .style(self.theme.ink(self.theme.text));
         if !title.is_empty() {
             block = block.title(Line::from(Span::styled(
                 format!(" {title} "),
-                Style::default().fg(self.theme.title),
+                self.theme.ink(self.theme.title),
             )));
         }
         block
@@ -653,32 +670,30 @@ fn feed_window(
         .map(|line| {
             let stamp = format_hms(line.at_ms);
             let (style, body) = match line.channel {
-                terminus_core::Channel::System => {
-                    (Style::default().fg(theme.system), line.text.clone())
-                }
+                terminus_core::Channel::System => (theme.ink(theme.system), line.text.clone()),
                 terminus_core::Channel::Local => (
-                    Style::default().fg(theme.local),
+                    theme.ink(theme.local),
                     match &line.speaker {
                         Some(name) => format!("{name}: {}", line.text),
                         None => line.text.clone(),
                     },
                 ),
                 terminus_core::Channel::Global => (
-                    Style::default().fg(theme.global),
+                    theme.ink(theme.global),
                     match &line.speaker {
                         Some(name) => format!("[all] {name}: {}", line.text),
                         None => format!("[all] {}", line.text),
                     },
                 ),
                 terminus_core::Channel::Region => (
-                    Style::default().fg(theme.region),
+                    theme.ink(theme.region),
                     match &line.speaker {
                         Some(name) => format!("[region] {name}: {}", line.text),
                         None => format!("[region] {}", line.text),
                     },
                 ),
                 terminus_core::Channel::Private => (
-                    Style::default().fg(theme.private),
+                    theme.ink(theme.private),
                     match &line.speaker {
                         Some(name) => format!("[whisper] {name}: {}", line.text),
                         None => format!("[whisper] {}", line.text),
@@ -686,7 +701,7 @@ fn feed_window(
                 ),
             };
             Line::from(vec![
-                Span::styled(format!("{stamp} "), Style::default().fg(theme.muted)),
+                Span::styled(format!("{stamp} "), theme.ink(theme.muted)),
                 Span::styled(body, style),
             ])
         })
@@ -950,6 +965,56 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|frame| app.render(frame)).unwrap();
         buffer_text(terminal.backend().buffer())
+    }
+
+    #[test]
+    fn theme_background_covers_play_login_and_the_too_small_notice() {
+        let ground = ratatui::style::Color::Rgb(18, 16, 14);
+        let mut theme = Theme::neutral();
+        theme.background = ground;
+        let mut view = sample_view();
+        view.finding = Some("A scarred counter.".into());
+        view.overlay = Some("a private note".into());
+        view.inventory.push(terminus_core::ItemView {
+            keyword: "cup".into(),
+            name: "chipped cup".into(),
+            detail: "the rim is nicked".into(),
+        });
+        view.feed.push(terminus_core::FeedLine {
+            at_ms: 1_000,
+            channel: terminus_core::Channel::Local,
+            speaker: Some("bob".into()),
+            text: "the kettle ticks".into(),
+        });
+        assert_ground(&App::play(theme.clone(), view), 80, 24, ground);
+        assert_ground(&App::play(theme.clone(), sample_view()), 100, 32, ground);
+
+        let mut login = App::new(theme.clone(), Screen::Login(LoginForm::new()));
+        login.set_notice("bad password");
+        assert_ground(&login, 80, 24, ground);
+        assert_ground(&App::play(theme, sample_view()), 20, 8, ground);
+        assert_eq!(Theme::neutral().background, ratatui::style::Color::Reset);
+    }
+
+    fn assert_ground(app: &App, width: u16, height: u16, ground: ratatui::style::Color) {
+        let buffer = draw_buffer(app, width, height);
+        for y in 0..buffer.area().height {
+            for x in 0..buffer.area().width {
+                assert_eq!(
+                    buffer[(x, y)].bg,
+                    ground,
+                    "cell {x},{y} is {:?}",
+                    buffer[(x, y)].symbol()
+                );
+            }
+        }
+    }
+
+    fn draw_buffer(app: &App, width: u16, height: u16) -> ratatui::buffer::Buffer {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        terminal.backend().buffer().clone()
     }
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {
