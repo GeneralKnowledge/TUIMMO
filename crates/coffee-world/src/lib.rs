@@ -50,4 +50,4 @@ pub use model::{Item, Operator, PersistOp, STARTER_LOCATION};
 pub use settlement::SettlementState;
 pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
-pub use store::{AccountInvitePolicy, AccountRow, NewAccount, Store, StoreError};
+pub use store::{AccountInvitePolicy, AccountRow, LoadedWorld, NewAccount, Store, StoreError};

@@ -52,14 +52,14 @@ impl WorldState {
     pub fn restore_command_rollback(&mut self, snap: CommandRollback) {
         self.replace_log(snap.log);
         self.operators = snap.operators;
-        self.geography = snap.geography;
-        self.social = snap.social;
-        self.settlements = snap.settlements;
-        self.waypoints = snap.waypoints;
-        self.homes = snap.homes;
-        self.mailbox = snap.mailbox;
-        self.theories = snap.theories;
-        self.invites = snap.invites;
-        self.overlays = snap.overlays;
+        self.restore_geography(snap.geography);
+        self.restore_social(snap.social);
+        self.restore_settlements(snap.settlements);
+        self.restore_waypoints(snap.waypoints);
+        self.restore_homes(snap.homes);
+        self.restore_mail(snap.mailbox);
+        self.restore_theories(snap.theories);
+        self.restore_invites(snap.invites);
+        self.restore_overlays(snap.overlays);
     }
 }

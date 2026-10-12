@@ -100,15 +100,7 @@ pub async fn start(config: ServerConfig) -> anyhow::Result<Running> {
         .context("seed world")?;
     let loaded = store.load().await.context("load world")?;
     let mut world = WorldState::new();
-    world.install_loaded(loaded.operators, loaded.log);
-    world.install_geography(loaded.geography);
-    world.install_social(loaded.social);
-    world.install_settlements(loaded.settlements);
-    world.install_waypoints(loaded.waypoints);
-    world.install_homes(loaded.homes);
-    world.install_mail(loaded.mailbox);
-    world.install_theories(loaded.theories);
-    world.install_invites(loaded.invites);
+    world.install_loaded_world(loaded);
     let hub = Hub::spawn(
         world,
         store,
