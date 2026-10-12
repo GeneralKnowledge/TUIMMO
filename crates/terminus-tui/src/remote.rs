@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use crate::app::{App, Effect, LoginForm, Screen};
 use crate::decode::InputDecoder;
-use crate::theme::Theme;
+use crate::theme::{enable_theme_colors, Theme};
 use crate::TuiError;
 
 /// Bytes or already-decoded keys from a transport.
@@ -33,6 +33,7 @@ pub async fn run_remote<B: Backend>(
     mode: StartMode,
     mut input: mpsc::UnboundedReceiver<Input>,
 ) -> Result<(), TuiError> {
+    enable_theme_colors();
     let hello = client
         .call(ClientMessage::Hello { client: format!("terminus-tui/{PROTOCOL_VERSION}") })
         .await?;
