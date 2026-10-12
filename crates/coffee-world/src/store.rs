@@ -1803,6 +1803,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn delisted_floor_survives_reopen_and_a_failed_write_adds_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada = Operator {
+            id: ada_id,
+            account_id: Uuid::new_v4(),
+            username: "ada".into(),
+            name: "ada".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        let bob = Operator {
+            id: bob_id,
+            account_id: Uuid::new_v4(),
+            username: "bob".into(),
+            name: "bob".into(),
+            location_id: STARTER_LOCATION.into(),
+            bio: String::new(),
+            status: String::new(),
+            flags: BTreeSet::new(),
+            items: vec![Item::chip()],
+        };
+        store.create_account(ada.account_id, "ada", "hash", &ada, 10).await.unwrap();
+        store.create_account(bob.account_id, "bob", "hash", &bob, 11).await.unwrap();
+
+        let mut world = WorldState::for_tests();
+        world.insert_operator(ada);
+        world.insert_operator(bob);
+        let identity = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let session = identity.session_id;
+        let (connected, _) = world.connect_player(identity).unwrap();
+        store.commit(&connected.ops).await.unwrap();
+        let mut ops = Vec::new();
+        for line in
+            ["alley", "exchange", "service", "down", "inspect terminal", "up", "journal record"]
+        {
+            ops.extend(world.apply(session, line).unwrap().ops);
+        }
+        store.commit(&ops).await.unwrap();
+        drop(store);
+
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
+        assert!(ada.flags.contains(undernet::READ_TERMINAL_FLAG));
+        assert!(ada.items.iter().any(|item| {
+            item.keyword == "torn-log"
+                && item.detail.contains("B-4")
+                && item.detail.contains("public list")
+        }));
+        assert_eq!(loaded.geography.field_notes_for(ada_id).len(), 1);
+        let note = loaded.geography.field_note(ada_id, "delisted-floor").unwrap();
+        assert!(note.note.contains("struck from the public list"));
+        assert_eq!(note.place_key.as_deref(), Some("service-corridor"));
+        let bob = loaded.operators.iter().find(|op| op.id == bob_id).unwrap();
+        assert!(!bob.flags.contains(undernet::READ_TERMINAL_FLAG));
+        assert!(bob.items.iter().all(|item| item.keyword != "torn-log"));
+        assert!(loaded.geography.field_notes_for(bob_id).is_empty());
+
+        let ghost = PlayerId::new();
+        let err = store
+            .commit(&[
+                PersistOp::Discovery {
+                    id: Uuid::new_v4(),
+                    region_id: None,
+                    local_x: 0,
+                    local_y: 0,
+                    kind: "field".into(),
+                    note: "should not stick".into(),
+                    actor_id: Some(ada_id),
+                    created_at: 9,
+                    content_key: Some("should-not-stick".into()),
+                    title: Some("Nope".into()),
+                    place_key: Some("service-corridor".into()),
+                },
+                PersistOp::Flag { operator_id: ghost, flag: undernet::READ_TERMINAL_FLAG.into() },
+                PersistOp::Item {
+                    operator_id: ghost,
+                    keyword: "torn-log".into(),
+                    name: "torn log".into(),
+                    detail: "partial".into(),
+                },
+            ])
+            .await;
+        assert!(err.is_err());
+        let loaded = store.load().await.unwrap();
+        assert!(loaded.geography.field_note(ada_id, "should-not-stick").is_none());
+        assert_eq!(loaded.geography.field_notes_for(ada_id).len(), 1);
+        assert_eq!(loaded.operators.len(), 2);
+        assert!(loaded.operators.iter().all(|op| op.id != ghost));
+        let ada = loaded.operators.iter().find(|op| op.id == ada_id).unwrap();
+        assert_eq!(ada.items.iter().filter(|item| item.keyword == "torn-log").count(), 1);
+    }
+
+    #[tokio::test]
     async fn field_notes_migrate_existing_rows_and_survive_restart() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("legacy.sqlite");

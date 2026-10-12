@@ -104,7 +104,7 @@ Spectators, if a future mode adds them, can look and read. They cannot move, ins
 - `journal read <id>` shows one entry: title, finding, a way back, and the stable place key.
 - `journal record` keeps the notable discovery at your current place. Recording the same discovery again does not add a second copy.
 
-Ids such as `survey-mark` or `lm:undernet:1:stone:0:0:5:13` name the discovery, not the database row. Two operators can record the same id. `journal read` only opens the caller's own entry. A missing id, including another operator's, answers `No journal entry matches`.
+Ids such as `survey-mark`, `delisted-floor`, or `lm:undernet:1:stone:0:0:5:13` name the discovery, not the database row. Two operators can record the same id. `journal read` only opens the caller's own entry. A missing id, including another operator's, answers `No journal entry matches`.
 
 Wilderness `inspect` names the landmark and, on some tiles, an unusual detail worth recording. Ordinary ground says there is nothing unusual. Look text for landmarks stays the short generated line; inspection is the longer note. Neither changes the generator. The place description stays put. The same inspection is kept in a `noticed` panel (and still copied to your private feed) until you inspect something else, so a later `say` or step does not hide it. `journal` opens in a notes panel beside that place. `look` closes the notes and returns to the place alone. Help, the map, and `who` use the same return.
 
@@ -150,7 +150,7 @@ Hints walk open tiles inside the current birth cell. Water and rock are not step
 
 You start with a loyalty chip. It opens nothing.
 
-In the Abandoned Exchange, `inspect terminal` tears off a log scrap. At the Old Relay, `inspect relay` yields a cipher plate. Back at the relay, `go archive` opens the Black Archive. Before that, the door answers that it is sealed. The cipher plate is still required. Field notes do not open the archive.
+At the Old Relay, `inspect relay` yields a cipher plate. Back at the relay, `go archive` opens the Black Archive. Before that, the door answers that it is sealed. The cipher plate is still required. Field notes do not open the archive. The torn page in the Abandoned Exchange is a separate optional note; see The delisted floor.
 
 ## The unfiled survey
 
@@ -163,6 +163,23 @@ Player-facing text reveals the path one step at a time. The ending is not in `he
 3. At the Old Relay, `inspect dish` mentions a scuff. Before the flag, that is all, and `journal record` refuses. After the flag, the dish matches the fiber: the relay crew swung the dish toward the gate, closed the survey, and never filed it because the archive was already sealed. `journal record` keeps `survey-closure`.
 
 The stone is an authored overlay in presentation. It is not a terrain edit and not a new landmark in `generate_region`. Version 1's fingerprint stays `0x8812_F1DB_241C_39A1`.
+
+## The delisted floor
+
+This chain is optional and solo. It uses the Service Corridor panel, the Abandoned Exchange terminal, and, only as corroboration, the Black Archive stacks. It does not grant the cipher plate and does not change the archive door. A player can ignore it and keep using the city.
+
+Player-facing text reveals the connection one step at a time. The ending is not in `help`.
+
+The panel and the terminal are shared objects. The code on the panel is part of that shared description. Reading the terminal sets one operator's `read-terminal` flag and gives that operator a torn log. The terminal stays mounted. Another operator can take a separate page. Neither flag is announced.
+
+1. In the Service Corridor, `inspect panel` shows the lowest floor crossed out. The stroke misses a code at the end: B-4. The room description does not repeat it. `journal record` waits, because the strike is not yet explained.
+2. One floor down, `inspect terminal` tears off a single page. The page's last line is B-4, the code on the service panel. A later hand wrote that the room was struck from the public list, and that the lock was left with the relay. A second inspect says the terminal has nothing new and does not grant a second page. `inspect torn-log` shows the same page. The carried scrap does not include the journal hint.
+3. Back at the panel, inspection matches the scrap to the strike: the marker took the room off the public list and left the code. `journal record` keeps one note, `delisted-floor`. The same key can be recorded at the terminal, the panel, or (once the flag is set) in the Black Archive. Recording it again does not add a row.
+4. An operator who has also opened the archive can `inspect stacks`. With the flag, the empty shelf is tagged B-4. Without the flag, the stacks text is unchanged. The shelf does not contain the missing file.
+
+The exchange ticker still reads `ARCHIVE LOCKED`. This note does not say how to open the door. What was filed under B-4, and why the floor was delisted, stays unresolved.
+
+Personal knowledge is the existing flag, the `torn-log` item, and the field note. There is no new table. `generate_region` is unchanged.
 
 ## Tone
 

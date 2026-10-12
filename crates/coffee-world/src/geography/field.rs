@@ -183,6 +183,47 @@ pub fn closure_inspect_text() -> String {
     format!("{}\n{JOURNAL_HINT}", survey_closure().note)
 }
 
+/// One field note for the delisted floor. The panel, the torn page, and the archive
+/// shelf can all record this same key. None of them open the Black Archive.
+pub const DELISTED_FLOOR_ID: &str = "delisted-floor";
+
+pub fn delisted_floor() -> AuthoredFinding {
+    AuthoredFinding {
+        content_key: DELISTED_FLOOR_ID.to_string(),
+        title: "Delisted floor".into(),
+        note: "The service panel's lowest line is crossed out, but B-4 remains. \
+               The torn log uses the same code and says the room was struck from the public list. \
+               The lock was left with the relay."
+            .into(),
+    }
+}
+
+pub fn delisted_panel_waiting() -> &'static str {
+    "The lowest line is crossed out. The code is still there, \
+     and you have nothing yet that explains the strike."
+}
+
+pub fn delisted_terminal_waiting() -> &'static str {
+    "The terminal still has a page mounted. You have not read it."
+}
+
+/// Personal rereading of the shared panel, once this operator holds the torn page.
+pub fn panel_after_log() -> String {
+    format!(
+        "B-4 matches the scrap from the terminal. The marker struck that room off the public list and left the code where it was.\n{JOURNAL_HINT}"
+    )
+}
+
+/// The readable page, plus the journal hint. The carried item keeps the page alone.
+pub fn torn_page_text() -> String {
+    format!("{}\n{JOURNAL_HINT}", undernet::TORN_LOG_DETAIL)
+}
+
+/// Corroboration on the archive shelf. The gap stays empty.
+pub fn stacks_after_log() -> &'static str {
+    "The gap's shelf tag is still B-4, the code from the torn log."
+}
+
 /// Readable label and a way back with existing movement commands.
 pub fn describe_place(place_key: &str) -> (String, String) {
     if let Some(pos) = WildernessPos::parse(place_key) {
@@ -210,6 +251,7 @@ pub fn describe_place(place_key: &str) -> (String, String) {
             "roof-array" => "From the Coffee Shop, go up.",
             "old-relay" => "From the Cooling Tunnels or the Abandoned Exchange, go relay.",
             "abandoned-exchange" => "From the Service Corridor, go down.",
+            "service-corridor" => "From the Exchange, go service.",
             "coffee-shop" => "New operators appear here.",
             "black-archive" => "From the Old Relay, go archive, once the door answers.",
             _ => "map shows the Undernet exits.",
@@ -401,6 +443,15 @@ mod tests {
         assert!(mark.text.contains("does not say which dish"));
         assert!(survey_closure().note.contains("never filed"));
         assert!(survey_look_line().contains("inspect mark"));
+        assert!(!survey_closure().note.contains("B-4"));
+        assert!(!delisted_floor().note.contains("never filed"));
+        assert!(!delisted_floor().note.contains("cipher"));
+        assert!(delisted_floor().note.contains("B-4"));
+        assert!(delisted_floor().note.contains("public list"));
+        assert!(panel_after_log().contains("public list"));
+        assert!(torn_page_text().contains("service panel"));
+        assert!(!stacks_after_log().contains("journal record"));
+        assert!(!delisted_panel_waiting().contains("public list"));
     }
 
     #[test]

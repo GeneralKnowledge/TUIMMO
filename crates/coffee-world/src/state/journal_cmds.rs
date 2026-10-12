@@ -9,12 +9,14 @@ use terminus_core::{
 use uuid::Uuid;
 
 use crate::geography::{
-    format_entry, format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch,
-    survey_closure, survey_finding, AuthoredFinding, JournalLine, WildernessPos, FIELD_KIND,
-    SURVEY_MARK_FLAG, SURVEY_MARK_ID,
+    delisted_floor, delisted_panel_waiting, delisted_terminal_waiting, format_entry,
+    format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch, survey_closure,
+    survey_finding, AuthoredFinding, JournalLine, WildernessPos, FIELD_KIND, SURVEY_MARK_FLAG,
+    SURVEY_MARK_ID,
 };
 use crate::model::PersistOp;
 use crate::state::{Transition, WorldState};
+use crate::undernet::READ_TERMINAL_FLAG;
 
 const USAGE: &str = "usage: journal [recent|read <id>|record]";
 
@@ -215,6 +217,24 @@ impl WorldState {
                 "The dish is scuffed, but you have nothing yet that explains it.".into(),
             ));
         }
+        if matches!(location.as_str(), "service-corridor" | "abandoned-exchange" | "black-archive")
+        {
+            let read_terminal =
+                self.operators.get(&player).is_some_and(|op| op.flags.contains(READ_TERMINAL_FLAG));
+            if read_terminal {
+                return Ok(RecordOffer::Ready(PlacedFinding {
+                    finding: delisted_floor(),
+                    place_key: location,
+                    wild: None,
+                }));
+            }
+            if location == "service-corridor" {
+                return Ok(RecordOffer::Waiting(delisted_panel_waiting().into()));
+            }
+            if location == "abandoned-exchange" {
+                return Ok(RecordOffer::Waiting(delisted_terminal_waiting().into()));
+            }
+        }
         Ok(RecordOffer::Empty("Nothing here asks for a field note.".into()))
     }
 }
@@ -247,9 +267,10 @@ mod tests {
     use super::*;
     use crate::geography::{
         gate_identity, generate_region, landmark_sight, survey_position, LandmarkKind,
-        ENTERED_KIND, SURVEY_CLOSURE_ID, SURVEY_SCRATCH_ID,
+        DELISTED_FLOOR_ID, ENTERED_KIND, SURVEY_CLOSURE_ID, SURVEY_SCRATCH_ID,
     };
     use crate::state::starter_operator;
+    use crate::undernet::READ_TERMINAL_FLAG;
     use terminus_core::{Game, Permissions, SessionIdentity};
 
     fn pair() -> (WorldState, SessionId, SessionId, PlayerId, PlayerId) {
@@ -523,6 +544,218 @@ mod tests {
             .discoveries
             .iter()
             .all(|row| row.kind == ENTERED_KIND || row.actor_id != Some(ada_id)));
+    }
+
+    #[test]
+    fn delisted_floor_is_read_from_the_rooms_and_stays_private() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        for step in ["alley", "exchange", "service"] {
+            world.apply(ada, step).unwrap();
+            world.apply(bob, step).unwrap();
+        }
+        assert_eq!(world.location_key(ada).unwrap(), "service-corridor");
+        assert_eq!(world.location_key(bob).unwrap(), "service-corridor");
+        let room = world.view(ada).unwrap();
+        assert!(room.description.contains("Cable trays"));
+        assert!(!room.description.contains("B-4"));
+
+        world.apply(ada, "inspect panel").unwrap();
+        let panel = feed(&world, ada);
+        assert!(panel.contains("crossed out"));
+        assert!(panel.contains("B-4"));
+        assert!(!panel.contains("public list"));
+        assert!(!panel.contains("journal record"));
+        assert!(world.view(ada).unwrap().finding.as_deref().unwrap_or("").contains("B-4"));
+        assert!(world.view(bob).unwrap().finding.is_none());
+        assert!(!feed(&world, bob).contains("B-4"));
+        world.apply(ada, "journal record").unwrap();
+        assert!(feed(&world, ada).contains("nothing yet"));
+        assert_eq!(field_count(&world, ada_id), 0);
+
+        world.apply(ada, "down").unwrap();
+        world.apply(bob, "down").unwrap();
+        assert_eq!(world.location_key(ada).unwrap(), "abandoned-exchange");
+        world.apply(ada, "journal record").unwrap();
+        assert!(feed(&world, ada).contains("have not read it"));
+        world.apply(ada, "inspect terminal").unwrap();
+        let page = feed(&world, ada);
+        assert!(page.contains("B-4"));
+        assert!(page.contains("service panel"));
+        assert!(page.contains("public list"));
+        assert!(page.contains("left with the relay"));
+        assert!(page.contains("journal record"));
+        assert!(!page.contains("go archive"));
+        assert!(!page.contains("cipher"));
+        assert!(world.operator(ada_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+        assert_eq!(
+            world
+                .operator(ada_id)
+                .unwrap()
+                .items
+                .iter()
+                .filter(|item| item.keyword == "torn-log")
+                .count(),
+            1
+        );
+        assert!(world.view(bob).unwrap().finding.is_none());
+        assert!(!feed(&world, bob).contains("public list"));
+        world.apply(ada, "say the lights are dim").unwrap();
+        world.apply(ada, "region the corridor is quiet").unwrap();
+        world.apply(ada, "chat wire check").unwrap();
+        let bob_feed = feed(&world, bob);
+        assert!(bob_feed.contains("the lights are dim"));
+        assert!(bob_feed.contains("the corridor is quiet"));
+        assert!(bob_feed.contains("wire check"));
+        assert!(!bob_feed.contains("public list"));
+        assert!(!bob_feed.contains("B-4"));
+        world.apply(ada, "inspect computer").unwrap();
+        let again = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(again.contains("nothing new"));
+        assert!(!again.contains("public list"));
+        assert_eq!(
+            world
+                .operator(ada_id)
+                .unwrap()
+                .items
+                .iter()
+                .filter(|item| item.keyword == "torn-log")
+                .count(),
+            1
+        );
+        world.apply(ada, "inspect torn-log").unwrap();
+        let scrap = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(scrap.contains("B-4"));
+        assert!(scrap.contains("public list"));
+        assert!(!scrap.contains("journal record"));
+
+        world.apply(ada, "up").unwrap();
+        world.apply(ada, "inspect panel").unwrap();
+        let linked = feed(&world, ada);
+        assert!(linked.contains("public list"));
+        assert!(linked.contains("journal record"));
+        assert!(world.view(ada).unwrap().finding.as_deref().unwrap_or("").contains("public list"));
+        world.apply(bob, "up").unwrap();
+        world.apply(bob, "inspect panel").unwrap();
+        let bob_panel = feed(&world, bob);
+        assert!(bob_panel.contains("B-4"));
+        assert!(!bob_panel.contains("public list"));
+        assert!(world.view(ada).unwrap().finding.as_deref().unwrap_or("").contains("public list"));
+
+        world.apply(ada, "journal record").unwrap();
+        assert!(feed(&world, ada).contains(DELISTED_FLOOR_ID));
+        world.apply(ada, "journal record").unwrap();
+        assert!(feed(&world, ada).contains("Already in your journal"));
+        assert_eq!(field_count(&world, ada_id), 1);
+        world.apply(ada, "journal read delisted-floor").unwrap();
+        let entry = overlay(&world, ada);
+        assert!(entry.contains("Delisted floor"));
+        assert!(entry.contains("public list"));
+        assert!(entry.contains("left with the relay"));
+        assert!(entry.contains("From the Exchange, go service."));
+        assert!(entry.contains("service-corridor"));
+        assert!(!entry.contains("cipher"));
+        assert!(!entry.contains("never filed"));
+        world.apply(ada, "inspect panel").unwrap();
+        assert!(feed(&world, ada).contains("public list"));
+        assert_eq!(field_count(&world, ada_id), 1);
+
+        world.apply(bob, "journal").unwrap();
+        assert!(overlay(&world, bob).contains("empty"));
+        let leaked = world.apply(bob, "journal read delisted-floor").unwrap_err();
+        assert!(leaked.to_string().contains("No journal entry matches"));
+        assert_eq!(field_count(&world, bob_id), 0);
+        assert!(!world.operator(bob_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+        assert!(!world.operator(ada_id).unwrap().flags.contains(SURVEY_MARK_FLAG));
+        assert!(!world.operator(ada_id).unwrap().flags.contains("cipher-plate"));
+
+        world.apply(ada, "down").unwrap();
+        world.apply(ada, "relay").unwrap();
+        assert_eq!(world.location_key(ada).unwrap(), "old-relay");
+        let sealed = world.apply(ada, "go archive").unwrap_err();
+        assert!(sealed.to_string().contains("sealed"));
+        assert!(sealed.to_string().contains("cipher plate"));
+        world.apply(ada, "inspect relay").unwrap();
+        world.apply(ada, "go archive").unwrap();
+        assert_eq!(world.view(ada).unwrap().location_name, "The Black Archive");
+        world.apply(ada, "inspect stacks").unwrap();
+        let stacks = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(stacks.contains("route numbers"));
+        assert!(stacks.contains("B-4"));
+        assert!(stacks.contains("torn log"));
+        world.apply(ada, "journal record").unwrap();
+        assert!(feed(&world, ada).contains("Already in your journal"));
+        assert_eq!(field_count(&world, ada_id), 1);
+
+        for step in ["exchange", "alley", "down", "relay"] {
+            world.apply(bob, step).unwrap();
+        }
+        assert_eq!(world.location_key(bob).unwrap(), "old-relay");
+        let bob_sealed = world.apply(bob, "go archive").unwrap_err();
+        assert!(bob_sealed.to_string().contains("sealed"));
+        world.apply(bob, "inspect relay").unwrap();
+        world.apply(bob, "go archive").unwrap();
+        world.apply(bob, "inspect stacks").unwrap();
+        let bob_stacks = world.view(bob).unwrap().finding.unwrap_or_default();
+        assert!(bob_stacks.contains("route numbers"));
+        assert!(!bob_stacks.contains("B-4"));
+        assert!(!bob_stacks.contains("public list"));
+        world.apply(bob, "journal record").unwrap();
+        assert!(feed(&world, bob).contains("Nothing here asks"));
+        assert_eq!(field_count(&world, bob_id), 0);
+        assert!(world.operator(bob_id).unwrap().flags.contains("cipher-plate"));
+        assert!(!world.operator(bob_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+    }
+
+    #[test]
+    fn a_failed_delisting_commit_keeps_no_partial_discovery() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        for step in ["alley", "exchange", "service", "down"] {
+            world.apply(ada, step).unwrap();
+        }
+        let geography = world.geography_snapshot();
+        let operator = world.operator(ada_id).cloned().unwrap();
+        let log = world.log_snapshot();
+        world.apply(ada, "inspect terminal").unwrap();
+        assert!(world.operator(ada_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+        world.restore_geography(geography);
+        world.insert_operator(operator);
+        world.replace_log(log);
+        assert!(!world.operator(ada_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+        assert!(world
+            .operator(ada_id)
+            .unwrap()
+            .items
+            .iter()
+            .all(|item| item.keyword != "torn-log"));
+        assert!(!feed(&world, ada).contains("public list"));
+        assert_eq!(field_count(&world, ada_id), 0);
+
+        world.apply(ada, "inspect terminal").unwrap();
+        let geography = world.geography_snapshot();
+        let operator = world.operator(ada_id).cloned().unwrap();
+        let log = world.log_snapshot();
+        world.apply(ada, "up").unwrap();
+        world.apply(ada, "journal record").unwrap();
+        assert_eq!(field_count(&world, ada_id), 1);
+        world.restore_geography(geography);
+        world.insert_operator(operator);
+        world.replace_log(log);
+        assert!(world.operator(ada_id).unwrap().flags.contains(READ_TERMINAL_FLAG));
+        assert!(world
+            .operator(ada_id)
+            .unwrap()
+            .items
+            .iter()
+            .any(|item| item.keyword == "torn-log"));
+        assert_eq!(field_count(&world, ada_id), 0);
+        assert!(world
+            .geography
+            .discoveries
+            .iter()
+            .all(|row| row.content_key.as_deref() != Some(DELISTED_FLOOR_ID)));
+        world.apply(ada, "up").unwrap();
+        world.apply(ada, "journal").unwrap();
+        assert!(overlay(&world, ada).contains("empty"));
     }
 
     #[test]
