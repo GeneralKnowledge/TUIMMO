@@ -20,9 +20,7 @@ ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@127.0.0.1
 
 There is no operating-system shell. The first login creates an account when registration is open (the default). The password must be 8–128 characters. Usernames are 3–16 characters: a letter, then letters, digits, or `_`. A second login with the same name returns the same operator, including their last location.
 
-Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `inspect` a landmark or the roof mast, then `journal record` if it is worth keeping. `help` lists the commands.
-
-Stop the server with Ctrl-C and start it again. Both operators are still where they were.
+Stop the server with Ctrl-C and start it again. Operators are still where they were.
 
 A local TUI, without SSH, can attach to a running server:
 
@@ -35,6 +33,21 @@ Create an account without putting the password in the process list:
 ```bash
 COFFEE_PASSWORD='a-long-secret' cargo run -p coffee-server -- account create --username ada --operator-name Ada
 ```
+
+## First session
+
+You arrive in the Undernet, in the Coffee Shop. The world stays when you leave, and other operators share it. You can explore alone. A new operator sees a short note; the same account does not get that page on every reconnect.
+
+1. `look` — the room, the exits, and what is here.
+2. `go alley` — Neon Alley, next door. `shop` comes back. `up` is the Roof Array, and `down` returns to the shop.
+3. `inspect counter` — read something in the room. The noticed panel keeps the last reading.
+4. `help` — short topics: `help around`, `help people`, `help explore`, `help stuck`, or `help look` for one command. `help commands` is the full list.
+5. `say hello` speaks in this room, if anyone is here. `chat hello` reaches operators who are online, anywhere. Neither is required. `who` shows who is actually here.
+6. `journal` is a private notebook. `waypoint add shop` remembers where you are standing. Both are optional, and only you can read them.
+7. `welcome` shows the arrival note again. `look` clears the notes page.
+8. `quit` leaves. The same account returns you to the place you left.
+
+`map` shows the city. Nothing in these commands is a required task. From the Roof Array you can walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, and speak with `region`.
 
 ## Layout
 
@@ -77,6 +90,7 @@ Docs:
 
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
+- A short arrival note for a new operator at the Coffee Shop, and `help` topics (`around`, `people`, `explore`, `commands`, `stuck`). `welcome` shows the note again
 - Header, location, a noticed panel for the latest inspection, status, scrollable feed, and a command prompt with history and completion
 - Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, persistent `mail`, `emote`, profiles, mutual friends, and ignore/block
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts

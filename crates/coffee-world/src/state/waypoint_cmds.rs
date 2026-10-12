@@ -120,6 +120,7 @@ impl WorldState {
         let rows = self.waypoints_for(player);
         let text = if rows.is_empty() {
             "You have no waypoints.\n\
+             Only you can see them.\n\
              `waypoint add <name>` saves where you are standing.\n\
              `look` returns to the place."
                 .to_string()

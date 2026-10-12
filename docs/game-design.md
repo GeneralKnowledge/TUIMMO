@@ -20,13 +20,24 @@ The Coffee Shop -- Neon Alley -- The Exchange -- Stack Market
 
 `map` inside the city prints this graph with your room marked. The archive door is hidden until you are carrying a cipher plate.
 
+## Arriving
+
+A new operator who is still in the Coffee Shop, carrying only the loyalty chip and with no notes of their own, gets a short arrival page. It says they are in the Undernet, that the world stays when they leave, and that other operators share it. It offers `look`, `go alley`, `inspect counter`, and `help`. It does not assign a task.
+
+`look` clears that page. `welcome` shows it again. The same account does not get the page on every reconnect. One line in that operator's own feed says help is available. Other operators do not see the line.
+
+`seen-welcome` and `hint-inspect` remember those two notes. They grant nothing: no travel, no item, and no journal row. The first successful `inspect` adds one private line about the noticed panel, and does not repeat it.
+
+`help` with no arguments lists topics: `around`, `people`, `explore`, `commands`, and `stuck`. `help <command>` still explains that command, including why someone might use it. `help chat` is the chat command. `help move` is `go`, because `move` is already an alias.
+
 From the Roof Array, `outskirts` steps through a break in the fencing onto the gate. The gate is packed earth. West is open ground. Water blocks north, east, and south, and the description says so. `map` draws the 16 by 16 region you are standing in. `city`, from the gate tile, returns to the roof. The ten rooms are unchanged. The land beyond them is described in [world architecture](world-architecture.md).
 
 ## Commands
 
 | Command | Aliases | Effect |
 | --- | --- | --- |
-| `help` | `?` | List commands, or `help go` |
+| `help` | `?` | Topics `around`, `people`, `explore`, `commands`, `stuck`, or one command |
+| `welcome` | | Show the arrival note again |
 | `look` | `l` | Current room, exits, people, objects |
 | `map` | | ASCII map |
 | `who` | | Operators in the world, and who is here |
