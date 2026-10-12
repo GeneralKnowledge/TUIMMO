@@ -3,6 +3,7 @@
 //! The gate tile is an authored seam back to the Undernet. It does not alter the
 //! baseline the generator returns.
 
+use super::density::UrbanContext;
 use super::generate::{GeneratedRegion, LandmarkKind, Terrain, Tile};
 use super::identity::{shift, IdentityError, WildernessPos, REGION_SIZE};
 use super::records::{
@@ -148,14 +149,15 @@ pub fn describe_tile(
         .tile(pos.local_x, pos.local_y)
         .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
     let tile = effective_tile(pos, baseline, geo);
+    let urban = UrbanContext::at(pos);
     let title = if pos.is_gate() {
         "The Squalor".to_string()
     } else if let Some(entrance) = subway::entrance_at(pos) {
         entrance.surface_label.to_string()
     } else {
-        tile.terrain.label().to_string()
+        format!("{} — {}", tile.terrain.label(), urban.title_suffix())
     };
-    let mut lines = vec![terrain_prose(pos, tile, generated, geo)];
+    let mut lines = vec![terrain_prose(pos, tile, generated, geo, urban)];
     if tile.metro {
         if let Some(entrance) = subway::entrance_at(pos) {
             lines.push(format!(
@@ -167,6 +169,12 @@ pub fn describe_tile(
     }
     if let Some(kind) = tile.landmark {
         lines.push(kind.prose().to_string());
+    }
+    if let Some(detail) = urban.detail_look_line() {
+        // Story and texture stay off the gate/metro seams; those own the look.
+        if !tile.gate && !tile.metro {
+            lines.push(detail.to_string());
+        }
     }
     for sight in markers_here {
         let mut line = match sight.kind.as_str() {
@@ -206,6 +214,8 @@ pub fn describe_tile(
         format!("atlas ({placement_x}, {placement_y})"),
         format!("generator v{}", pos.identity.generation_version),
         format!("tile {},{}", pos.local_x, pos.local_y),
+        urban.map_header_district(),
+        urban.band.label().to_string(),
     ];
     let mut objects = vec![(tile.terrain.keyword().to_string(), tile.terrain.label().to_string())];
     if tile.metro {
@@ -215,6 +225,13 @@ pub fn describe_tile(
     }
     if let Some(kind) = tile.landmark {
         objects.push((kind.keyword().to_string(), kind.name().to_string()));
+    }
+    if !tile.gate && !tile.metro {
+        if let Some(story) = urban.story {
+            objects.push((story.keyword().to_string(), story.label().to_string()));
+        } else if let Some(trace) = urban.trace {
+            objects.push((trace.keyword().to_string(), trace.label().to_string()));
+        }
     }
     for sight in markers_here {
         let label = match sight.kind.as_str() {
@@ -229,7 +246,7 @@ pub fn describe_tile(
     TileScene {
         title,
         description: lines.join("\n"),
-        map: render_map(pos, generated, geo, markers_in_region, placement_x, placement_y),
+        map: render_map(pos, generated, geo, markers_in_region, placement_x, placement_y, &urban),
         objects,
         status,
     }
@@ -240,6 +257,7 @@ fn terrain_prose(
     tile: EffectiveTile,
     generated: &GeneratedRegion,
     geo: &GeographyState,
+    urban: UrbanContext,
 ) -> String {
     if tile.gate {
         let mut text = format!(
@@ -255,16 +273,16 @@ Beyond it, abandoned towers stretch without an end you can trust. \
         }
         return text;
     }
-    let base = match tile.terrain {
-        Terrain::Grass => {
-            "Open street and cracked courtyard. Wind still carries the Hub's dust this far."
+    let base = if tile.metro {
+        // Metro landings keep a short civic seam line; district prose sits around them.
+        match urban.band {
+            crate::geography::DensityBand::NearHub => {
+                "Municipal landing on a still-legible street. Routes fan out into the Squalor."
+            }
+            _ => "Municipal landing. The stair is clearer than the streets it opens onto.",
         }
-        Terrain::Forest => "Derelict residential towers crowd the lane. Walkways sag between them.",
-        Terrain::Scrub => {
-            "Rubble yard and stripped shopfronts. Cable and sheet metal wait to be claimed."
-        }
-        Terrain::Water => "A flooded cut. There is no footing.",
-        Terrain::Rock => "A sealed or collapsed structure. There is no footing.",
+    } else {
+        urban.ordinary_prose(tile.terrain)
     };
     if tile.modified {
         format!("{base}\nThe ground here has been changed.")
@@ -280,6 +298,7 @@ fn render_map(
     markers: &[(u8, u8, char)],
     placement_x: i32,
     placement_y: i32,
+    urban: &UrbanContext,
 ) -> String {
     let mut rows = Vec::with_capacity(EDGE_LINES);
     let height = usize::try_from(REGION_SIZE).unwrap_or(16);
@@ -315,7 +334,7 @@ fn render_map(
     }
     format!(
         "\
-epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}  surface
+epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}  surface  {} / {}
 {}
 @ you  + Hub gate  m metro  * landmark  M marker  C cabin  S sign  T trail
 . street  t towers  , rubble  ~ flood  ^ sealed",
@@ -323,6 +342,8 @@ epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}  s
         pos.identity.origin_x,
         pos.identity.origin_y,
         pos.identity.generation_version,
+        urban.map_header_district(),
+        urban.band.label(),
         rows.join("\n"),
     )
 }
@@ -450,6 +471,15 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "door"
             | "mark"
             | "journal"
+            | "directory"
+            | "notice"
+            | "mailbox"
+            | "vending"
+            | "timetable"
+            | "barrier"
+            | "advert"
+            | "clinic"
+            | "corridor"
     )
 }
 
@@ -629,5 +659,41 @@ mod tests {
         assert!(scene.map.contains("atlas (40, -3)"));
         assert!(scene.map.contains('@'));
         assert_eq!(scene.title, "The Squalor");
+    }
+
+    #[test]
+    fn look_titles_carry_district_and_block_without_touching_fingerprint() {
+        let generated = generate_region(gate_identity()).unwrap();
+        assert_eq!(fingerprint(&generated), 0x8812_F1DB_241C_39A1);
+        let street = WildernessPos { identity: gate_identity(), local_x: 4, local_y: 4 };
+        let scene = describe_tile(street, &generated, &GeographyState::default(), &[], &[]);
+        assert!(scene.title.contains('—'), "{}", scene.title);
+        assert!(
+            scene.title.contains("residential")
+                || scene.title.contains("commercial")
+                || scene.title.contains("civic"),
+            "{}",
+            scene.title
+        );
+        assert!(
+            scene.map.contains("near the Hub")
+                || scene.map.contains("fringe")
+                || scene.map.contains("deep")
+        );
+        assert!(scene.description.lines().count() >= 1);
+    }
+
+    #[test]
+    fn clinic_story_appears_on_look_and_as_an_object() {
+        use crate::geography::density::{CLINIC_DIRECTORY_LOCAL_X, CLINIC_DIRECTORY_LOCAL_Y};
+        let generated = generate_region(gate_identity()).unwrap();
+        let pos = WildernessPos {
+            identity: gate_identity(),
+            local_x: CLINIC_DIRECTORY_LOCAL_X,
+            local_y: CLINIC_DIRECTORY_LOCAL_Y,
+        };
+        let scene = describe_tile(pos, &generated, &GeographyState::default(), &[], &[]);
+        assert!(scene.description.contains("Ward Clinic"), "{}", scene.description);
+        assert!(scene.objects.iter().any(|(keyword, _)| keyword == "directory"));
     }
 }
