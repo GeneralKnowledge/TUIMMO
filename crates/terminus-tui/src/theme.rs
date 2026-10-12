@@ -1,6 +1,6 @@
 //! Colours and border style. Games supply a palette; the engine default is neutral.
 
-use ratatui::style::Color;
+use ratatui::style::{Color, Style};
 use ratatui::widgets::BorderType;
 
 #[derive(Clone, Debug)]
@@ -16,6 +16,8 @@ pub struct Theme {
     pub region: Color,
     pub private: Color,
     pub system: Color,
+    /// Cell background. [`Color::Reset`] follows the terminal.
+    pub background: Color,
     pub ascii: bool,
 }
 
@@ -33,8 +35,14 @@ impl Theme {
             region: Color::Green,
             private: Color::Magenta,
             system: Color::DarkGray,
+            background: Color::Reset,
             ascii: false,
         }
+    }
+
+    /// Foreground drawn on the theme ground.
+    pub fn ink(&self, foreground: Color) -> Style {
+        Style::default().fg(foreground).bg(self.background)
     }
 
     pub fn border_type(&self) -> BorderType {
