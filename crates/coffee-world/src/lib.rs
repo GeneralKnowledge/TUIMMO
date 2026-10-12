@@ -16,9 +16,25 @@ pub mod settlement;
 pub mod social;
 pub mod state;
 pub mod store;
+pub mod subway;
 pub mod theories;
 pub mod undernet;
 pub mod waypoint;
+
+/// Locations and exits seeded on every startup: Hub rooms plus subway stations.
+pub fn seed_locations() -> Vec<undernet::LocationDef> {
+    undernet::locations().iter().copied().chain(subway::locations().iter().copied()).collect()
+}
+
+/// Static exits reseeded on startup, including ordinary subway hops.
+pub fn seed_exits() -> Vec<undernet::ExitDef> {
+    undernet::all_exits().into_iter().chain(subway::station_exits().iter().copied()).collect()
+}
+
+/// Resolve a hand-authored static place (Hub room or subway station).
+pub fn static_location(id: &str) -> Option<&'static undernet::LocationDef> {
+    undernet::location(id).or_else(|| subway::location(id))
+}
 
 pub use auth::{
     canonical_username, dummy_hash, hash_password, validate_operator_name, validate_password,

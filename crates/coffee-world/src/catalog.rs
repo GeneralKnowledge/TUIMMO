@@ -21,7 +21,7 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "map",
             aliases: &[],
-            summary: "Show the Undernet map or outskirts chart",
+            summary: "Show the Hub map, Squalor chart, or subway diagram",
             usage: "map",
             args: ArgMode::None,
         },
@@ -49,7 +49,7 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "chat",
             aliases: &["gsay"],
-            summary: "Speak to the whole Undernet",
+            summary: "Speak to the whole world",
             usage: "chat <message>",
             args: ArgMode::Rest { required: true },
         },
@@ -161,14 +161,14 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "mark",
             aliases: &[],
-            summary: "Leave a named marker on this outskirts tile",
+            summary: "Leave a named marker on this Squalor tile",
             usage: "mark <name>",
             args: ArgMode::RequiredWord,
         },
         CommandSpec {
             name: "build",
             aliases: &[],
-            summary: "Build a cabin or workshop on this outskirts tile",
+            summary: "Build a cabin or workshop on this Squalor tile",
             usage: "build <cabin|workshop> <name>",
             args: ArgMode::Rest { required: true },
         },

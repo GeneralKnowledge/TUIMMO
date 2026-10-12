@@ -1,6 +1,6 @@
 # Terminus + Coffee.shop
 
-Terminus is a small Rust engine for multiplayer terminal games. Coffee.shop is the reference game: a persistent cyberpunk world called the Undernet. Players connect with SSH, get a full-screen terminal UI, and share one authoritative world.
+Terminus is a small Rust engine for multiplayer terminal games. Coffee.shop is the reference game: a persistent post-disaster megacity (the Undernet) whose inhabited **Hub** is surrounded by the abandoned urban **Squalor**. Players connect with SSH, get a full-screen terminal UI, and share one authoritative world.
 
 The engine does not know about operators, locations, or the Undernet. `examples/minimal-game` builds a two-room game on Terminus alone.
 
@@ -20,7 +20,7 @@ ssh -p 2222 -o StrictHostKeyChecking=accept-new <username>@127.0.0.1
 
 There is no operating-system shell. The first login creates an account when registration is open (the default). The password must be 8–128 characters. Usernames are 3–16 characters: a letter, then letters, digits, or `_`. A second login with the same name returns the same operator, including their last location.
 
-Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` to the whole Undernet. From the Roof Array, walk the outskirts, `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `inspect` a landmark or the roof mast, then `journal record` if it is worth keeping. `help` lists the commands.
+Open a second SSH session as someone else. You can `look`, `go alley`, `say` in the room, `whisper` privately, become `friends`, and `chat` across the world. From the Roof Array, enter the Squalor (`outskirts` or `squalor`), walk abandoned streets, find a subway stair (`go metro`), `build cabin`, leave a `sign`, found a `settle`, speak with `region`/`rsay`, and pin Coffee Shop or settlement board notices. `inspect` a landmark or the roof mast, then `journal record` if it is worth keeping. `help` lists the commands.
 
 Stop the server with Ctrl-C and start it again. Both operators are still where they were.
 
@@ -44,7 +44,7 @@ COFFEE_PASSWORD='a-long-secret' cargo run -p coffee-server -- account create --u
 | `terminus-tui` | Ratatui layout, input, and the remote client loop |
 | `terminus-protocol` | Versioned length-prefixed JSON frames |
 | `terminus-ssh` | SSH gateway. Auth starts a game session, never a shell |
-| `coffee-world` | Undernet rules and SQLite persistence |
+| `coffee-world` | Hub, Squalor, subway, and SQLite persistence |
 | `coffee-server` | Hub, protocol listener, and `coffee-server` binary |
 | `examples/minimal-game` | Engine demo with no Coffee.shop dependency |
 
@@ -68,7 +68,8 @@ Docs:
 - [Architecture](docs/architecture.md)
 - [World architecture](docs/world-architecture.md)
 - [Protocol](docs/protocol.md)
-- [Undernet](docs/game-design.md)
+- [Undernet / Hub & Squalor](docs/game-design.md)
+- [Setting and subway](docs/setting-and-subway.md)
 - [Security](docs/security.md)
 - [Development](docs/development.md)
 - [Deployment](docs/deployment.md)
@@ -82,8 +83,8 @@ Docs:
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts
 - Settlements: named membership groups anchored to outskirts tiles, invites, claim/unclaim of structures, discovery without a global directory
 - Coffee Shop and settlement noticeboards with bounded, expiring posts
-- Ten linked Undernet locations, including a sealed Black Archive
-- A generated outskirts beyond the Roof Array: deterministic regions, cardinal movement, and a way back with `city`
+- Ten linked Hub locations, including a sealed Black Archive, plus a two-station subway vertical slice (one hop ≈ eight surface tiles)
+- Generated Squalor beyond the Roof Array: abandoned urban districts, deterministic regions, cardinal movement, and a way back with `city`
 - Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
 - Shared theories (`theory list`, `read`, `post observation`, `post theory`, `remove`) about the delisted floor. They persist, they are not copied from the private journal, and they do not unlock anything
 - Personal waypoints (`waypoint add`, `list`, `show`, `note`, `remove`) for places an operator has stood, with private notes and return hints
@@ -92,7 +93,7 @@ Docs:
 
 ## What this version does not do
 
-No combat, economy, guild ranks, crafting, quests, or generated NPCs. Shared theories are not a forum: there are no replies, votes, or a moderator console. Waypoints do not teleport, share a map, or reveal unexplored ground. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. `mail` is a private letter that waits for an offline operator; `whisper` is still live and is not stored. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, signs, and mailbox remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, guild ranks, crafting, quests, or generated NPCs. Shared theories are not a forum: there are no replies, votes, or a moderator console. Waypoints do not teleport, share a map, or reveal unexplored ground. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. `mail` is a private letter that waits for an offline operator; `whisper` is still live and is not stored. The Squalor is a small deterministic urban wilderness, not a finished survival game. The subway slice is two stations, not a full metro. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, signs, and mailbox remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 

@@ -126,7 +126,7 @@ pub fn cross_region_hint(from: WildernessPos, to: WildernessPos) -> String {
 /// A wilderness destination seen from a city room, when it is not the gate's birth cell.
 pub fn distant_cell_hint(to: WildernessPos) -> String {
     format!(
-        "Destination birth ({}, {}), tile {},{}. The city gate is birth (0, 0), tile {},{}. This is not a route.",
+        "Destination birth ({}, {}), tile {},{}. The Hub gate is birth (0, 0), tile {},{}. This is not a route.",
         to.identity.origin_x,
         to.identity.origin_y,
         to.local_x,
