@@ -196,6 +196,7 @@ fn explore_page() -> &'static str {
      journal record — only when a place offers a note.\n\
      waypoint add <name> — a private mark where you stand. It does not move you.\n\
      home claim — designate this Squalor place as your only home. No building required.\n\
+     home name <name> — give that home a public title.\n\
      inspect <thing> — read what is in front of you.\n\
      theory list — shared notes about the delisted floor.\n\
      A theory does not unlock anything, and it is not the journal.\n\
@@ -247,7 +248,7 @@ fn command_why(name: &str) -> &'static str {
         "build" => "Use it to raise a cabin or workshop on walkable outskirts ground.",
         "enter" => "Use it to step into a cabin or workshop on this tile.",
         "leave" => "Use it to step back out of an interior.",
-        "home" => "Use it to claim one place as your home, or to manage a cabin you own.",
+        "home" => "Use it to claim and name one place as your home, or to manage a cabin you own.",
         "workshop" => "Use it to read a workshop or its project board.",
         "sign" => "Use it to leave, read, or remove a short roadside note.",
         "trail" => "Use it to leave a trail post on this tile.",

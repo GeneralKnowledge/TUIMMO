@@ -800,12 +800,16 @@ impl Store {
                     claimed_at,
                     public_name,
                     public_description,
+                    meaningful_returns,
+                    last_departed_at,
+                    last_returned_at,
                 } => {
                     sqlx::query(
                         "INSERT INTO personal_homes (
                             id, operator_id, place_key, claimed_at, abandoned_at,
-                            public_name, public_description
-                         ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6)",
+                            public_name, public_description,
+                            meaningful_returns, last_departed_at, last_returned_at
+                         ) VALUES (?1, ?2, ?3, ?4, NULL, ?5, ?6, ?7, ?8, ?9)",
                     )
                     .bind(id.to_string())
                     .bind(operator_id.to_string())
@@ -813,16 +817,53 @@ impl Store {
                     .bind(*claimed_at as i64)
                     .bind(public_name)
                     .bind(public_description)
+                    .bind(i64::from(*meaningful_returns))
+                    .bind(last_departed_at.map(|v| v as i64))
+                    .bind(last_returned_at.map(|v| v as i64))
                     .execute(&mut *tx)
                     .await?;
                 }
                 PersistOp::HomeAbandon { id, operator_id, abandoned_at } => {
                     sqlx::query(
                         "UPDATE personal_homes
-                         SET abandoned_at = ?1
+                         SET abandoned_at = ?1, last_departed_at = NULL
                          WHERE id = ?2 AND operator_id = ?3 AND abandoned_at IS NULL",
                     )
                     .bind(*abandoned_at as i64)
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::HomeRename { id, operator_id, public_name } => {
+                    sqlx::query(
+                        "UPDATE personal_homes
+                         SET public_name = ?1
+                         WHERE id = ?2 AND operator_id = ?3 AND abandoned_at IS NULL",
+                    )
+                    .bind(public_name)
+                    .bind(id.to_string())
+                    .bind(operator_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::HomeHabitation {
+                    id,
+                    operator_id,
+                    meaningful_returns,
+                    last_departed_at,
+                    last_returned_at,
+                } => {
+                    sqlx::query(
+                        "UPDATE personal_homes
+                         SET meaningful_returns = ?1,
+                             last_departed_at = ?2,
+                             last_returned_at = ?3
+                         WHERE id = ?4 AND operator_id = ?5 AND abandoned_at IS NULL",
+                    )
+                    .bind(i64::from(*meaningful_returns))
+                    .bind(last_departed_at.map(|v| v as i64))
+                    .bind(last_returned_at.map(|v| v as i64))
                     .bind(id.to_string())
                     .bind(operator_id.to_string())
                     .execute(&mut *tx)
@@ -1062,7 +1103,8 @@ impl Store {
     async fn load_homes(&self) -> Result<HomeState, StoreError> {
         let rows = sqlx::query_as::<_, HomeSql>(
             "SELECT id, operator_id, place_key, claimed_at, abandoned_at,
-                    public_name, public_description
+                    public_name, public_description,
+                    meaningful_returns, last_departed_at, last_returned_at
              FROM personal_homes",
         )
         .fetch_all(&self.pool)
@@ -1077,6 +1119,9 @@ impl Store {
                 abandoned_at: row.abandoned_at.map(u64_col).transpose()?,
                 public_name: row.public_name,
                 public_description: row.public_description,
+                meaningful_returns: u32_col(row.meaningful_returns)?,
+                last_departed_at: row.last_departed_at.map(u64_col).transpose()?,
+                last_returned_at: row.last_returned_at.map(u64_col).transpose()?,
             });
         }
         Ok(HomeState { homes })
@@ -1256,6 +1301,10 @@ fn i32_col(value: i64) -> Result<i32, StoreError> {
 
 fn u64_col(value: i64) -> Result<u64, StoreError> {
     u64::try_from(value).map_err(|_| StoreError::Data)
+}
+
+fn u32_col(value: i64) -> Result<u32, StoreError> {
+    u32::try_from(value).map_err(|_| StoreError::Data)
 }
 
 fn local_col(value: i64) -> Result<u8, StoreError> {
@@ -1500,6 +1549,9 @@ struct HomeSql {
     abandoned_at: Option<i64>,
     public_name: String,
     public_description: String,
+    meaningful_returns: i64,
+    last_departed_at: Option<i64>,
+    last_returned_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1881,6 +1933,13 @@ mod tests {
         assert!(tables.iter().any(|name| name == "shared_theories"));
         assert!(tables.iter().any(|name| name == "shared_theory_seq"));
         assert!(tables.iter().any(|name| name == "personal_homes"));
+        let home_returns: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM pragma_table_info('personal_homes') WHERE name = 'meaningful_returns'",
+        )
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+        assert_eq!(home_returns, 1);
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -2751,6 +2810,9 @@ mod tests {
                 claimed_at: 99,
                 public_name: String::new(),
                 public_description: String::new(),
+                meaningful_returns: 0,
+                last_departed_at: None,
+                last_returned_at: None,
             }])
             .await;
         assert!(dup.is_err());
