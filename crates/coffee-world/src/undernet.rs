@@ -49,9 +49,9 @@ const RELAY_GRANT: GrantDef = GrantDef {
 /// The terminal stays mounted for everyone else.
 pub const READ_TERMINAL_FLAG: &str = "read-terminal";
 
-/// The page itself. Inspection may add a journal hint; the carried scrap does not.
-pub const TORN_LOG_DETAIL: &str = "The last readable line is B-4, the same short code left on the service panel. \
-A later hand wrote that the room was struck from the public list. The lock was left with the relay.";
+/// The page itself. The first inspection may add a journal hint; the scrap does not.
+pub const TORN_LOG_DETAIL: &str = "Last line: B-4, the code on the service panel. \
+Struck from the public list. The lock was left with the relay.";
 
 const LOG_GRANT: GrantDef = GrantDef {
     flag: READ_TERMINAL_FLAG,
@@ -59,7 +59,7 @@ const LOG_GRANT: GrantDef = GrantDef {
     item_name: "torn log",
     item_detail: TORN_LOG_DETAIL,
     first: "The terminal coughs up one readable page. You tear it free.",
-    already: "The terminal has nothing new.",
+    already: "nothing new here. The torn page is yours: `inspect log`.",
 };
 
 pub fn locations() -> &'static [LocationDef] {
