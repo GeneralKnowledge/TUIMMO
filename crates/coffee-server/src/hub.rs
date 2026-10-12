@@ -400,6 +400,8 @@ impl Actor {
         let social = self.world.social_snapshot();
         let settlements = self.world.settlement_snapshot();
         let waypoints = self.world.waypoint_snapshot();
+        let mailbox = self.world.mail_snapshot();
+        let overlays = self.world.overlay_snapshot();
         let transition = match self.world.apply(rec.session_id, &line) {
             Ok(transition) => transition,
             Err(err) => return Err(err),
@@ -411,6 +413,8 @@ impl Actor {
             self.world.restore_social(social);
             self.world.restore_settlements(settlements);
             self.world.restore_waypoints(waypoints);
+            self.world.restore_mail(mailbox);
+            self.world.restore_overlays(overlays);
             if let Some(operator) = operator {
                 self.world.insert_operator(operator);
             }

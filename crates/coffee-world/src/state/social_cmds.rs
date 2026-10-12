@@ -500,7 +500,7 @@ impl WorldState {
             Audience::Player(actor),
             None,
             format!(
-                "You ignore {name}. Their say, chat, emote, whisper, and friend requests are filtered."
+                "You ignore {name}. Their say, chat, emote, whisper, mail, and friend requests are filtered."
             ),
         );
         ops.push(note);

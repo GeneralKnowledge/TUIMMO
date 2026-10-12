@@ -216,7 +216,7 @@ impl WorldState {
         self.private_line(player, format!("Removed waypoint {}.", row.display_name), vec![op])
     }
 
-    fn require_play(&self, session_id: SessionId) -> Result<(), GameError> {
+    pub(crate) fn require_play(&self, session_id: SessionId) -> Result<(), GameError> {
         if self.permissions(session_id)?.can_play() {
             Ok(())
         } else {

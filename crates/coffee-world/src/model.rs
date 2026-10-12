@@ -249,6 +249,25 @@ pub enum PersistOp {
         id: Uuid,
         operator_id: PlayerId,
     },
+    /// Insert one letter and advance the id sequence in the same transaction.
+    MailInsert {
+        id: u64,
+        sender_id: PlayerId,
+        recipient_id: PlayerId,
+        body: String,
+        created_at: u64,
+    },
+    /// Mark the recipient's copy read. A different operator's id matches nothing.
+    MailRead {
+        id: u64,
+        recipient_id: PlayerId,
+        read_at: u64,
+    },
+    /// Delete the recipient's copy only.
+    MailDelete {
+        id: u64,
+        recipient_id: PlayerId,
+    },
 }
 
 pub const STARTER_LOCATION: &str = "coffee-shop";

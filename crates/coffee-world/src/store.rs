@@ -15,6 +15,7 @@ use crate::geography::{
     parse_seed, Discovery, GeographyState, MaterializedRegion, RegionIdentity, Structure, Terrain,
     TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC, SHARE_PRIVATE,
 };
+use crate::mail::{MailMessage, Mailbox};
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
 use crate::settlement::{
     InviteStatus, MemberRole, Settlement, SettlementInvite, SettlementMember, SettlementState,
@@ -47,6 +48,7 @@ pub struct LoadedWorld {
     pub social: SocialState,
     pub settlements: SettlementState,
     pub waypoints: Vec<Waypoint>,
+    pub mailbox: Mailbox,
 }
 
 impl Store {
@@ -111,7 +113,8 @@ impl Store {
         let social = self.load_social().await?;
         let settlements = self.load_settlements().await?;
         let waypoints = self.load_waypoints().await?;
-        Ok(LoadedWorld { operators, log, geography, social, settlements, waypoints })
+        let mailbox = self.load_mail().await?;
+        Ok(LoadedWorld { operators, log, geography, social, settlements, waypoints, mailbox })
     }
 
     pub async fn create_account(
@@ -703,6 +706,46 @@ impl Store {
                         .execute(&mut *tx)
                         .await?;
                 }
+                PersistOp::MailInsert { id, sender_id, recipient_id, body, created_at } => {
+                    let id = mail_id(*id)?;
+                    let next_id = id.checked_add(1).ok_or(StoreError::Data)?;
+                    sqlx::query(
+                        "INSERT INTO mail (id, sender_id, recipient_id, body, created_at, read_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, NULL)",
+                    )
+                    .bind(id)
+                    .bind(sender_id.to_string())
+                    .bind(recipient_id.to_string())
+                    .bind(body)
+                    .bind(*created_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                    sqlx::query(
+                        "UPDATE mail_seq SET next_id = CASE WHEN next_id < ?1 THEN ?1 ELSE next_id END
+                         WHERE singleton = 1",
+                    )
+                    .bind(next_id)
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::MailRead { id, recipient_id, read_at } => {
+                    sqlx::query(
+                        "UPDATE mail SET read_at = ?1
+                         WHERE id = ?2 AND recipient_id = ?3 AND read_at IS NULL",
+                    )
+                    .bind(*read_at as i64)
+                    .bind(mail_id(*id)?)
+                    .bind(recipient_id.to_string())
+                    .execute(&mut *tx)
+                    .await?;
+                }
+                PersistOp::MailDelete { id, recipient_id } => {
+                    sqlx::query("DELETE FROM mail WHERE id = ?1 AND recipient_id = ?2")
+                        .bind(mail_id(*id)?)
+                        .bind(recipient_id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
+                }
             }
         }
         sqlx::query(
@@ -934,6 +977,31 @@ impl Store {
         Ok(waypoints)
     }
 
+    async fn load_mail(&self) -> Result<Mailbox, StoreError> {
+        let rows = sqlx::query_as::<_, MailSql>(
+            "SELECT id, sender_id, recipient_id, body, created_at, read_at FROM mail",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut messages = Vec::with_capacity(rows.len());
+        for row in rows {
+            messages.push(MailMessage {
+                id: u64_col(row.id)?,
+                sender_id: PlayerId::from_str(&row.sender_id).map_err(|_| StoreError::Data)?,
+                recipient_id: PlayerId::from_str(&row.recipient_id)
+                    .map_err(|_| StoreError::Data)?,
+                body: row.body,
+                created_at: u64_col(row.created_at)?,
+                read_at: row.read_at.map(u64_col).transpose()?,
+            });
+        }
+        let next_id =
+            sqlx::query_scalar::<_, i64>("SELECT next_id FROM mail_seq WHERE singleton = 1")
+                .fetch_one(&self.pool)
+                .await?;
+        Ok(Mailbox::from_stored(messages, u64_col(next_id)?))
+    }
+
     async fn load_social(&self) -> Result<SocialState, StoreError> {
         let mut social = SocialState::default();
         let friends = sqlx::query_as::<_, FriendshipSql>(
@@ -1046,6 +1114,10 @@ impl Store {
         }
         Ok(state)
     }
+}
+
+fn mail_id(id: u64) -> Result<i64, StoreError> {
+    i64::try_from(id).map_err(|_| StoreError::Data)
 }
 
 fn i32_col(value: i64) -> Result<i32, StoreError> {
@@ -1255,6 +1327,16 @@ struct ModSql {
     reason: String,
     actor_id: Option<String>,
     created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct MailSql {
+    id: i64,
+    sender_id: String,
+    recipient_id: String,
+    body: String,
+    created_at: i64,
+    read_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1643,6 +1725,8 @@ mod tests {
         assert!(tables.iter().any(|name| name == "settlement_members"));
         assert!(tables.iter().any(|name| name == "settlement_invites"));
         assert!(tables.iter().any(|name| name == "waypoints"));
+        assert!(tables.iter().any(|name| name == "mail"));
+        assert!(tables.iter().any(|name| name == "mail_seq"));
         let access_col: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('world_structures') WHERE name = 'access'",
         )
@@ -2140,5 +2224,97 @@ mod tests {
         assert!(err.is_err());
         let loaded = store.load().await.unwrap();
         assert!(loaded.waypoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn mail_survives_reopen_and_a_failed_write_keeps_the_old_mailbox() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("coffee.sqlite");
+        let store = Store::open(&path).await.unwrap();
+        store.seed(undernet::locations(), &undernet::all_exits()).await.unwrap();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
+        let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "Robert");
+        store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+        store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+
+        let loaded = store.load().await.unwrap();
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_mail(loaded.mailbox);
+        let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+        let ada_session = ada_ident.session_id;
+        store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+        let token = "zinc-token-441";
+        let ops = world
+            .apply(ada_session, &format!("mail send bob The dish still faces the gate. {token}"))
+            .unwrap()
+            .ops;
+        assert!(store.commit(&ops).await.is_ok());
+        let leaked: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE body LIKE ?1")
+            .bind(format!("%{token}%"))
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(leaked, 0);
+
+        drop(store);
+        let store = Store::open(&path).await.unwrap();
+        let loaded = store.load().await.unwrap();
+        assert_eq!(loaded.mailbox.messages.len(), 1);
+        assert_eq!(loaded.mailbox.messages[0].recipient_id, bob_id);
+        assert_eq!(loaded.mailbox.messages[0].sender_id, ada_id);
+        assert!(loaded.mailbox.messages[0].read_at.is_none());
+        assert!(loaded.mailbox.messages[0].body.contains(token));
+        assert_eq!(loaded.mailbox.next_id, 2);
+
+        let mut world = WorldState::for_tests();
+        world.install_loaded(loaded.operators, loaded.log);
+        world.install_mail(loaded.mailbox);
+        let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+        let bob_session = bob_ident.session_id;
+        world.connect_player(bob_ident).unwrap();
+        let read_ops = world.apply(bob_session, "mail read 1").unwrap().ops;
+        store.commit(&read_ops).await.unwrap();
+        let read_back = store.load().await.unwrap();
+        assert!(read_back.mailbox.messages[0].read_at.is_some());
+        assert!(read_back.mailbox.messages[0].body.contains(token));
+        let delete_missing =
+            store.commit(&[PersistOp::MailDelete { id: 1, recipient_id: ada_id }]).await;
+        assert!(delete_missing.is_ok());
+        let still: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM mail WHERE id = 1 AND recipient_id = ?1")
+                .bind(bob_id.to_string())
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
+        assert_eq!(still, 1, "a sender cannot delete the recipient's copy");
+
+        let delete_ops = world.apply(bob_session, "mail delete 1").unwrap().ops;
+        store.commit(&delete_ops).await.unwrap();
+        let after = store.load().await.unwrap();
+        assert!(after.mailbox.messages.is_empty());
+        assert_eq!(after.mailbox.next_id, 2);
+
+        let ghost = PlayerId::new();
+        let failed = store
+            .commit(&[PersistOp::MailInsert {
+                id: 2,
+                sender_id: ada_id,
+                recipient_id: ghost,
+                body: "should roll back".into(),
+                created_at: 9,
+            }])
+            .await;
+        assert!(failed.is_err());
+        let kept = store.load().await.unwrap();
+        assert!(kept.mailbox.messages.is_empty());
+        assert_eq!(kept.mailbox.next_id, 2);
+        let seq: i64 = sqlx::query_scalar("SELECT next_id FROM mail_seq WHERE singleton = 1")
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(seq, 2);
     }
 }

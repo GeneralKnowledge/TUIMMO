@@ -28,6 +28,7 @@ use crate::waypoint::Waypoint;
 
 mod building_cmds;
 mod journal_cmds;
+mod mail_cmds;
 mod settlement_cmds;
 mod social_cmds;
 mod waypoint_cmds;
@@ -61,6 +62,7 @@ pub struct WorldState {
     pub(crate) social: crate::social::SocialState,
     pub(crate) settlements: crate::settlement::SettlementState,
     pub(crate) waypoints: Vec<Waypoint>,
+    pub(crate) mailbox: crate::mail::Mailbox,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
     pub(crate) now_ms: u64,
@@ -88,6 +90,7 @@ impl WorldState {
             social: crate::social::SocialState::default(),
             settlements: crate::settlement::SettlementState::default(),
             waypoints: Vec::new(),
+            mailbox: crate::mail::Mailbox::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
             now_ms: 0,
@@ -155,6 +158,26 @@ impl WorldState {
 
     pub fn restore_waypoints(&mut self, waypoints: Vec<Waypoint>) {
         self.waypoints = waypoints;
+    }
+
+    pub fn install_mail(&mut self, mailbox: crate::mail::Mailbox) {
+        self.mailbox = mailbox;
+    }
+
+    pub fn mail_snapshot(&self) -> crate::mail::Mailbox {
+        self.mailbox.clone()
+    }
+
+    pub fn restore_mail(&mut self, mailbox: crate::mail::Mailbox) {
+        self.mailbox = mailbox;
+    }
+
+    pub fn overlay_snapshot(&self) -> HashMap<SessionId, String> {
+        self.overlays.clone()
+    }
+
+    pub fn restore_overlays(&mut self, overlays: HashMap<SessionId, String>) {
+        self.overlays = overlays;
     }
 
     /// Physical region chat key for the player's current place.
@@ -1762,6 +1785,10 @@ impl WorldState {
         if !op.status.is_empty() {
             lines.push(format!("status: {}", op.status));
         }
+        let unread = self.mailbox.unread_for(player);
+        if unread > 0 {
+            lines.push(format!("mail: {unread} unread"));
+        }
         Ok(lines)
     }
 
@@ -1880,6 +1907,7 @@ fn handler(name: &str) -> Option<Handler> {
         "inspect" => WorldState::cmd_inspect,
         "journal" => WorldState::cmd_journal,
         "waypoint" => WorldState::cmd_waypoint,
+        "mail" => WorldState::cmd_mail,
         "mark" => WorldState::cmd_mark,
         "build" => WorldState::cmd_build,
         "enter" => WorldState::cmd_enter,
