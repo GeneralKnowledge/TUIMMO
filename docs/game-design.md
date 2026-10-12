@@ -207,7 +207,7 @@ An entry is at most 120 characters and is refused rather than trimmed. Control c
 
 Ids come from a sequence that stays ahead of deletes, so a removed entry's number is not given to a later post. You can remove only your own entry. The author is the operator id, and the name on screen is that operator's current public name. There is no moderator command. A full topic stays full until an author removes their own entry.
 
-Another operator can list and read while the author is offline. The body is not written into room, region, or global chat.
+Another operator can list and read while the author is offline. The body is not written into room, region, or global chat. `ignore` does not hide an entry. The record is public, not a directed message.
 
 ## Tone
 
