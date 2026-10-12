@@ -16,6 +16,7 @@ pub mod settlement;
 pub mod social;
 pub mod state;
 pub mod store;
+pub mod theories;
 pub mod undernet;
 pub mod waypoint;
 

@@ -45,6 +45,7 @@ From the Roof Array, `outskirts` steps through a break in the fencing onto the g
 | `inventory` | `inv`, `i` | What you carry |
 | `inspect <thing>` | `examine`, `ex` | Read an object, person, cabin, landmark, or item |
 | `journal [recent\|read <id>\|record]` | | Private field journal of authored discoveries |
+| `theory [list\|read <id>\|post <observation\|theory> <text>\|remove <id>]` | | Shared observations and theories about the delisted floor |
 | `waypoint [add\|list\|show\|note\|remove]` | | Private name and note for where you are standing |
 | `mark <name>` | | Leave a named marker on the outskirts tile |
 | `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
@@ -179,7 +180,34 @@ The panel and the terminal are shared objects. The code on the panel is part of 
 
 The exchange ticker still reads `ARCHIVE LOCKED`. This note does not say how to open the door. What was filed under B-4, and why the floor was delisted, stays unresolved.
 
-Personal knowledge is the existing flag, the `torn-log` item, and the field note. There is no new table. `generate_region` is unchanged.
+Personal knowledge is the existing flag, the `torn-log` item, and the field note. Sharing a thought about the floor is a separate `theory` post, below. `generate_region` is unchanged.
+
+## Shared theories
+
+`theory` is a community record of what operators believe may be happening. It is not a quest log, not a public journal, and not the Coffee Shop noticeboard.
+
+The private journal records a personal discovery. A shared theory records a player-authored statement. Neither confers discovery progress, items, flags, or a way into the Black Archive. Reading one does not copy the author's journal, mail, waypoint notes, or location.
+
+The only topic is `delisted-floor`. Players cannot open another topic. A later authored mystery could add a topic id beside this one; the table already stores that id. This slice does not.
+
+```
+theory
+theory list
+theory read 3
+theory post observation The panel still shows B-4.
+theory post theory The lock may still be with the relay.
+theory remove 3
+```
+
+`theory` with no arguments explains the commands. `theory list` is newest first and shows the type, the author's public name, and a short preview. `theory read <id>` shows one entry. `#3` and `3` are the same id. An observation is something the author believes they saw. A theory is an interpretation and may be wrong. The label is the author's. The game does not check it, mark it correct, or turn agreement into a flag.
+
+Publishing is deliberate. `journal record` does not copy a note here. The post does not have to contain a keyword or prove the author found the panel, the torn log, or the archive.
+
+An entry is at most 120 characters and is refused rather than trimmed. Control characters are stripped before it is stored. `delisted-floor` holds 32 entries. When it is full, the new post is refused and nothing already stored is deleted. One operator can post every 2 seconds. That gap is not kept across a server restart. The 32-entry cap is. Entries do not expire after seven days. That limit belongs to the noticeboards and is unchanged.
+
+Ids come from a sequence that stays ahead of deletes, so a removed entry's number is not given to a later post. You can remove only your own entry. The author is the operator id, and the name on screen is that operator's current public name. There is no moderator command. A full topic stays full until an author removes their own entry.
+
+Another operator can list and read while the author is offline. The body is not written into room, region, or global chat.
 
 ## Tone
 
