@@ -36,7 +36,7 @@ Hand-authored geography is code. Editing `undernet.rs` and restarting upserts na
 
 ## Adding a command
 
-Register it in the game's `CommandRegistry` (Coffee.shop does this in `coffee-world/src/catalog.rs`) and handle the canonical name in the simulation. Do not add a new top-level string match in the server. The client learns usage from the hints on `GameView`.
+Register it in the game's `CommandRegistry` (Coffee.shop does this in `coffee-world/src/state/commands.rs`) and handle the canonical name in the simulation. Do not add a new top-level string match in the server. The client learns usage from the hints on `GameView`.
 
 ## Adding a game
 
