@@ -258,6 +258,7 @@ impl Game for MiniGame {
             inventory: Vec::new(),
             feed,
             overlay: self.overlays.get(&session_id).cloned(),
+            finding: None,
             commands: self.registry.hints(),
         })
     }

@@ -77,7 +77,7 @@ Docs:
 
 - SSH into a TUI, with password authentication and a generated host key
 - Register or log in, and resume the same operator after a restart
-- Header, location, status, scrollable feed, and a command prompt with history and completion
+- Header, location, a noticed panel for the latest inspection, status, scrollable feed, and a command prompt with history and completion
 - Social Undernet: local `say`, global `chat`, regional `region`/`rsay`, private `whisper`, `emote`, profiles, mutual friends, and ignore/block
 - Homesteads: `build cabin`, enter/leave interiors, visitor access controls, signs, trail posts
 - Settlements: named membership groups anchored to outskirts tiles, invites, claim/unclaim of structures, discovery without a global directory
@@ -90,7 +90,7 @@ Docs:
 
 ## What this version does not do
 
-No combat, economy, guild ranks, crafting, quests, or generated NPCs. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
+No combat, economy, guild ranks, crafting, quests, generated NPCs, or personal waypoints. Settlements are membership groups, not map rectangles, and there is no settlement-wide remote chat. Offline private-message storage is not implemented. The outskirts are a small deterministic wilderness, not a finished survival game. One account has one live session; a new login replaces the old link. Registration is open unless you pass `--no-registration`. Session tokens live in memory and are dropped on restart; the character, relationships, cabin, settlement, and signs remain. See [security notes](docs/security.md) and [world architecture](docs/world-architecture.md).
 
 ## Next milestones
 

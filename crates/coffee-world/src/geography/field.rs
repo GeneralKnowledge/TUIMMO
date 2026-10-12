@@ -249,7 +249,8 @@ pub struct JournalLine {
 pub fn format_overview(entries: &[JournalLine]) -> String {
     if entries.is_empty() {
         return "Your field journal is empty.\n\
-                Inspect something unusual, then `journal record`."
+                Inspect something unusual, then `journal record`.\n\
+                `look` returns to the place."
             .into();
     }
     let mut lines = vec![format!("Field journal ({})", entries.len())];
@@ -264,6 +265,7 @@ pub fn format_overview(entries: &[JournalLine]) -> String {
         ));
     }
     lines.push("`journal read <id>`".into());
+    lines.push("`look` returns to the place.".into());
     lines.join("\n")
 }
 
@@ -279,13 +281,14 @@ pub fn format_recent(entries: &[JournalLine]) -> String {
         lines.push(format!("  {}", clip_chars(&entry.note, RECENT_NOTE_CHARS)));
     }
     lines.push("`journal read <id>`".into());
+    lines.push("`look` returns to the place.".into());
     lines.join("\n")
 }
 
 pub fn format_entry(entry: &JournalLine) -> String {
     let (label, hint) = describe_place(&entry.place_key);
     format!(
-        "{key} — {title}\n{label}\n{note}\nReturn: {hint}\nPlace: {place}\nRecorded: {when}",
+        "{key} — {title}\n{label}\n{note}\nReturn: {hint}\nPlace: {place}\nRecorded: {when}\n`look` returns to the place.",
         key = entry.content_key,
         title = entry.title,
         note = entry.note,

@@ -40,12 +40,11 @@ struct Bucket {
 }
 
 impl Bucket {
-    fn new() -> Self {
-        Self { tokens: COMMAND_BURST, updated: Instant::now() }
+    fn full(now: Instant) -> Self {
+        Self { tokens: COMMAND_BURST, updated: now }
     }
 
-    fn allow(&mut self) -> bool {
-        let now = Instant::now();
+    fn allow_at(&mut self, now: Instant) -> bool {
         let elapsed = now.saturating_duration_since(self.updated).as_secs_f64();
         self.updated = now;
         self.tokens = (self.tokens + elapsed * COMMAND_RATE).min(COMMAND_BURST);
@@ -55,6 +54,29 @@ impl Bucket {
         } else {
             false
         }
+    }
+}
+
+/// Per-session token bucket. One operator's burst does not spend another's.
+struct CommandLimiter {
+    buckets: HashMap<SessionId, Bucket>,
+}
+
+impl CommandLimiter {
+    fn new() -> Self {
+        Self { buckets: HashMap::new() }
+    }
+
+    fn allow(&mut self, session: SessionId) -> bool {
+        self.allow_at(session, Instant::now())
+    }
+
+    fn allow_at(&mut self, session: SessionId, now: Instant) -> bool {
+        self.buckets.entry(session).or_insert_with(|| Bucket::full(now)).allow_at(now)
+    }
+
+    fn forget(&mut self, session: SessionId) {
+        self.buckets.remove(&session);
     }
 }
 
@@ -96,7 +118,7 @@ struct Actor {
     allow_registration: bool,
     tokens: HashMap<String, TokenRec>,
     subs: HashMap<SessionId, mpsc::Sender<ServerMessage>>,
-    buckets: HashMap<SessionId, Bucket>,
+    limiter: CommandLimiter,
     auth_failures: HashMap<String, Vec<Instant>>,
     dummy_hash: String,
 }
@@ -112,7 +134,7 @@ impl Hub {
                 allow_registration,
                 tokens: HashMap::new(),
                 subs: HashMap::new(),
-                buckets: HashMap::new(),
+                limiter: CommandLimiter::new(),
                 auth_failures: HashMap::new(),
                 dummy_hash,
             };
@@ -368,8 +390,8 @@ impl Actor {
         }) else {
             return Err(GameError::Rejected("session expired".into()));
         };
-        let bucket = self.buckets.entry(rec.session_id).or_insert_with(Bucket::new);
-        if !bucket.allow() {
+        // Reject before the world sees the line. Nothing is queued, delayed, or applied.
+        if !self.limiter.allow(rec.session_id) {
             return Err(GameError::Rejected("You are sending commands too quickly.".into()));
         }
         let snapshot = self.world.log_snapshot();
@@ -407,7 +429,7 @@ impl Actor {
             return;
         };
         self.subs.remove(&rec.session_id);
-        self.buckets.remove(&rec.session_id);
+        self.limiter.forget(rec.session_id);
         match self.world.detach(rec.session_id) {
             Ok(transition) => {
                 if let Err(err) = self.store.commit(&transition.ops).await {
@@ -421,7 +443,7 @@ impl Actor {
 
     fn drop_session(&mut self, session_id: SessionId, message: &str) {
         self.tokens.retain(|_, rec| rec.session_id != session_id);
-        self.buckets.remove(&session_id);
+        self.limiter.forget(session_id);
         if let Some(tx) = self.subs.remove(&session_id) {
             let _ = tx.try_send(ServerMessage::Goodbye { message: message.into() });
         }
@@ -516,4 +538,29 @@ pub(crate) fn is_unique(err: &StoreError) -> bool {
         current = err.source();
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn command_burst_rejects_then_refills_per_session() {
+        let start = Instant::now();
+        let mut limiter = CommandLimiter::new();
+        let ada = SessionId::new();
+        let bob = SessionId::new();
+        for step in 0..20 {
+            assert!(limiter.allow_at(ada, start), "ada burst {step}");
+        }
+        assert!(!limiter.allow_at(ada, start), "the 21st command is rejected, not queued");
+        assert!(limiter.allow_at(bob, start), "bob still has a full burst");
+        let later = start + Duration::from_millis(125);
+        assert!(limiter.allow_at(ada, later), "one token returns after 125ms");
+        assert!(!limiter.allow_at(ada, later), "the same instant does not grant a second token");
+        limiter.forget(ada);
+        assert!(limiter.allow_at(ada, later), "a fresh session starts with a full burst");
+    }
 }

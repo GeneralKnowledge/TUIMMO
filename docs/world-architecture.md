@@ -104,7 +104,9 @@ Version 1 samples an absolute coordinate field. The east edge of region `(x, y)`
 
 A future version beside version 1 is not continuous with it. The seam is the epoch and version boundary, to be joined later by an explicit connection.
 
-The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoch 1 version 1 is an authored overlay. It stays walkable even if the baseline is water or a terrain modification would block it. `generate_region` itself is unchanged.
+The city gate is not part of the baseline. Tile `(8, 8)` of region `(0, 0)` epoch 1 version 1 is an authored seam. Version 1 generates water there, and water on the north, east, and south neighbours. The seam presents that one tile as packed earth and keeps it walkable, including when a terrain modification would otherwise block it. The generated grid is not rewritten, so the origin fingerprint stays `0x8812_F1DB_241C_39A1`. Look text is built from the same neighbour check movement uses: west is open, and water blocks the other three sides. `city` returns to the roof. A terrain modification on the gate is shown as recorded; it still cannot seal the city.
+
+A repeatable walk of version 1, including that seam, is locked in `geography::explore`. From the gate, 221 tiles are one walkable component and all 6 origin landmarks are reachable. The nearest is a standing stone 8 steps away. Across five birth cells, no sampled chart left a landmark on ground the start could not reach. Median steps to a first landmark stay between 4 and 10. Region `(1, 0)` holds only one landmark and `(2, -1)` holds two; the others hold six or eight. That spread is the existing feature threshold (about 3% of walkable tiles), not a reason to retune it. Water at the gate is a local seam, now described in the look text. The region map already marks every landmark with `*`.
 
 ## Persistence and migrations
 

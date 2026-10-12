@@ -312,6 +312,11 @@ mod tests {
         let clue = feed(&world, ada);
         assert!(clue.contains("one step west of the gate"));
         assert!(!clue.contains("never filed"));
+        let noticed = world.view(ada).unwrap();
+        assert!(noticed.description.contains("scratches"));
+        assert!(noticed.finding.as_deref().unwrap_or("").contains("one step west of the gate"));
+        assert!(!noticed.finding.as_deref().unwrap_or("").contains("never filed"));
+        assert!(world.view(bob).unwrap().finding.is_none());
         world.apply(ada, "journal record").unwrap();
         assert_eq!(field_count(&world, ada_id), 1);
         world.apply(ada, "journal record").unwrap();
@@ -332,6 +337,10 @@ mod tests {
         assert!(mark.contains("relay insulation"));
         assert!(mark.contains("does not say which dish"));
         assert!(!mark.contains("never filed"));
+        let on_stone = world.view(ada).unwrap();
+        assert!(on_stone.description.contains("short mark"));
+        assert!(on_stone.finding.as_deref().unwrap_or("").contains("relay insulation"));
+        assert!(!on_stone.finding.as_deref().unwrap_or("").contains("never filed"));
         assert!(world.operator(ada_id).unwrap().flags.contains(SURVEY_MARK_FLAG));
         world.apply(ada, "journal record").unwrap();
         world.apply(ada, "journal read survey-mark").unwrap();
@@ -348,6 +357,13 @@ mod tests {
         let dish = feed(&world, ada);
         assert!(dish.contains("never filed"));
         assert!(dish.contains("journal record"));
+        let relay = world.view(ada).unwrap();
+        assert!(
+            relay.description.contains("scuffed")
+                || relay.finding.as_deref().unwrap_or("").contains("scuffed")
+        );
+        assert!(relay.finding.as_deref().unwrap_or("").contains("never filed"));
+        assert!(relay.exits.iter().all(|exit| exit.keyword != "archive"));
         world.apply(ada, "journal record").unwrap();
         world.apply(ada, "journal").unwrap();
         let list = overlay(&world, ada);

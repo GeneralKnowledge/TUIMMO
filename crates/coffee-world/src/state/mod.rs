@@ -53,6 +53,8 @@ pub struct WorldState {
     pub(crate) by_player: HashMap<PlayerId, SessionId>,
     pub(crate) log: VecDeque<LogEntry>,
     pub(crate) overlays: HashMap<SessionId, String>,
+    /// Latest inspection text, per session. Not persisted and not shared.
+    pub(crate) findings: HashMap<SessionId, String>,
     pub(crate) geography: GeographyState,
     pub(crate) social: crate::social::SocialState,
     pub(crate) settlements: crate::settlement::SettlementState,
@@ -78,6 +80,7 @@ impl WorldState {
             by_player: HashMap::new(),
             log: VecDeque::new(),
             overlays: HashMap::new(),
+            findings: HashMap::new(),
             geography: GeographyState::default(),
             social: crate::social::SocialState::default(),
             settlements: crate::settlement::SettlementState::default(),
@@ -202,6 +205,7 @@ impl WorldState {
         if let Some(old) = replaced {
             self.sessions.remove(&old);
             self.overlays.remove(&old);
+            self.findings.remove(&old);
         }
         let name = identity.name.clone();
         let player_id = identity.player_id;
@@ -231,6 +235,7 @@ impl WorldState {
             return Ok(Transition { outcome: CommandOutcome::default(), ops: Vec::new() });
         };
         self.overlays.remove(&session_id);
+        self.findings.remove(&session_id);
         self.by_player.remove(&session.identity.player_id);
         let name = session.identity.name;
         let (event, op) =
@@ -393,6 +398,24 @@ impl WorldState {
 
     pub(crate) fn clear_overlay(&mut self, session_id: SessionId) {
         self.overlays.remove(&session_id);
+    }
+
+    fn remember_finding(&mut self, session_id: SessionId, text: &str) {
+        if text.is_empty() {
+            self.findings.remove(&session_id);
+        } else {
+            self.findings.insert(session_id, text.to_string());
+        }
+    }
+
+    fn inspect_note(
+        &mut self,
+        session_id: SessionId,
+        player: PlayerId,
+        text: String,
+    ) -> (GameEvent, PersistOp) {
+        self.remember_finding(session_id, &text);
+        self.emit(Channel::System, Audience::Player(player), None, text)
     }
 
     fn cmd_help(
@@ -725,7 +748,7 @@ impl WorldState {
             .map(|op| op.id)
         {
             let text = self.profile_text(other_id, true);
-            let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
+            let (event, op) = self.inspect_note(session_id, player, text);
             return Ok(Transition {
                 outcome: CommandOutcome { events: vec![event], quit: false },
                 ops: vec![op],
@@ -740,12 +763,8 @@ impl WorldState {
                 })
                 .cloned()
         }) {
-            let (event, op) = self.emit(
-                Channel::System,
-                Audience::Player(player),
-                None,
-                format!("{}: {}", item.name, item.detail),
-            );
+            let (event, op) =
+                self.inspect_note(session_id, player, format!("{}: {}", item.name, item.detail));
             return Ok(Transition {
                 outcome: CommandOutcome { events: vec![event], quit: false },
                 ops: vec![op],
@@ -802,9 +821,8 @@ impl WorldState {
                 text.push_str(&closure_inspect_text());
             }
         }
-        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
+        let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
-        let _ = session_id;
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
@@ -1467,6 +1485,7 @@ impl WorldState {
             inventory,
             feed,
             overlay: self.overlays.get(&session_id).cloned(),
+            finding: self.findings.get(&session_id).cloned(),
             commands: self.registry.hints(),
         })
     }
@@ -1489,10 +1508,9 @@ impl WorldState {
             if let Some(other) =
                 self.names_in(&pos.key()).into_iter().find(|name| name.eq_ignore_ascii_case(target))
             {
-                let (event, op) = self.emit(
-                    Channel::System,
-                    Audience::Player(player),
-                    None,
+                let (event, op) = self.inspect_note(
+                    session_id,
+                    player,
                     format!("{other} is here, watching the land."),
                 );
                 return Ok(Transition {
@@ -1500,7 +1518,7 @@ impl WorldState {
                     ops: vec![op],
                 });
             }
-            return self.inspect_carried(player, target);
+            return self.inspect_carried(session_id, player, target);
         }
         let tile = self.effective_at(pos)?;
         let mut ops = Vec::new();
@@ -1535,8 +1553,7 @@ impl WorldState {
         } else {
             scene.description
         };
-        let _ = session_id;
-        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, text);
+        let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
@@ -1550,7 +1567,12 @@ impl WorldState {
         }
     }
 
-    fn inspect_carried(&mut self, player: PlayerId, target: &str) -> Result<Transition, GameError> {
+    fn inspect_carried(
+        &mut self,
+        session_id: SessionId,
+        player: PlayerId,
+        target: &str,
+    ) -> Result<Transition, GameError> {
         if let Some(item) = self.operators.get(&player).and_then(|op| {
             op.items
                 .iter()
@@ -1560,12 +1582,8 @@ impl WorldState {
                 })
                 .cloned()
         }) {
-            let (event, op) = self.emit(
-                Channel::System,
-                Audience::Player(player),
-                None,
-                format!("{}: {}", item.name, item.detail),
-            );
+            let (event, op) =
+                self.inspect_note(session_id, player, format!("{}: {}", item.name, item.detail));
             return Ok(Transition {
                 outcome: CommandOutcome { events: vec![event], quit: false },
                 ops: vec![op],
@@ -1688,6 +1706,7 @@ impl WorldState {
             inventory,
             feed,
             overlay: self.overlays.get(&session_id).cloned(),
+            finding: self.findings.get(&session_id).cloned(),
             commands: self.registry.hints(),
         })
     }
@@ -1780,6 +1799,7 @@ impl WorldState {
             inventory,
             feed,
             overlay: self.overlays.get(&session_id).cloned(),
+            finding: self.findings.get(&session_id).cloned(),
             commands: self.registry.hints(),
         })
     }
@@ -2146,6 +2166,71 @@ mod tests {
         assert_eq!(world.view(ada).unwrap().location_name, "Roof Array");
         assert_eq!(world.geography.structures.len(), 1);
         assert_eq!(world.geography.structures[0].owner_id, Some(ada_id));
+    }
+
+    #[test]
+    fn gate_description_matches_movement_and_the_return_path() {
+        let (mut world, ada, _, _, _) = pair();
+        let region = crate::geography::generate_region(crate::geography::gate_identity()).unwrap();
+        assert_eq!(crate::geography::fingerprint(&region), 0x8812_F1DB_241C_39A1);
+        assert_eq!(region.tile(8, 8).unwrap().terrain, Terrain::Water);
+
+        world.apply(ada, "go up").unwrap();
+        world.apply(ada, "outskirts").unwrap();
+        let arrived = world.view(ada).unwrap();
+        let exits: Vec<&str> = arrived.exits.iter().map(|exit| exit.keyword.as_str()).collect();
+        assert_eq!(exits, ["west", "city"]);
+        assert!(arrived.description.contains("Open: west"), "{}", arrived.description);
+        assert!(
+            arrived.description.contains("Water blocks the way north, east, and south"),
+            "{}",
+            arrived.description
+        );
+        assert!(arrived.objects.iter().any(|object| object.keyword == "ground"));
+        assert!(arrived.objects.iter().all(|object| object.keyword != "water"));
+        for dir in ["north", "east", "south"] {
+            let err = world.apply(ada, dir).unwrap_err().to_string();
+            assert!(err.contains("Water blocks"), "{dir}: {err}");
+            assert_eq!(world.location_key(ada).unwrap(), gate_position_key());
+        }
+        world.apply(ada, "west").unwrap();
+        assert_eq!(world.location_key(ada).unwrap(), crate::geography::survey_position().key());
+        world.apply(ada, "east").unwrap();
+        world.apply(ada, "city").unwrap();
+        assert_eq!(world.view(ada).unwrap().location_name, "Roof Array");
+        world.apply(ada, "outskirts").unwrap();
+        assert_eq!(world.view(ada).unwrap().location_name, "The Outskirts");
+    }
+
+    fn gate_position_key() -> String {
+        crate::geography::gate_position().key()
+    }
+
+    #[test]
+    fn inspection_remains_beside_the_place() {
+        let (mut world, ada, bob, _, _) = pair();
+        world.apply(ada, "inspect counter").unwrap();
+        let noticed = world.view(ada).unwrap();
+        assert!(noticed.description.contains("Steam"));
+        assert!(noticed.finding.as_deref().unwrap_or("").contains("scarred laminate"));
+        world.apply(ada, "say still here").unwrap();
+        let after_say = world.view(ada).unwrap();
+        assert!(after_say.description.contains("Steam"));
+        assert!(after_say.finding.as_deref().unwrap_or("").contains("scarred laminate"));
+        assert!(world.view(bob).unwrap().finding.is_none());
+        assert!(!feed_text(&world, bob).contains("scarred laminate"));
+        world.apply(ada, "go alley").unwrap();
+        let moved = world.view(ada).unwrap();
+        assert!(moved.description.contains("service alley"));
+        assert!(moved.finding.as_deref().unwrap_or("").contains("scarred laminate"));
+        world.apply(ada, "look").unwrap();
+        assert!(world.view(ada).unwrap().finding.as_deref().unwrap_or("").contains("laminate"));
+        world.apply(ada, "journal").unwrap();
+        let journal = world.view(ada).unwrap();
+        assert!(journal.overlay.as_deref().unwrap_or("").contains("empty"));
+        assert!(journal.description.contains("service alley"));
+        assert_eq!(journal.location_name, "Neon Alley");
+        assert!(journal.finding.as_deref().unwrap_or("").contains("laminate"));
     }
 
     #[test]

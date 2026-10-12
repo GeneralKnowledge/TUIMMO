@@ -2,8 +2,9 @@
 
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Modifier, Style};
+use ratatui::symbols::border;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Paragraph, Wrap};
 use ratatui::Frame;
 use terminus_core::{CommandHint, ConnectionState, ExitView, FeedLine, GameView, Key};
 use unicode_width::UnicodeWidthStr;
@@ -195,17 +196,92 @@ impl App {
     }
 
     fn render_location(&self, frame: &mut Frame, area: Rect) {
-        let text = if let Screen::Login(form) = &self.screen {
-            login_help(form)
-        } else if let Some(overlay) = &self.view.overlay {
-            overlay.clone()
-        } else {
-            location_body(&self.view)
-        };
+        if let Screen::Login(form) = &self.screen {
+            self.paint_block(frame, area, "location", &login_help(form), self.theme.text, None);
+            return;
+        }
+        let finding = self.view.finding.as_deref().filter(|text| !text.is_empty());
+        let notes = self.view.overlay.as_deref().filter(|text| !text.is_empty());
+        if finding.is_none() && notes.is_none() {
+            self.paint_block(
+                frame,
+                area,
+                "location",
+                &location_body(&self.view),
+                self.theme.text,
+                None,
+            );
+            return;
+        }
+        // A short pane cannot spare a second border. Keep the place, then the note.
+        if area.height < 12 {
+            self.paint_block(
+                frame,
+                area,
+                "location",
+                &compact_place(&self.view),
+                self.theme.text,
+                None,
+            );
+            return;
+        }
+        let mut constraints = vec![Constraint::Min(5)];
+        if finding.is_some() {
+            constraints.push(Constraint::Length(noticed_height(area.height)));
+        }
+        if notes.is_some() {
+            constraints.push(Constraint::Min(4));
+        }
+        let rects = Layout::vertical(constraints).split(area);
+        let mut index = 0;
+        self.paint_block(
+            frame,
+            rects[index],
+            "location",
+            &location_body(&self.view),
+            self.theme.text,
+            None,
+        );
+        index += 1;
+        if let Some(text) = finding {
+            self.paint_block(frame, rects[index], "noticed", text, self.theme.accent, None);
+            index += 1;
+        }
+        if let Some(text) = notes {
+            self.paint_block(
+                frame,
+                rects[index],
+                "notes",
+                text,
+                self.theme.text,
+                Some("look returns"),
+            );
+        }
+    }
+
+    fn paint_block(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        title: &str,
+        text: &str,
+        color: ratatui::style::Color,
+        footer: Option<&str>,
+    ) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let mut block = self.block(title);
+        if let Some(footer) = footer {
+            block = block.title_bottom(Line::from(Span::styled(
+                format!(" {footer} "),
+                Style::default().fg(self.theme.muted),
+            )));
+        }
         let paragraph = Paragraph::new(text)
-            .block(self.block("location"))
+            .block(block)
             .wrap(Wrap { trim: false })
-            .style(Style::default().fg(self.theme.text));
+            .style(Style::default().fg(color));
         frame.render_widget(paragraph, area);
     }
 
@@ -293,8 +369,12 @@ impl App {
     }
 
     fn block<'a>(&self, title: &'a str) -> Block<'a> {
-        let mut block = Block::bordered()
-            .border_type(self.theme.border_type())
+        let mut block = if self.theme.ascii {
+            Block::bordered().border_set(ASCII_BORDER)
+        } else {
+            Block::bordered().border_type(BorderType::Rounded)
+        };
+        block = block
             .border_style(Style::default().fg(self.theme.border))
             .style(Style::default().fg(self.theme.text));
         if !title.is_empty() {
@@ -500,6 +580,35 @@ New accounts begin in the Coffee Shop."
     )
 }
 
+const ASCII_BORDER: border::Set = border::Set {
+    top_left: "+",
+    top_right: "+",
+    bottom_left: "+",
+    bottom_right: "+",
+    vertical_left: "|",
+    vertical_right: "|",
+    horizontal_top: "-",
+    horizontal_bottom: "-",
+};
+
+fn noticed_height(area_height: u16) -> u16 {
+    (area_height / 3).clamp(4, 8)
+}
+
+fn compact_place(view: &GameView) -> String {
+    let mut text = location_body(view);
+    if let Some(found) = view.finding.as_deref().filter(|text| !text.is_empty()) {
+        text.push_str("\n\nNoticed:\n");
+        text.push_str(found);
+    }
+    if let Some(notes) = view.overlay.as_deref().filter(|text| !text.is_empty()) {
+        text.push_str("\n\n");
+        text.push_str(notes);
+        text.push_str("\nlook returns to the place");
+    }
+    text
+}
+
 fn location_body(view: &GameView) -> String {
     let exits = if view.exits.is_empty() {
         "none".to_string()
@@ -673,6 +782,148 @@ mod tests {
         assert!(text.contains("ada"), "{text}");
         assert!(text.contains("alley"), "{text}");
         assert!(text.contains("bob"), "{text}");
+    }
+
+    #[test]
+    fn inspection_stays_visible_beside_the_place() {
+        let mut view = sample_view();
+        view.finding = Some(
+            "The counter is scarred laminate. Someone has carved a tiny cup into the corner."
+                .into(),
+        );
+        view.feed.push(terminus_core::FeedLine {
+            at_ms: 1_700_000_000_000,
+            channel: terminus_core::Channel::Local,
+            speaker: Some("bob".into()),
+            text: "anyone for coffee".into(),
+        });
+        let app = App::play(Theme::neutral(), view);
+        let text = draw(&app, 100, 30);
+        assert!(text.contains("Steam and terminals"), "{text}");
+        assert!(text.contains("noticed"), "{text}");
+        assert!(text.contains("scarred laminate"), "{text}");
+        assert!(text.contains("alley"), "{text}");
+        assert!(text.contains("anyone for coffee"), "{text}");
+    }
+
+    #[test]
+    fn journal_keeps_the_place_and_says_how_to_return() {
+        let mut view = sample_view();
+        view.finding = Some("relay insulation, and it does not say which dish it left.".into());
+        view.overlay = Some(
+            "Field journal (1)\nsurvey-mark  Repeated mark\n`journal read <id>`\n`look` returns to the place."
+                .into(),
+        );
+        let app = App::play(Theme::neutral(), view);
+        let text = draw(&app, 100, 32);
+        assert!(text.contains("The Coffee Shop"), "{text}");
+        assert!(text.contains("Steam and terminals"), "{text}");
+        assert!(text.contains("alley"), "{text}");
+        assert!(text.contains("survey-mark"), "{text}");
+        assert!(text.contains("look returns"), "{text}");
+        assert!(text.contains("relay insulation"), "{text}");
+    }
+
+    #[test]
+    fn long_notes_and_narrow_ascii_layouts_hold() {
+        let mut view = sample_view();
+        view.finding = Some("mark ".repeat(80));
+        view.overlay = Some(format!("Field journal\n{}", "note ".repeat(80)));
+        let wide = App::play(Theme::neutral(), view.clone());
+        let wide_text = draw(&wide, 100, 30);
+        assert!(wide_text.contains("The Coffee Shop"), "{wide_text}");
+        assert!(wide_text.contains("mark"), "{wide_text}");
+        assert!(wide_text.contains("Field journal"), "{wide_text}");
+        assert!(wide_text.contains('╭'), "{wide_text}");
+
+        let mut ascii = Theme::neutral();
+        ascii.ascii = true;
+        let narrow = App::play(ascii, view);
+        let narrow_text = draw(&narrow, 60, 20);
+        assert!(narrow_text.contains('+'), "{narrow_text}");
+        assert!(!narrow_text.contains('╭'), "{narrow_text}");
+        assert!(narrow_text.contains("The Coffee Shop"), "{narrow_text}");
+
+        let tiny = App::play(Theme::neutral(), sample_view());
+        let tiny_text = draw(&tiny, 40, 12);
+        assert!(
+            tiny_text.contains("Coffee")
+                || tiny_text.contains("too small")
+                || tiny_text.contains("40"),
+            "{tiny_text}"
+        );
+    }
+
+    #[test]
+    fn history_completion_scroll_and_masked_password_still_work() {
+        let mut view = sample_view();
+        view.commands = vec![terminus_core::CommandHint {
+            name: "help".into(),
+            aliases: vec!["?".into()],
+            usage: "help".into(),
+            summary: "List commands".into(),
+        }];
+        view.feed.push(terminus_core::FeedLine {
+            at_ms: 3_600_000,
+            channel: terminus_core::Channel::System,
+            speaker: None,
+            text: "Ada arrives from the alley.".into(),
+        });
+        let mut app = App::play(Theme::neutral(), view);
+        for ch in "look".chars() {
+            app.handle_key(Key::Char(ch));
+        }
+        assert!(
+            matches!(app.handle_key(Key::Enter), Effect::SubmitCommand(line) if line == "look")
+        );
+        app.handle_key(Key::Up);
+        assert_eq!(app.editor.text(), "look");
+        app.handle_key(Key::CtrlU);
+        for ch in "he".chars() {
+            app.handle_key(Key::Char(ch));
+        }
+        app.handle_key(Key::Tab);
+        assert_eq!(app.editor.text(), "help ");
+        app.handle_key(Key::PageUp);
+        app.handle_key(Key::PageDown);
+        let played = draw(&app, 80, 24);
+        assert!(played.contains("help"), "{played}");
+
+        let mut login = App::login();
+        login.handle_key(Key::Tab);
+        for ch in "s3cret!".chars() {
+            login.handle_key(Key::Char(ch));
+        }
+        let masked = draw(&login, 80, 24);
+        assert!(!masked.contains("s3cret"), "{masked}");
+        assert!(masked.contains("*******"), "{masked}");
+        login.set_notice("You are sending commands too quickly.");
+        let noticed = draw(&login, 80, 24);
+        assert!(noticed.contains("too quickly"), "{noticed}");
+        assert!(noticed.contains("Coffee"), "{noticed}");
+    }
+
+    fn sample_view() -> GameView {
+        let mut view = GameView::empty("Undernet");
+        view.connection = ConnectionState::Connected;
+        view.operator_name = "ada".into();
+        view.location_name = "The Coffee Shop".into();
+        view.description = "Steam and terminals.".into();
+        view.exits = vec![ExitView {
+            keyword: "alley".into(),
+            label: "Neon Alley".into(),
+            destination: "Neon Alley".into(),
+        }];
+        view.present = vec![PresenceView { name: "bob".into() }];
+        view.status = vec!["place: The Coffee Shop".into()];
+        view
+    }
+
+    fn draw(app: &App, width: u16, height: u16) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| app.render(frame)).unwrap();
+        buffer_text(terminal.backend().buffer())
     }
 
     fn buffer_text(buffer: &ratatui::buffer::Buffer) -> String {

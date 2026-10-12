@@ -77,8 +77,13 @@ pub struct GameView {
     pub status: Vec<String>,
     pub inventory: Vec<ItemView>,
     pub feed: Vec<FeedLine>,
-    /// Optional panel text that replaces the location description (help, map).
+    /// Optional panel text for help, the map, or the journal. The place itself stays
+    /// in `description`; a client should keep that context visible beside this text.
     pub overlay: Option<String>,
+    /// Latest inspection for this session. Absent until the player inspects something.
+    /// The place description stays in `description`.
+    #[serde(default)]
+    pub finding: Option<String>,
     pub commands: Vec<CommandHint>,
 }
 
@@ -97,6 +102,7 @@ impl GameView {
             inventory: Vec::new(),
             feed: Vec::new(),
             overlay: None,
+            finding: None,
             commands: Vec::new(),
         }
     }
