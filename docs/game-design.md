@@ -61,7 +61,7 @@ From the Roof Array, `outskirts` or `squalor` steps through a break in the fenci
 | `mark <name>` | | Leave a named marker on the outskirts tile |
 | `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
 | `enter <name>` / `leave` | | Enter or leave a cabin or workshop |
-| `home <inspect\|access\|share\|allow\|deny\|rename\|demolish> …` | | Owner cabin/workshop controls |
+| `home [claim\|move\|abandon\|inspect\|access\|…]` | | Personal home, or cabin/workshop controls |
 | `workshop <inspect\|board …>` | | Inspect a workshop or use its project board |
 | `sign <text>` / `sign read` / `sign remove` | | Persistent roadside notes |
 | `trail <name>` | | Leave a trail post |
@@ -80,6 +80,19 @@ In the outskirts, `n`, `s`, `e`, and `w` (or the full words) step one tile. Wate
 - `ignore` is directional for room, region, and global lines. Whisper and mail use the same either-direction check: if either operator ignores the other, delivery is refused, and the refusal does not say which side set it. Mail already in the mailbox is left there.
 - Profiles expose only display name, optional bio/status, and online/offline to friends. Email, passwords, and recovery material are never shown.
 - Friend lists show online/offline only. They do not reveal exact location.
+
+### Personal homes
+
+A personal home is a designation on an existing Squalor place key. It is not a cabin, not a settlement claim, and not a teleport.
+
+- One active home per operator (enforced in memory and by partial unique indexes). A player may have none.
+- `home` shows the current home. `home claim` designates the tile you stand on if it is eligible.
+- Eligible: walkable Squalor ground that is not the Hub gate, not a subway stair, not another player's active home, and not a Hub or station room.
+- `home move` / `home move confirm` abandons the old home and claims the new one in one transaction. Bare `home claim` never silently replaces an existing home.
+- `home abandon confirm` leaves the player with no home. The place stays in the world as abandoned.
+- Abandoned presentation is derived from the abandonment timestamp: recently abandoned (< 7 days), forgotten (< 30 days), then absorbed into ordinary Squalor look text. No upkeep, no offline penalty, no background worker.
+- Journals, waypoints, and discovery flags stay private. Claiming or abandoning a home does not copy or publish them.
+- Cabins remain a separate construction feature. Settlement membership does not require giving up a personal home.
 
 ### Homesteads and traces
 

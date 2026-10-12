@@ -183,9 +183,47 @@ impl WorldState {
         cmd: &ParsedCommand,
     ) -> Result<Transition, GameError> {
         let rest = cmd.rest.trim();
+        if rest.is_empty() {
+            return self.home_status(session_id);
+        }
         let mut parts = rest.splitn(2, char::is_whitespace);
         let action = parts.next().unwrap_or("").to_ascii_lowercase();
         let tail = parts.next().unwrap_or("").trim();
+        match action.as_str() {
+            "help" => return self.home_help(session_id),
+            "claim" => {
+                if !tail.is_empty() {
+                    return Err(GameError::Rejected("usage: home claim".into()));
+                }
+                return self.home_claim(session_id);
+            }
+            "move" => {
+                let confirm = match tail {
+                    "" => false,
+                    "confirm" => true,
+                    _ => {
+                        return Err(GameError::Rejected(
+                            "Moving abandons your current home. Type: home move confirm".into(),
+                        ));
+                    }
+                };
+                return self.home_move(session_id, confirm);
+            }
+            "abandon" => {
+                let confirm = match tail {
+                    "" => false,
+                    "confirm" => true,
+                    _ => {
+                        return Err(GameError::Rejected(
+                            "Abandoning leaves you without a home. Type: home abandon confirm"
+                                .into(),
+                        ));
+                    }
+                };
+                return self.home_abandon(session_id, confirm);
+            }
+            _ => {}
+        }
         let player = self.player(session_id)?;
         if action == "inspect" {
             return self.home_inspect(session_id, player);
@@ -249,9 +287,7 @@ impl WorldState {
                 }
                 self.demolish_cabin(session_id, player, cabin)
             }
-            _ => Err(GameError::Rejected(
-                "usage: home <inspect|access|share|allow|deny|rename|demolish> ...".into(),
-            )),
+            _ => Err(GameError::Rejected(crate::state::home_cmds::home_usage().into())),
         }
     }
 

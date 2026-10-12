@@ -196,9 +196,9 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "home",
             aliases: &[],
-            summary: "Manage cabin/workshop access, sharing, rename, or demolish",
-            usage: "home <inspect|access|share|allow|deny|rename|demolish> ...",
-            args: ArgMode::Rest { required: true },
+            summary: "Claim, move, or abandon a personal home; manage cabin controls",
+            usage: "home [claim|move|abandon|inspect|access|share|allow|deny|rename|demolish] …",
+            args: ArgMode::Rest { required: false },
         },
         CommandSpec {
             name: "workshop",

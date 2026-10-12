@@ -121,13 +121,14 @@ A repeatable walk of version 1, including that seam, is locked in `geography::ex
 | `terrain_modifications` | One override per tile. The baseline is not copied. |
 | `region_discoveries` | Visits and personal field notes. Entering a region records an `entered` discovery. A player's journal is additional `field` rows in the same table. |
 | `waypoints` | One operator's names for places they have stood. The destination is a place key, not a stored map. |
+| `personal_homes` | One active home designation per operator on a place key. Abandoned rows keep public lifecycle history. |
 | `mail` | One recipient's private letters. `mail_seq` is the next id, kept ahead of deletes. |
 | `shared_theories` | Player-authored observations and theories for one mystery topic. `shared_theory_seq` is the next id, kept ahead of deletes. Rows do not expire. |
 | `world_connections` | Explicit links. Unique on `(from_place, keyword)`. |
 
 Indexes cover atlas placement, structure owner, discoveries by region, and connections by origin place.
 
-`Store::seed` still upserts static locations and replaces static exits. It does not touch the world tables, waypoints, mail, or shared theories. A close-and-reopen cycle reloads regions, structures, modifications, discoveries, connections, waypoints, mail, shared theories, accounts, and operator positions.
+`Store::seed` still upserts static locations and replaces static exits. It does not touch the world tables, waypoints, personal homes, mail, or shared theories. A close-and-reopen cycle reloads regions, structures, modifications, discoveries, connections, waypoints, personal homes, mail, shared theories, accounts, and operator positions.
 
 Materializing a region is ordered before the structure, modification, or discovery that references it, inside the same transaction. A failed commit restores the operator, the log, and the geography snapshot. A command that returns `Err` does not mutate first.
 
@@ -191,6 +192,8 @@ A unique index on `(actor_id, content_key)` for `kind = 'field'` makes recording
 `0008_mail.sql` adds `mail` and a one-row `mail_seq`. A letter stores the sender id, the recipient id, the body, the time, and an optional read time. The world assigns the id and advances `mail_seq` in the same transaction as the insert. Deletes do not return that id to the sequence. The body is not written into `messages`. Hub rollback snapshots the mailbox and the session overlays with the rest of the world.
 
 `0009_shared_theories.sql` adds `shared_theories` and a one-row `shared_theory_seq`. A row stores the topic, the author operator id, the kind (`observation` or `theory`), the body, and the time. It does not store a journal id, a flag, or a place. The world assigns the id and advances the sequence in the same insert transaction. Deletes do not return that id. The body is not written into `messages`. Noticeboard posts still expire after seven days; theory rows do not. Hub rollback snapshots the theory board with the mailbox and the other world tables. The only topic the command writes is `delisted-floor`.
+
+`0010_personal_homes.sql` adds `personal_homes`. A row stores the operator id, the stable place key, claim time, optional abandonment time, and optional public name/description. Partial unique indexes allow only one active home (`abandoned_at IS NULL`) per operator and per place key. Abandoned rows remain for lifecycle presentation; stages are derived from elapsed real time at look, not rewritten by a worker. Hub rollback snapshots homes with waypoints and the other world tables. Claiming a home does not create a cabin interior or copy private journals or waypoints.
 
 The unfiled-survey stone at birth `(0, 0)` tile `(7, 8)` is presentation layered on the version 1 tile. `generate_region` is unchanged, and the origin fingerprint stays `0x8812_F1DB_241C_39A1`. Landmark inspection variants are chosen by a fixed salt of absolute coordinates in `geography/field.rs`. That salt is not a generator input.
 

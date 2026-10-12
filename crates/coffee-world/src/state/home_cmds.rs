@@ -1,0 +1,591 @@
+//! Personal home designation commands.
+//!
+//! Cabins remain under `home inspect|access|…`. Claiming a home does not build
+//! a cabin and does not copy journals, waypoints, or discovery flags.
+
+use terminus_core::{GameError, PlayerId, SessionId};
+use uuid::Uuid;
+
+use crate::geography::{describe_place, WildernessPos};
+use crate::home::{HomeStage, PersonalHome};
+use crate::model::PersistOp;
+use crate::state::{quiet, Transition, WorldState};
+
+const USAGE: &str =
+    "usage: home [claim|move|abandon|inspect|access|share|allow|deny|rename|demolish] …";
+
+const HELP: &str = "\
+Personal home
+Designate one place in the Squalor as your home. No building is required.
+
+home
+home claim
+home move
+home move confirm
+home abandon confirm
+
+Cabin and workshop controls (when you stand at one you own):
+home inspect · home access · home share · home allow · home deny
+home rename · home demolish confirm
+
+Rules:
+You may have one active home. Claiming again does not move it.
+Moving abandons the old place. Abandoning leaves you without a home.
+Private journals and waypoints stay private. A home is not a teleport.
+
+`look` returns to the place.";
+
+impl WorldState {
+    pub(crate) fn home_status(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
+        let player = self.player(session_id)?;
+        let text = if let Some(home) = self.homes.active_for(player) {
+            let title = describe_place(&home.place_key).0;
+            let here = self.location_id(session_id)?;
+            let where_line = if here == home.place_key {
+                "You are standing at your home.".to_string()
+            } else {
+                format!("A way back: {}", describe_place(&home.place_key).1)
+            };
+            format!(
+                "Your home\n\
+                 Place: {title}\n\
+                 Status: {}\n\
+                 Claimed: kept since you designated it.\n\
+                 {where_line}\n\
+                 \n\
+                 home move — make another eligible place your home (abandons this one).\n\
+                 home abandon confirm — leave this home with no replacement.\n\
+                 `look` returns to the place.",
+                HomeStage::Active.as_str()
+            )
+        } else {
+            "You have no home.\n\
+             Stand on eligible ground in the Squalor and type `home claim`.\n\
+             The Hub, the city gate, subway stairs, and another player's active home cannot be claimed.\n\
+             \n\
+             Cabin controls still use home inspect|access|share|… when you stand at a cabin you own.\n\
+             `look` returns to the place."
+                .to_string()
+        };
+        self.set_overlay(session_id, text);
+        Ok(quiet())
+    }
+
+    pub(crate) fn home_help(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
+        self.set_overlay(session_id, HELP);
+        Ok(quiet())
+    }
+
+    pub(crate) fn home_claim(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
+        self.require_play(session_id)?;
+        let player = self.player(session_id)?;
+        let place_key = self.location_id(session_id)?;
+        if let Some(existing) = self.homes.active_for(player) {
+            if existing.place_key == place_key {
+                return Err(GameError::Rejected("This is already your home.".into()));
+            }
+            let title = describe_place(&existing.place_key).0;
+            return Err(GameError::Rejected(format!(
+                "You already have a home at {title}. Moving abandons it. Type: home move confirm"
+            )));
+        }
+        self.validate_home_destination(player, &place_key)?;
+        let title = describe_place(&place_key).0;
+        let mut ops = self.ensure_home_region(&place_key, player)?;
+        let now = self.now_ms;
+        let home = PersonalHome {
+            id: Uuid::new_v4(),
+            operator_id: player,
+            place_key: place_key.clone(),
+            claimed_at: now,
+            abandoned_at: None,
+            public_name: String::new(),
+            public_description: String::new(),
+        };
+        ops.push(PersistOp::HomeClaim {
+            id: home.id,
+            operator_id: home.operator_id,
+            place_key: home.place_key.clone(),
+            claimed_at: home.claimed_at,
+            public_name: home.public_name.clone(),
+            public_description: home.public_description.clone(),
+        });
+        self.homes.insert(home);
+        self.private_home_line(player, format!("You make a home at {title}."), ops)
+    }
+
+    pub(crate) fn home_move(
+        &mut self,
+        session_id: SessionId,
+        confirm: bool,
+    ) -> Result<Transition, GameError> {
+        self.require_play(session_id)?;
+        let player = self.player(session_id)?;
+        let Some(current) = self.homes.active_for(player).cloned() else {
+            return Err(GameError::Rejected(
+                "You have no home to move. Stand somewhere eligible and type `home claim`.".into(),
+            ));
+        };
+        let place_key = self.location_id(session_id)?;
+        if current.place_key == place_key {
+            return Err(GameError::Rejected("This is already your home.".into()));
+        }
+        let old_title = describe_place(&current.place_key).0;
+        if !confirm {
+            let new_title = describe_place(&place_key).0;
+            return Err(GameError::Rejected(format!(
+                "You have already made a home in {old_title}.\n\
+                 If you make this place your home, {old_title} will be abandoned.\n\
+                 Make this your new home? Type: home move confirm\n\
+                 (Standing at: {new_title})"
+            )));
+        }
+        self.validate_home_destination(player, &place_key)?;
+        // Re-check ownership after validation; another failure path must not clear the old home.
+        let Some(owned) = self.homes.active_for(player).cloned() else {
+            return Err(GameError::Rejected("Your previous home is no longer active.".into()));
+        };
+        if owned.id != current.id || owned.place_key != current.place_key {
+            return Err(GameError::Rejected(
+                "Your home changed before the move finished. Nothing was moved.".into(),
+            ));
+        }
+        let new_title = describe_place(&place_key).0;
+        let mut ops = self.ensure_home_region(&place_key, player)?;
+        let now = self.now_ms;
+        if !self.homes.abandon(owned.id, now) {
+            return Err(GameError::Rejected(
+                "Your previous home could not be abandoned. Nothing was moved.".into(),
+            ));
+        }
+        ops.push(PersistOp::HomeAbandon { id: owned.id, operator_id: player, abandoned_at: now });
+        let home = PersonalHome {
+            id: Uuid::new_v4(),
+            operator_id: player,
+            place_key: place_key.clone(),
+            claimed_at: now,
+            abandoned_at: None,
+            public_name: String::new(),
+            public_description: String::new(),
+        };
+        ops.push(PersistOp::HomeClaim {
+            id: home.id,
+            operator_id: home.operator_id,
+            place_key: home.place_key.clone(),
+            claimed_at: home.claimed_at,
+            public_name: home.public_name.clone(),
+            public_description: home.public_description.clone(),
+        });
+        self.homes.insert(home);
+        self.private_home_line(
+            player,
+            format!("You leave {old_title} behind and make a home at {new_title}."),
+            ops,
+        )
+    }
+
+    pub(crate) fn home_abandon(
+        &mut self,
+        session_id: SessionId,
+        confirm: bool,
+    ) -> Result<Transition, GameError> {
+        self.require_play(session_id)?;
+        let player = self.player(session_id)?;
+        let Some(current) = self.homes.active_for(player).cloned() else {
+            return Err(GameError::Rejected("You have no home to abandon.".into()));
+        };
+        let title = describe_place(&current.place_key).0;
+        if !confirm {
+            return Err(GameError::Rejected(format!(
+                "Abandoning leaves you without a home. {title} will remain as an abandoned place.\n\
+                 Type: home abandon confirm"
+            )));
+        }
+        let now = self.now_ms;
+        if !self.homes.abandon(current.id, now) {
+            return Err(GameError::Rejected("That home is no longer active.".into()));
+        }
+        let ops =
+            vec![PersistOp::HomeAbandon { id: current.id, operator_id: player, abandoned_at: now }];
+        self.private_home_line(
+            player,
+            format!("You abandon your home at {title}. You have no home now."),
+            ops,
+        )
+    }
+
+    fn validate_home_destination(
+        &self,
+        player: PlayerId,
+        place_key: &str,
+    ) -> Result<(), GameError> {
+        let Some(pos) = WildernessPos::parse(place_key) else {
+            return Err(GameError::Rejected(
+                "You can only claim a home in the Squalor, not inside the Hub or a subway station."
+                    .into(),
+            ));
+        };
+        if pos.is_gate() {
+            return Err(GameError::Rejected("The Hub gate must stay clear.".into()));
+        }
+        let tile = self.effective_at(pos)?;
+        if tile.metro {
+            return Err(GameError::Rejected("The subway entrance must stay clear.".into()));
+        }
+        if !tile.traversable() {
+            return Err(GameError::Rejected("You cannot make a home on impassable ground.".into()));
+        }
+        if let Some(other) = self.homes.active_at(place_key) {
+            if other.operator_id != player {
+                return Err(GameError::Rejected(
+                    "Someone else already keeps an active home here.".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn ensure_home_region(
+        &mut self,
+        place_key: &str,
+        player: PlayerId,
+    ) -> Result<Vec<PersistOp>, GameError> {
+        let pos = WildernessPos::parse(place_key)
+            .ok_or_else(|| GameError::Rejected("That place is not in the Squalor.".into()))?;
+        self.ensure_region(pos.identity, Some(player), pos.local_x, pos.local_y)
+    }
+
+    fn private_home_line(
+        &mut self,
+        player: PlayerId,
+        text: String,
+        mut ops: Vec<PersistOp>,
+    ) -> Result<Transition, GameError> {
+        let (event, op) = self.emit(
+            terminus_core::Channel::System,
+            terminus_core::Audience::Player(player),
+            None,
+            text,
+        );
+        ops.push(op);
+        Ok(Transition {
+            outcome: terminus_core::CommandOutcome { events: vec![event], quit: false },
+            ops,
+        })
+    }
+}
+
+pub(crate) fn home_usage() -> &'static str {
+    USAGE
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::geography::{gate_position, survey_position, WildernessPos};
+    use crate::home::{FORGOTTEN_MS, RECENTLY_ABANDONED_MS};
+    use crate::state::starter_operator;
+    use crate::subway::{ash_entrance_pos, ASH_STATION};
+    use terminus_core::{Game, Permissions, SessionIdentity};
+
+    fn pair() -> (WorldState, SessionId, SessionId, PlayerId, PlayerId) {
+        let mut world = WorldState::for_tests();
+        let ada_id = PlayerId::new();
+        let bob_id = PlayerId::new();
+        world.insert_operator(starter_operator(ada_id, Uuid::new_v4(), "ada", "ada"));
+        world.insert_operator(starter_operator(bob_id, Uuid::new_v4(), "bob", "bob"));
+        let ada = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let bob = SessionIdentity::new(bob_id, "bob", Permissions::player());
+        let ada_session = ada.session_id;
+        let bob_session = bob.session_id;
+        world.connect_player(ada).unwrap();
+        world.connect_player(bob).unwrap();
+        (world, ada_session, bob_session, ada_id, bob_id)
+    }
+
+    fn overlay(world: &WorldState, session: SessionId) -> String {
+        world.view(session).unwrap().overlay.unwrap_or_default()
+    }
+
+    fn feed(world: &WorldState, session: SessionId) -> String {
+        world
+            .view(session)
+            .unwrap()
+            .feed
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn stand_at(world: &mut WorldState, player: PlayerId, place: &str) {
+        world.operators.get_mut(&player).unwrap().location_id = place.to_string();
+    }
+
+    fn walkable_near_gate(world: &mut WorldState, player: PlayerId) -> String {
+        // Survey stone is one step west of the gate and walkable.
+        let pos = survey_position();
+        let _ = world.ensure_region(pos.identity, Some(player), pos.local_x, pos.local_y).unwrap();
+        pos.key()
+    }
+
+    fn second_walkable(world: &mut WorldState, player: PlayerId) -> String {
+        // Two steps west of the gate (local 6,8) is open street in the authored corridor.
+        let mut pos = gate_position();
+        pos.local_x = 6;
+        let _ = world.ensure_region(pos.identity, Some(player), pos.local_x, pos.local_y).unwrap();
+        pos.key()
+    }
+
+    #[test]
+    fn claim_lists_and_rejects_duplicates_and_protected_places() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        world.apply(ada, "home").unwrap();
+        assert!(overlay(&world, ada).contains("You have no home"));
+
+        assert!(world.apply(ada, "home claim").unwrap_err().to_string().contains("Squalor"));
+
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        assert!(feed(&world, ada).contains("You make a home"));
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+
+        assert!(world
+            .apply(ada, "home claim")
+            .unwrap_err()
+            .to_string()
+            .contains("already your home"));
+        assert_eq!(world.homes.homes.iter().filter(|h| h.is_active()).count(), 1);
+
+        stand_at(&mut world, bob_id, &place);
+        assert!(world
+            .apply(bob, "home claim")
+            .unwrap_err()
+            .to_string()
+            .contains("Someone else already keeps an active home"));
+
+        stand_at(&mut world, ada_id, &gate_position().key());
+        assert!(world
+            .apply(ada, "home claim")
+            .unwrap_err()
+            .to_string()
+            .contains("already have a home"));
+        // Move attempt at gate is refused; original home remains.
+        let err = world.apply(ada, "home move confirm").unwrap_err().to_string();
+        assert!(err.contains("gate") || err.contains("clear"), "{err}");
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+
+        stand_at(&mut world, ada_id, ASH_STATION);
+        let err = world.apply(ada, "home move confirm").unwrap_err().to_string();
+        assert!(err.contains("Hub") || err.contains("subway") || err.contains("Squalor"), "{err}");
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+
+        stand_at(&mut world, bob_id, &ash_entrance_pos().key());
+        assert!(world.apply(bob, "home claim").unwrap_err().to_string().contains("subway"));
+    }
+
+    #[test]
+    fn move_requires_confirm_and_is_atomic() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let first = walkable_near_gate(&mut world, ada_id);
+        let second = second_walkable(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &first);
+        world.apply(ada, "home claim").unwrap();
+        let first_id = world.homes.active_for(ada_id).unwrap().id;
+
+        stand_at(&mut world, ada_id, &second);
+        let prompt = world.apply(ada, "home claim").unwrap_err().to_string();
+        assert!(prompt.contains("home move confirm"), "{prompt}");
+        assert_eq!(world.homes.active_for(ada_id).unwrap().id, first_id);
+
+        let prompt = world.apply(ada, "home move").unwrap_err().to_string();
+        assert!(prompt.contains("will be abandoned"), "{prompt}");
+        assert!(prompt.contains("home move confirm"), "{prompt}");
+        assert_eq!(world.homes.active_for(ada_id).unwrap().id, first_id);
+
+        world.apply(ada, "home move confirm").unwrap();
+        let active = world.homes.active_for(ada_id).unwrap();
+        assert_eq!(active.place_key, second);
+        assert_ne!(active.id, first_id);
+        let old = world.homes.homes.iter().find(|h| h.id == first_id).unwrap();
+        assert!(old.abandoned_at.is_some());
+        assert_eq!(
+            world.homes.homes.iter().filter(|h| h.operator_id == ada_id && h.is_active()).count(),
+            1
+        );
+
+        // Failed move preserves the current home.
+        stand_at(&mut world, ada_id, &gate_position().key());
+        let before = world.homes.active_for(ada_id).cloned().unwrap();
+        assert!(world.apply(ada, "home move confirm").is_err());
+        assert_eq!(world.homes.active_for(ada_id).unwrap().id, before.id);
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, second);
+    }
+
+    #[test]
+    fn abandon_requires_confirm_and_leaves_no_active_home() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        let err = world.apply(ada, "home abandon").unwrap_err().to_string();
+        assert!(err.contains("home abandon confirm"), "{err}");
+        assert!(world.homes.active_for(ada_id).is_some());
+        world.apply(ada, "home abandon confirm").unwrap();
+        assert!(world.homes.active_for(ada_id).is_none());
+        assert!(feed(&world, ada).contains("no home now"));
+        // Returning does not restore ownership.
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home").unwrap();
+        assert!(overlay(&world, ada).contains("You have no home"));
+        // Reclaim creates a new active designation.
+        world.apply(ada, "home claim").unwrap();
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+        assert_eq!(world.homes.homes.iter().filter(|h| h.place_key == place).count(), 2);
+    }
+
+    #[test]
+    fn lifecycle_presentation_uses_clock_and_survives_in_memory_restart_shape() {
+        let (mut world, ada, _bob, ada_id, bob_id) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        let scene = world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(ada_id));
+        assert!(scene.contains("You have made a home here"), "{scene}");
+
+        let second = second_walkable(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &second);
+        world.apply(ada, "home move confirm").unwrap();
+        let abandoned_at =
+            world.homes.homes.iter().find(|h| h.place_key == place).unwrap().abandoned_at.unwrap();
+
+        stand_at(&mut world, bob_id, &place);
+        world.now_ms = abandoned_at;
+        let recent =
+            world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
+        assert!(recent.contains("inhabited until recently"), "{recent}");
+        world.now_ms = abandoned_at + RECENTLY_ABANDONED_MS;
+        let forgotten =
+            world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
+        assert!(forgotten.contains("Dust covers"), "{forgotten}");
+        world.now_ms = abandoned_at + FORGOTTEN_MS;
+        let absorbed =
+            world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
+        assert!(!absorbed.contains("home"), "{absorbed}");
+        assert!(!absorbed.contains("inhabited"), "{absorbed}");
+
+        // Snapshot/restore shape used by hub rollback.
+        let snap = world.home_snapshot();
+        world.homes.homes.clear();
+        world.restore_homes(snap);
+        assert!(world.homes.active_for(ada_id).is_some());
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, second);
+    }
+
+    #[test]
+    fn private_waypoints_and_journals_stay_private_across_home_claim() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        world.apply(ada, "go up").unwrap();
+        world.apply(ada, "inspect antenna").unwrap();
+        world.apply(ada, "journal record").unwrap();
+        world.apply(ada, "waypoint add roof-scratch").unwrap();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        assert_eq!(world.waypoints.len(), 1);
+        assert_eq!(world.geography.field_notes_for(ada_id).len(), 1);
+        stand_at(&mut world, bob_id, &place);
+        assert!(world.apply(bob, "waypoint show roof-scratch").is_err());
+        assert!(world.apply(bob, "journal read survey-scratch").is_err());
+        assert!(world.geography.field_notes_for(bob_id).is_empty());
+    }
+
+    #[test]
+    fn cabin_controls_remain_on_home_command_beside_personal_homes() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        world.apply(ada, "home").unwrap();
+        assert!(overlay(&world, ada).contains("Your home"));
+        // Without a cabin on the tile, cabin subcommands still refuse clearly.
+        let err = world.apply(ada, "home access public").unwrap_err().to_string();
+        assert!(
+            err.contains("cabin")
+                || err.contains("workshop")
+                || err.contains("own")
+                || err.contains("here"),
+            "{err}"
+        );
+        assert!(world.homes.active_for(ada_id).is_some());
+        // Existing demolish confirmation wording is unchanged.
+        let err = world.apply(ada, "home demolish").unwrap_err().to_string();
+        assert!(
+            err.contains("demolish")
+                || err.contains("cabin")
+                || err.contains("workshop")
+                || err.contains("own"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn acceptance_lifecycle_across_reconnect_and_distance() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        // ~96 tiles west of the Hub gate: birth region (-6, 0).
+        let identity = crate::geography::RegionIdentity {
+            world: crate::geography::WorldId::Undernet,
+            epoch_id: 1,
+            origin_x: -6,
+            origin_y: 0,
+            generation_version: 1,
+        };
+        let generated = crate::geography::generate_region(identity).unwrap();
+        let mut far = None;
+        for local_y in 0..16u8 {
+            for local_x in 0..16u8 {
+                let pos = WildernessPos { identity, local_x, local_y };
+                if world.effective_at(pos).unwrap().traversable()
+                    && !pos.is_gate()
+                    && crate::subway::entrance_at(pos).is_none()
+                    && generated.tile(local_x, local_y).unwrap().terrain.traversable()
+                {
+                    far = Some(pos);
+                    break;
+                }
+            }
+            if far.is_some() {
+                break;
+            }
+        }
+        let far = far.expect("walkable tile ~100 steps from the Hub");
+        let place = far.key();
+        let _ = world.ensure_region(far.identity, Some(ada_id), far.local_x, far.local_y).unwrap();
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+
+        // Disconnect / reconnect: same operator id keeps the home.
+        world.detach(ada).unwrap();
+        let ada2 = SessionIdentity::new(ada_id, "ada", Permissions::player());
+        let ada_session = ada2.session_id;
+        world.connect_player(ada2).unwrap();
+        world.apply(ada_session, "home").unwrap();
+        assert!(overlay(&world, ada_session).contains("Your home"));
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+
+        let next = second_walkable(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &next);
+        let prompt = world.apply(ada_session, "home move").unwrap_err().to_string();
+        assert!(prompt.contains("will be abandoned"), "{prompt}");
+        world.apply(ada_session, "home move confirm").unwrap();
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, next);
+
+        // Old place is no longer theirs; look text follows the abandoned lifecycle.
+        assert_ne!(world.homes.active_for(ada_id).unwrap().place_key, place);
+        stand_at(&mut world, ada_id, &place);
+        let scene = world.wild_scene_for_tests(far, Some(ada_id));
+        assert!(scene.contains("inhabited until recently"), "{scene}");
+        assert!(!scene.contains("You have made a home here"), "{scene}");
+    }
+}
