@@ -1019,7 +1019,9 @@ impl WorldState {
                     let baseline = region
                         .tile(pos.local_x, pos.local_y)
                         .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
-                    effective_tile(pos, baseline, &self.geography).terrain.label().to_string()
+                    let terrain = effective_tile(pos, baseline, &self.geography).terrain;
+                    let urban = UrbanContext::at(pos);
+                    format!("{} — {}", terrain.label(), urban.title_suffix())
                 }
                 Err(_) => "Unreadable Squalor".to_string(),
             };

@@ -120,6 +120,14 @@ District identity, block composition, environmental traces, and the near-Hub War
 - Ordinary look prose varies by district, block, terrain, and band. A minority of tiles add an inspectable trace; landmarks remain the sparse generated points of interest.
 - The Ward Clinic story is three authored tiles in region `(0, 0)`: directory `(6,10)`, clinic `(5,12)`, corridor `(6,12)`.
 
+## Distance-independent generation
+
+The Hub is a navigational centre, not a generation centre. Version 1 samples an absolute coordinate field, so birth cell `(62, 0)` (~992 tiles east of the gate) is generated the same way as `(0, 0)`: from its `RegionIdentity` alone. Intervening regions need not be visited or materialized. District and block composition continue across region borders; the near-Hub / fringe / deep bands change atmosphere and texture frequency, not the presence of urban structure.
+
+Player knowledge stays opt-in. Materializing a remote region records an `entered` discovery for that birth cell only. Neighbouring cells remain unknown until visited. Waypoints and `describe_place` carry district/block/band familiarity derived from absolute coordinates so a mark a thousand tiles away remains legible without becoming a teleport.
+
+The remote-world acceptance scenario locks birth `(62, 0)` in `geography::remote` and a SQLite reopen path in the store tests.
+
 ## Persistence and migrations
 
 `0001_init.sql` is unchanged. `0002_world.sql` adds:

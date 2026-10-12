@@ -125,12 +125,17 @@ pub fn cross_region_hint(from: WildernessPos, to: WildernessPos) -> String {
 
 /// A wilderness destination seen from a city room, when it is not the gate's birth cell.
 pub fn distant_cell_hint(to: WildernessPos) -> String {
+    let urban = super::density::UrbanContext::at(to);
+    let approx_tiles = i64::from(to.identity.origin_x.abs()) * i64::from(REGION_SIZE)
+        + i64::from(to.identity.origin_y.abs()) * i64::from(REGION_SIZE);
     format!(
-        "Destination birth ({}, {}), tile {},{}. The Hub gate is birth (0, 0), tile {},{}. This is not a route.",
+        "Destination birth ({}, {}), tile {},{} — {}. About {approx_tiles} tiles from the Hub gate \
+birth (0, 0), tile {},{}. This is not a route.",
         to.identity.origin_x,
         to.identity.origin_y,
         to.local_x,
         to.local_y,
+        urban.familiarity(),
         GATE_LOCAL_X,
         GATE_LOCAL_Y
     )

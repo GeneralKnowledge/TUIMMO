@@ -14,13 +14,16 @@ mod travel;
 
 #[cfg(test)]
 mod explore;
+#[cfg(test)]
+mod remote;
 
 pub use density::{
     density_band, district_at, story_aliases, story_finding, story_sight, trace_aliases,
     BlockPattern, DensityBand, DistrictKind, StorySite, TraceKind, UrbanContext,
     CLINIC_CORRIDOR_ID, CLINIC_CORRIDOR_LOCAL_X, CLINIC_CORRIDOR_LOCAL_Y, CLINIC_DIRECTORY_ID,
     CLINIC_DIRECTORY_LOCAL_X, CLINIC_DIRECTORY_LOCAL_Y, CLINIC_ENTRANCE_LOCAL_X,
-    CLINIC_ENTRANCE_LOCAL_Y, CLINIC_NOTICE_ID,
+    CLINIC_ENTRANCE_LOCAL_Y, CLINIC_NOTICE_ID, REMOTE_ACCEPTANCE_ORIGIN_X,
+    REMOTE_ACCEPTANCE_ORIGIN_Y,
 };
 pub use field::{
     closure_inspect_text, delisted_floor, delisted_panel_waiting, delisted_terminal_waiting,
