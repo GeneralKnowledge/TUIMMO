@@ -296,6 +296,7 @@ pub struct JournalLine {
 pub fn format_overview(entries: &[JournalLine]) -> String {
     if entries.is_empty() {
         return "Your field journal is empty.\n\
+                Only you can read it.\n\
                 Inspect something unusual, then `journal record`.\n\
                 `look` returns to the place."
             .into();

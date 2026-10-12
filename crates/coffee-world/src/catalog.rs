@@ -7,9 +7,16 @@ pub fn coffee_registry() -> CommandRegistry {
         CommandSpec {
             name: "help",
             aliases: &["?"],
-            summary: "List commands or explain one",
-            usage: "help [command]",
+            summary: "Explain a topic, or one command",
+            usage: "help [topic]",
             args: ArgMode::OptionalWord,
+        },
+        CommandSpec {
+            name: "welcome",
+            aliases: &[],
+            summary: "Show the arrival note again",
+            usage: "welcome",
+            args: ArgMode::None,
         },
         CommandSpec {
             name: "look",

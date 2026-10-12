@@ -30,6 +30,7 @@ use crate::waypoint::Waypoint;
 const SQUALOR_ALIAS: &str = "squalor";
 
 mod building_cmds;
+mod guide;
 mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
@@ -281,10 +282,11 @@ impl WorldState {
         if let Some(repair_op) = repair {
             ops.push(repair_op);
         }
-        Ok((
-            Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops },
-            replaced,
-        ))
+        let (arrival_events, arrival_ops) = self.mark_arrival(session_id, player_id);
+        ops.extend(arrival_ops);
+        let mut events = vec![event];
+        events.extend(arrival_events);
+        Ok((Transition { outcome: CommandOutcome { events, quit: false }, ops }, replaced))
     }
 
     pub fn detach(&mut self, session_id: SessionId) -> Result<Transition, GameError> {
@@ -344,7 +346,11 @@ impl WorldState {
         let handler = handler(&parsed.name).ok_or_else(|| {
             GameError::Rejected(format!("Unknown command '{}'. Try help.", parsed.name))
         })?;
-        handler(self, session_id, &parsed)
+        let mut transition = handler(self, session_id, &parsed)?;
+        if parsed.name == "inspect" {
+            self.attach_inspect_hint(session_id, &mut transition);
+        }
+        Ok(transition)
     }
 
     pub fn replace_log(&mut self, log: Vec<LogEntry>) {
@@ -490,25 +496,6 @@ impl WorldState {
         self.emit(Channel::System, Audience::Player(player), None, text)
     }
 
-    fn cmd_help(
-        &mut self,
-        session_id: SessionId,
-        cmd: &ParsedCommand,
-    ) -> Result<Transition, GameError> {
-        let text = if let Some(topic) = cmd.args.first() {
-            self.registry.help_topic(topic).map_err(|err| {
-                GameError::Rejected(match err {
-                    ParseError::Unknown(name) => format!("No help for '{name}'."),
-                    other => other.to_string(),
-                })
-            })?
-        } else {
-            self.registry.help_all()
-        };
-        self.set_overlay(session_id, text);
-        Ok(quiet())
-    }
-
     fn cmd_look(
         &mut self,
         session_id: SessionId,
@@ -560,7 +547,9 @@ impl WorldState {
                 let mut names = self.names_in(&location);
                 names.retain(|name| name != &mine);
                 if names.is_empty() {
-                    "Nobody else is here.".into()
+                    "Nobody else is here.\n\
+                     `say` stays in this room. `chat` reaches the Undernet."
+                        .into()
                 } else {
                     format!("Here: {}", names.join(", "))
                 }
@@ -1971,6 +1960,7 @@ impl Game for WorldState {
 fn handler(name: &str) -> Option<Handler> {
     Some(match name {
         "help" => WorldState::cmd_help,
+        "welcome" => WorldState::cmd_welcome,
         "look" => WorldState::cmd_look,
         "map" => WorldState::cmd_map,
         "who" => WorldState::cmd_who,

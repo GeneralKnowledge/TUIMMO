@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use crate::app::{App, Effect};
 use crate::remote::Input;
-use crate::theme::Theme;
+use crate::theme::{enable_theme_colors, Theme};
 use crate::TuiError;
 
 pub async fn run_local<G>(
@@ -32,6 +32,7 @@ where
     let view = game.view(session_id)?;
     let mut app = App::play(theme, view);
 
+    enable_theme_colors();
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
