@@ -23,6 +23,10 @@ path = "social_homestead.rs"
 name = "settlements"
 path = "settlements.rs"
 
+[[test]]
+name = "invites"
+path = "invites.rs"
+
 [dependencies]
 anyhow.workspace = true
 coffee-server.workspace = true

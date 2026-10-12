@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use coffee_world::{
-    canonical_username, hash_password, starter_operator, validate_operator_name, verify_password,
-    AuthError, Store, StoreError, WorldState,
+    canonical_username, hash_password, normalize_invite_code, starter_operator,
+    validate_operator_name, verify_password, AuthError, Store, StoreError, WorldState,
+    DEFAULT_INVITES_PER_PLAYER,
 };
 use terminus_core::{
     Game, GameError, GameEvent, GameView, Permissions, PlayerId, SessionId, SessionIdentity,
@@ -91,6 +92,7 @@ enum Msg {
         username: String,
         password: String,
         operator_name: String,
+        invite_code: String,
         events: Option<mpsc::Sender<ServerMessage>>,
         reply: oneshot::Sender<Result<Grant, AuthError>>,
     },
@@ -112,10 +114,31 @@ enum Msg {
     },
 }
 
+/// Registration policy owned by the hub actor.
+#[derive(Clone, Debug)]
+pub struct HubAuthConfig {
+    pub allow_registration: bool,
+    pub invite_only: bool,
+    /// Zero means no account cap.
+    pub max_accounts: u32,
+    pub invites_per_player: u32,
+}
+
+impl Default for HubAuthConfig {
+    fn default() -> Self {
+        Self {
+            allow_registration: true,
+            invite_only: false,
+            max_accounts: 0,
+            invites_per_player: DEFAULT_INVITES_PER_PLAYER,
+        }
+    }
+}
+
 struct Actor {
     world: WorldState,
     store: Store,
-    allow_registration: bool,
+    auth: HubAuthConfig,
     tokens: HashMap<String, TokenRec>,
     subs: HashMap<SessionId, mpsc::Sender<ServerMessage>>,
     limiter: CommandLimiter,
@@ -124,14 +147,14 @@ struct Actor {
 }
 
 impl Hub {
-    pub fn spawn(world: WorldState, store: Store, allow_registration: bool) -> Self {
+    pub fn spawn(world: WorldState, store: Store, auth: HubAuthConfig) -> Self {
         let (tx, mut rx) = mpsc::channel(128);
         let dummy_hash = coffee_world::dummy_hash();
         tokio::spawn(async move {
             let mut actor = Actor {
                 world,
                 store,
-                allow_registration,
+                auth,
                 tokens: HashMap::new(),
                 subs: HashMap::new(),
                 limiter: CommandLimiter::new(),
@@ -170,11 +193,12 @@ impl Hub {
         username: String,
         password: String,
         operator_name: String,
+        invite_code: String,
         events: Option<mpsc::Sender<ServerMessage>>,
     ) -> Result<Grant, AuthError> {
         let (reply, rx) = oneshot::channel();
         self.tx
-            .send(Msg::Register { username, password, operator_name, events, reply })
+            .send(Msg::Register { username, password, operator_name, invite_code, events, reply })
             .await
             .map_err(|_| AuthError::Internal)?;
         rx.await.map_err(|_| AuthError::Internal)?
@@ -225,8 +249,9 @@ impl Actor {
                 let result = self.login(username, password, events).await;
                 let _ = reply.send(result);
             }
-            Msg::Register { username, password, operator_name, events, reply } => {
-                let result = self.register(username, password, operator_name, events).await;
+            Msg::Register { username, password, operator_name, invite_code, events, reply } => {
+                let result =
+                    self.register(username, password, operator_name, invite_code, events).await;
                 let _ = reply.send(result);
             }
             Msg::Resume { token, events, reply } => {
@@ -273,8 +298,8 @@ impl Actor {
                     .unwrap_or(row.operator_name);
                 self.attach(row.operator_id, name, events).await
             }
-            Ok(None) if self.allow_registration => {
-                self.register(username, password, String::new(), events).await
+            Ok(None) if self.auth.allow_registration && !self.auth.invite_only => {
+                self.register(username, password, String::new(), String::new(), events).await
             }
             Ok(None) => {
                 let dummy = self.dummy_hash.clone();
@@ -295,9 +320,10 @@ impl Actor {
         username: String,
         password: String,
         operator_name: String,
+        invite_code: String,
         events: Option<mpsc::Sender<ServerMessage>>,
     ) -> Result<Grant, AuthError> {
-        if !self.allow_registration {
+        if !self.auth.allow_registration {
             return Err(AuthError::RegistrationClosed);
         }
         let username = canonical_username(&username)?;
@@ -308,6 +334,19 @@ impl Actor {
             username.clone()
         } else {
             validate_operator_name(&operator_name)?
+        };
+        let invite_trim = invite_code.trim();
+        if self.auth.invite_only && invite_trim.is_empty() {
+            return Err(AuthError::InviteRequired);
+        }
+        let normalized_key = if invite_trim.is_empty() {
+            None
+        } else {
+            Some(
+                normalize_invite_code(invite_trim)
+                    .map_err(|_| AuthError::InvalidInvite)?
+                    .to_string(),
+            )
         };
         if let Ok(Some(_)) = self.store.find_account(&username).await {
             return Err(AuthError::NameTaken);
@@ -320,16 +359,40 @@ impl Actor {
         let operator_id = PlayerId::new();
         let operator = starter_operator(operator_id, account_id, &username, &operator_name);
         let created = system_now_ms();
-        if let Err(err) =
-            self.store.create_account(account_id, &username, &encoded, &operator, created).await
+        let minted = match self
+            .store
+            .create_account_with_invite(
+                coffee_world::NewAccount {
+                    account_id,
+                    username: &username,
+                    password_hash: &encoded,
+                    operator: &operator,
+                    created_at: created,
+                },
+                coffee_world::AccountInvitePolicy {
+                    code: normalized_key.as_deref(),
+                    require_code: self.auth.invite_only,
+                    max_accounts: self.auth.max_accounts,
+                    starter_invites: self.auth.invites_per_player,
+                },
+            )
+            .await
         {
-            if is_unique(&err) {
-                return Err(AuthError::NameTaken);
+            Ok(minted) => minted,
+            Err(StoreError::NameTaken) => return Err(AuthError::NameTaken),
+            Err(StoreError::InviteMissing) => return Err(AuthError::InvalidInvite),
+            Err(StoreError::InviteUsed) => return Err(AuthError::InviteUsed),
+            Err(StoreError::AccountCap) => return Err(AuthError::AccountCapReached),
+            Err(err) => {
+                if is_unique(&err) {
+                    return Err(AuthError::NameTaken);
+                }
+                tracing::error!(error = %err, "failed to create account");
+                return Err(AuthError::Internal);
             }
-            tracing::error!(error = %err, "failed to create account");
-            return Err(AuthError::Internal);
-        }
+        };
         self.world.insert_operator(operator);
+        self.world.note_invite_redemption(normalized_key.as_deref(), operator_id, created, minted);
         self.attach(operator_id, operator_name, events).await
     }
 

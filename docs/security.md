@@ -22,6 +22,8 @@ SSH offers password authentication only. Failed attempts are limited per address
 
 Registration is open unless the server is started with `--no-registration` or `COFFEE_NO_REGISTRATION=1`. Open registration lets anyone claim a username. That is acceptable for a local prototype and a poor default for a public host.
 
+Invite-only hosts set `--invite-only` / `COFFEE_INVITE_ONLY=1`. Registration then requires a single-use code (`ABCD-EFGH`). Seed a batch with `coffee-server invite create --count 20 --note reddit`. Each successful redeem mints `--invites-per-player` (default 2) fresh codes for that operator; they list them with `invite` / `invite list`. `--max-accounts` / `COFFEE_MAX_ACCOUNTS` caps how many accounts may exist (zero means unlimited). SSH password login does not auto-create accounts while invite-only is on. Offline `account create` still bypasses codes for bootstrap.
+
 A new login replaces the previous session for that account. The old terminal receives `goodbye`. This is what makes reconnect work. It also means a stolen password disconnects the owner.
 
 Tokens are random 128-bit values held in memory. A restart invalidates them. Identity and position are what survive.

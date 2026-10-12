@@ -29,12 +29,30 @@ pub struct ServerFrame {
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ClientMessage {
-    Hello { client: String },
-    Register { username: String, password: String, operator_name: String },
-    Login { username: String, password: String },
-    Resume { token: String },
-    Command { line: String },
-    Ping { nonce: u64 },
+    Hello {
+        client: String,
+    },
+    Register {
+        username: String,
+        password: String,
+        operator_name: String,
+        /// Required when the server is invite-only. Omitted or empty for open registration.
+        #[serde(default)]
+        invite_code: String,
+    },
+    Login {
+        username: String,
+        password: String,
+    },
+    Resume {
+        token: String,
+    },
+    Command {
+        line: String,
+    },
+    Ping {
+        nonce: u64,
+    },
 }
 
 /// Messages the server may send.
@@ -80,11 +98,15 @@ impl std::fmt::Debug for ClientMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Hello { client } => f.debug_struct("Hello").field("client", client).finish(),
-            Self::Register { username, operator_name, .. } => f
+            Self::Register { username, operator_name, invite_code, .. } => f
                 .debug_struct("Register")
                 .field("username", username)
                 .field("password", &"<redacted>")
                 .field("operator_name", operator_name)
+                .field(
+                    "invite_code",
+                    if invite_code.is_empty() { &"<none>" } else { &"<redacted>" },
+                )
                 .finish(),
             Self::Login { username, .. } => f
                 .debug_struct("Login")

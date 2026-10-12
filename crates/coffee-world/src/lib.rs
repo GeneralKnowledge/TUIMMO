@@ -11,6 +11,7 @@ pub mod auth;
 pub mod catalog;
 pub mod geography;
 pub mod home;
+pub mod invite;
 pub mod mail;
 pub mod model;
 pub mod settlement;
@@ -41,8 +42,12 @@ pub use auth::{
     canonical_username, dummy_hash, hash_password, validate_operator_name, validate_password,
     verify_password, AuthError,
 };
+pub use invite::{
+    format_invite_code, normalize_invite_code, AccountInvite, InviteBook,
+    DEFAULT_INVITES_PER_PLAYER,
+};
 pub use model::{Item, Operator, PersistOp, STARTER_LOCATION};
 pub use settlement::SettlementState;
 pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
-pub use store::{AccountRow, Store, StoreError};
+pub use store::{AccountInvitePolicy, AccountRow, NewAccount, Store, StoreError};

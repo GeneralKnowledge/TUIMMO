@@ -16,6 +16,7 @@ use crate::geography::{
     TerrainMod, WorldConnection, WorldId, ACCESS_PUBLIC, SHARE_PRIVATE,
 };
 use crate::home::{HomeState, PersonalHome};
+use crate::invite::{new_invite, normalize_invite_code, AccountInvite, InviteBook};
 use crate::mail::{MailMessage, Mailbox};
 use crate::model::{Item, Operator, PersistOp, LOG_CAP};
 use crate::settlement::{
@@ -37,6 +38,14 @@ pub enum StoreError {
     Migrate(String),
     #[error("stored data is invalid")]
     Data,
+    #[error("that username is already registered")]
+    NameTaken,
+    #[error("that invite code is not valid")]
+    InviteMissing,
+    #[error("that invite code was already used")]
+    InviteUsed,
+    #[error("this server is full")]
+    AccountCap,
 }
 
 pub struct Store {
@@ -53,6 +62,7 @@ pub struct LoadedWorld {
     pub homes: HomeState,
     pub mailbox: Mailbox,
     pub theories: TheoryBoard,
+    pub invites: InviteBook,
 }
 
 impl Store {
@@ -120,6 +130,7 @@ impl Store {
         let homes = self.load_homes().await?;
         let mailbox = self.load_mail().await?;
         let theories = self.load_theories().await?;
+        let invites = self.load_invites().await?;
         Ok(LoadedWorld {
             operators,
             log,
@@ -130,7 +141,122 @@ impl Store {
             homes,
             mailbox,
             theories,
+            invites,
         })
+    }
+
+    pub async fn count_accounts(&self) -> Result<u64, StoreError> {
+        let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok(u64::try_from(count).unwrap_or(0))
+    }
+
+    /// Insert unused invite codes. `created_by` is None for admin/seed batches.
+    pub async fn create_invite_codes(
+        &self,
+        count: u32,
+        created_by: Option<PlayerId>,
+        created_at: u64,
+        note: &str,
+    ) -> Result<Vec<AccountInvite>, StoreError> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+        let mut rows = Vec::with_capacity(count as usize);
+        for _ in 0..count {
+            rows.push(new_invite(created_by, created_at, note));
+        }
+        let mut tx = self.pool.begin().await?;
+        for row in &rows {
+            insert_invite(&mut tx, row).await?;
+        }
+        tx.commit().await?;
+        Ok(rows)
+    }
+
+    /// Create an account, optionally redeeming an invite and minting starter friend codes.
+    pub async fn create_account_with_invite(
+        &self,
+        account: NewAccount<'_>,
+        invite: AccountInvitePolicy<'_>,
+    ) -> Result<Vec<AccountInvite>, StoreError> {
+        let code_key = match invite.code.map(str::trim).filter(|code| !code.is_empty()) {
+            Some(raw) => Some(normalize_invite_code(raw).map_err(|_| StoreError::InviteMissing)?),
+            None if invite.require_code => return Err(StoreError::InviteMissing),
+            None => None,
+        };
+
+        let mut tx = self.pool.begin().await?;
+        if invite.max_accounts > 0 {
+            let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM accounts")
+                .fetch_one(&mut *tx)
+                .await?;
+            if count >= i64::from(invite.max_accounts) {
+                return Err(StoreError::AccountCap);
+            }
+        }
+
+        if let Some(key) = code_key.as_deref() {
+            let row = sqlx::query_as::<_, InviteOpenSql>(
+                "SELECT redeemed_by FROM account_invites WHERE code_key = ?1",
+            )
+            .bind(key)
+            .fetch_optional(&mut *tx)
+            .await?;
+            match row {
+                None => return Err(StoreError::InviteMissing),
+                Some(existing) if existing.redeemed_by.is_some() => {
+                    return Err(StoreError::InviteUsed);
+                }
+                Some(_) => {}
+            }
+        }
+
+        if let Err(err) = insert_account_rows(
+            &mut tx,
+            account.account_id,
+            account.username,
+            account.password_hash,
+            account.operator,
+            account.created_at,
+        )
+        .await
+        {
+            if is_unique_constraint(&err) {
+                return Err(StoreError::NameTaken);
+            }
+            return Err(err);
+        }
+
+        if let Some(key) = code_key.as_deref() {
+            let updated = sqlx::query(
+                "UPDATE account_invites
+                 SET redeemed_by = ?1, redeemed_at = ?2
+                 WHERE code_key = ?3 AND redeemed_by IS NULL",
+            )
+            .bind(account.operator.id.to_string())
+            .bind(account.created_at as i64)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+            if updated != 1 {
+                return Err(StoreError::InviteUsed);
+            }
+        }
+
+        let mut minted = Vec::new();
+        if code_key.is_some() {
+            for _ in 0..invite.starter_invites {
+                let row = new_invite(Some(account.operator.id), account.created_at, "");
+                insert_invite(&mut tx, &row).await?;
+                minted.push(row);
+            }
+        }
+
+        tx.commit().await?;
+        Ok(minted)
     }
 
     pub async fn create_account(
@@ -142,39 +268,14 @@ impl Store {
         created_at: u64,
     ) -> Result<(), StoreError> {
         let mut tx = self.pool.begin().await?;
-        sqlx::query(
-            "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
-        )
-        .bind(account_id.to_string())
-        .bind(username)
-        .bind(password_hash)
-        .bind(created_at as i64)
-        .execute(&mut *tx)
-        .await?;
-        sqlx::query(
-            "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen, bio, status)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        )
-        .bind(operator.id.to_string())
-        .bind(operator.account_id.to_string())
-        .bind(&operator.name)
-        .bind(&operator.location_id)
-        .bind(created_at as i64)
-        .bind(created_at as i64)
-        .bind(&operator.bio)
-        .bind(&operator.status)
-        .execute(&mut *tx)
-        .await?;
-        for item in &operator.items {
-            sqlx::query(
-                "INSERT INTO operator_items (operator_id, item_key, name, detail) VALUES (?1, ?2, ?3, ?4)",
-            )
-            .bind(operator.id.to_string())
-            .bind(&item.keyword)
-            .bind(&item.name)
-            .bind(&item.detail)
-            .execute(&mut *tx)
-            .await?;
+        if let Err(err) =
+            insert_account_rows(&mut tx, account_id, username, password_hash, operator, created_at)
+                .await
+        {
+            if is_unique_constraint(&err) {
+                return Err(StoreError::NameTaken);
+            }
+            return Err(err);
         }
         tx.commit().await?;
         Ok(())
@@ -1177,6 +1278,29 @@ impl Store {
         Ok(TheoryBoard::from_stored(entries, u64_col(next_id)?))
     }
 
+    async fn load_invites(&self) -> Result<InviteBook, StoreError> {
+        let rows = sqlx::query_as::<_, AccountInviteSql>(
+            "SELECT id, code_key, display_code, created_by, created_at, note, redeemed_by, redeemed_at
+             FROM account_invites",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut codes = Vec::with_capacity(rows.len());
+        for row in rows {
+            codes.push(AccountInvite {
+                id: Uuid::from_str(&row.id).map_err(|_| StoreError::Data)?,
+                code_key: row.code_key,
+                display_code: row.display_code,
+                created_by: optional_player(row.created_by)?,
+                created_at: u64_col(row.created_at)?,
+                note: row.note,
+                redeemed_by: optional_player(row.redeemed_by)?,
+                redeemed_at: row.redeemed_at.map(u64_col).transpose()?,
+            });
+        }
+        Ok(InviteBook { codes })
+    }
+
     async fn load_social(&self) -> Result<SocialState, StoreError> {
         let mut social = SocialState::default();
         let friends = sqlx::query_as::<_, FriendshipSql>(
@@ -1291,6 +1415,85 @@ impl Store {
     }
 }
 
+async fn insert_account_rows(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    account_id: Uuid,
+    username: &str,
+    password_hash: &str,
+    operator: &Operator,
+    created_at: u64,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO accounts (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+    )
+    .bind(account_id.to_string())
+    .bind(username)
+    .bind(password_hash)
+    .bind(created_at as i64)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query(
+        "INSERT INTO operators (id, account_id, name, location_id, created_at, last_seen, bio, status)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(operator.id.to_string())
+    .bind(operator.account_id.to_string())
+    .bind(&operator.name)
+    .bind(&operator.location_id)
+    .bind(created_at as i64)
+    .bind(created_at as i64)
+    .bind(&operator.bio)
+    .bind(&operator.status)
+    .execute(&mut **tx)
+    .await?;
+    for item in &operator.items {
+        sqlx::query(
+            "INSERT INTO operator_items (operator_id, item_key, name, detail) VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(operator.id.to_string())
+        .bind(&item.keyword)
+        .bind(&item.name)
+        .bind(&item.detail)
+        .execute(&mut **tx)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn insert_invite(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    row: &AccountInvite,
+) -> Result<(), StoreError> {
+    sqlx::query(
+        "INSERT INTO account_invites (
+            id, code_key, display_code, created_by, created_at, note, redeemed_by, redeemed_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+    )
+    .bind(row.id.to_string())
+    .bind(&row.code_key)
+    .bind(&row.display_code)
+    .bind(row.created_by.map(|id| id.to_string()))
+    .bind(row.created_at as i64)
+    .bind(&row.note)
+    .bind(row.redeemed_by.map(|id| id.to_string()))
+    .bind(row.redeemed_at.map(|at| at as i64))
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+fn is_unique_constraint(err: &StoreError) -> bool {
+    let mut current: Option<&dyn std::error::Error> = Some(err);
+    while let Some(err) = current {
+        let text = err.to_string();
+        if text.contains("UNIQUE") || text.contains("unique") {
+            return true;
+        }
+        current = err.source();
+    }
+    false
+}
+
 fn mail_id(id: u64) -> Result<i64, StoreError> {
     i64::try_from(id).map_err(|_| StoreError::Data)
 }
@@ -1325,6 +1528,23 @@ fn optional_uuid(value: Option<String>) -> Result<Option<Uuid>, StoreError> {
 
 fn blank_to_none(value: Option<String>) -> Option<String> {
     value.filter(|text| !text.is_empty())
+}
+
+/// Fields needed to insert a new account row set.
+pub struct NewAccount<'a> {
+    pub account_id: Uuid,
+    pub username: &'a str,
+    pub password_hash: &'a str,
+    pub operator: &'a Operator,
+    pub created_at: u64,
+}
+
+/// Invite gate applied while creating an account.
+pub struct AccountInvitePolicy<'a> {
+    pub code: Option<&'a str>,
+    pub require_code: bool,
+    pub max_accounts: u32,
+    pub starter_invites: u32,
 }
 
 pub struct AccountRow {
@@ -1526,6 +1746,23 @@ struct TheorySql {
     kind: String,
     body: String,
     created_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct AccountInviteSql {
+    id: String,
+    code_key: String,
+    display_code: String,
+    created_by: Option<String>,
+    created_at: i64,
+    note: String,
+    redeemed_by: Option<String>,
+    redeemed_at: Option<i64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct InviteOpenSql {
+    redeemed_by: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -1933,6 +2170,7 @@ mod tests {
         assert!(tables.iter().any(|name| name == "shared_theories"));
         assert!(tables.iter().any(|name| name == "shared_theory_seq"));
         assert!(tables.iter().any(|name| name == "personal_homes"));
+        assert!(tables.iter().any(|name| name == "account_invites"));
         let home_returns: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('personal_homes') WHERE name = 'meaningful_returns'",
         )

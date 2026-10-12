@@ -17,6 +17,7 @@ pub struct LoginForm {
     pub username: String,
     pub password: String,
     pub operator_name: String,
+    pub invite_code: String,
     pub field: LoginField,
     pub register: bool,
 }
@@ -26,6 +27,7 @@ pub enum LoginField {
     Username,
     Password,
     OperatorName,
+    InviteCode,
 }
 
 impl LoginForm {
@@ -34,6 +36,7 @@ impl LoginForm {
             username: String::new(),
             password: String::new(),
             operator_name: String::new(),
+            invite_code: String::new(),
             field: LoginField::Username,
             register: false,
         }
@@ -56,7 +59,13 @@ pub enum Screen {
 pub enum Effect {
     None,
     SubmitCommand(String),
-    SubmitAuth { username: String, password: String, operator_name: String, register: bool },
+    SubmitAuth {
+        username: String,
+        password: String,
+        operator_name: String,
+        invite_code: String,
+        register: bool,
+    },
     Quit,
 }
 
@@ -379,6 +388,7 @@ impl App {
                     LoginField::Username => ("user> ", form.username.clone(), false),
                     LoginField::Password => ("pass> ", form.password.clone(), true),
                     LoginField::OperatorName => ("name> ", form.operator_name.clone(), false),
+                    LoginField::InviteCode => ("invite> ", form.invite_code.clone(), false),
                 };
                 (label.into(), value, secret)
             }
@@ -485,7 +495,9 @@ impl App {
             Key::CtrlC => return Effect::Quit,
             Key::CtrlR => {
                 form.register = !form.register;
-                if !form.register && form.field == LoginField::OperatorName {
+                if !form.register
+                    && matches!(form.field, LoginField::OperatorName | LoginField::InviteCode)
+                {
                     form.field = LoginField::Username;
                 }
                 return Effect::None;
@@ -506,12 +518,19 @@ impl App {
                 } else {
                     form.operator_name.trim().to_string()
                 };
+                let invite_code = form.invite_code.trim().to_string();
                 let register = form.register;
                 if username.is_empty() || password.is_empty() {
                     self.notice = Some("Username and password are required.".into());
                     return Effect::None;
                 }
-                return Effect::SubmitAuth { username, password, operator_name, register };
+                return Effect::SubmitAuth {
+                    username,
+                    password,
+                    operator_name,
+                    invite_code,
+                    register,
+                };
             }
             _ => {}
         }
@@ -522,6 +541,7 @@ impl App {
             LoginField::Username => &mut form.username,
             LoginField::Password => &mut form.password,
             LoginField::OperatorName => &mut form.operator_name,
+            LoginField::InviteCode => &mut form.invite_code,
         };
         match key {
             Key::Backspace => {
@@ -574,7 +594,12 @@ impl App {
 
 fn next_field(field: LoginField, register: bool, forward: bool) -> LoginField {
     let fields = if register {
-        vec![LoginField::Username, LoginField::Password, LoginField::OperatorName]
+        vec![
+            LoginField::Username,
+            LoginField::Password,
+            LoginField::OperatorName,
+            LoginField::InviteCode,
+        ]
     } else {
         vec![LoginField::Username, LoginField::Password]
     };
@@ -592,7 +617,8 @@ fn login_help(form: &LoginForm) -> String {
 Tab switches fields. Ctrl-R toggles registration.\n\
 Enter submits. Ctrl-C quits.\n\n\
 Usernames are lowercase, 3-16 characters.\n\
-Passwords are 8-128 characters and are not stored in the clear.\n\n\
+Passwords are 8-128 characters and are not stored in the clear.\n\
+Invite codes look like ABCD-EFGH when the host requires one.\n\n\
 New accounts begin in the Coffee Shop."
     )
 }

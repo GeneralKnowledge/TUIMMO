@@ -128,9 +128,9 @@ async fn handle_key(
             let message = client.call(ClientMessage::Command { line }).await?;
             Ok(apply_server(app, message))
         }
-        Effect::SubmitAuth { username, password, operator_name, register } => {
+        Effect::SubmitAuth { username, password, operator_name, invite_code, register } => {
             let body = if register {
-                ClientMessage::Register { username, password, operator_name }
+                ClientMessage::Register { username, password, operator_name, invite_code }
             } else {
                 ClientMessage::Login { username, password }
             };

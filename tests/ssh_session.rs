@@ -44,6 +44,7 @@ async fn ssh_opens_the_game_and_refuses_exec() {
             username: "ada".into(),
             password: PASSWORD.into(),
             operator_name: "Ada".into(),
+            invite_code: String::new(),
         })
         .await
         .expect("register");

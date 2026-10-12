@@ -166,6 +166,13 @@ pub fn coffee_registry() -> CommandRegistry {
             args: ArgMode::Rest { required: false },
         },
         CommandSpec {
+            name: "invite",
+            aliases: &[],
+            summary: "Show unused account invite codes you can share",
+            usage: "invite [list]",
+            args: ArgMode::Rest { required: false },
+        },
+        CommandSpec {
             name: "mark",
             aliases: &[],
             summary: "Leave a named marker on this Squalor tile",
