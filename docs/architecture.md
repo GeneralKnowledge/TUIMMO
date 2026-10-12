@@ -28,7 +28,7 @@ flowchart LR
 
 `WorldState` implements `terminus_core::Game`. It accepts typed commands and returns a `GameView` plus the rows that must be saved. It does not read sockets or draw widgets.
 
-`Hub` owns the world. Every login, command, and disconnect is a message to that task, so two players cannot interleave a mutation. After a successful transition the hub commits a `PersistOp` list inside one transaction. If the commit fails, the in-memory operator, message log, geography, social graph, settlements, waypoints, personal homes, mailbox, shared theories, and session overlays are restored.
+`Hub` owns the world. Every login, command, and disconnect is a message to that task, so two players cannot interleave a mutation. After a successful transition the hub commits a `PersistOp` list inside one transaction. If the commit fails, the hub restores one bundled in-memory snapshot (operators, message log, geography, social graph, settlements, waypoints, personal homes, mailbox, shared theories, account invites, and session overlays).
 
 The TUI renders `GameView` and sends command lines. It does not decide whether a move is legal. A `finding` stays beside the place description, and an `overlay` (journal, theories, map, help, the arrival note) keeps that place on screen until `look`. SSH authentication calls the hub in-process and receives a session token. The terminal session then speaks the versioned protocol over a `0600` unix socket at `data/game.sock`. That socket is the same one `coffee-server play` uses. The gateway refuses `exec`, subsystems, environment changes, and forwarding.
 

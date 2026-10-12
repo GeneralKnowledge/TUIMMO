@@ -11,7 +11,7 @@ use terminus_core::{
 };
 use uuid::Uuid;
 
-use crate::catalog::coffee_registry;
+use self::commands::{coffee_commands, coffee_registry, find_command, CommandAccess};
 use crate::geography::{
     closure_inspect_text, derive_region_seed, describe_tile, effective_tile, epoch_spec,
     format_seed, frontier_epoch, frontier_identity, is_reserved_word, is_survey_tile,
@@ -32,12 +32,14 @@ use crate::waypoint::Waypoint;
 const SQUALOR_ALIAS: &str = "squalor";
 
 mod building_cmds;
+pub(crate) mod commands;
 mod guide;
 mod home_cmds;
 mod invite_cmds;
 mod journal_cmds;
 mod mail_cmds;
 mod settlement_cmds;
+mod snapshot;
 mod social_cmds;
 mod subway_cmds;
 mod theory_cmds;
@@ -55,11 +57,10 @@ pub(crate) struct Session {
     pub(crate) identity: SessionIdentity,
 }
 
-type Handler = fn(&mut WorldState, SessionId, &ParsedCommand) -> Result<Transition, GameError>;
-
 /// Authoritative Undernet state.
 pub struct WorldState {
     pub(crate) world_name: String,
+    pub(crate) commands: Vec<commands::CoffeeCommand>,
     pub(crate) registry: CommandRegistry,
     pub(crate) operators: HashMap<PlayerId, Operator>,
     pub(crate) sessions: HashMap<SessionId, Session>,
@@ -90,9 +91,12 @@ struct TravelTarget {
 
 impl WorldState {
     pub fn new() -> Self {
+        let commands = coffee_commands();
+        let registry = coffee_registry(&commands);
         Self {
             world_name: "Undernet".into(),
-            registry: coffee_registry(),
+            commands,
+            registry,
             operators: HashMap::new(),
             sessions: HashMap::new(),
             by_player: HashMap::new(),
@@ -383,16 +387,19 @@ impl WorldState {
             }
         };
         let permissions = self.permissions(session_id)?;
-        if needs_play(&parsed.name) && !permissions.can_play() {
-            return Err(GameError::Rejected("You cannot do that from this session.".into()));
-        }
-        if needs_speak(&parsed.name) && !permissions.can_speak() {
-            return Err(GameError::Rejected("You cannot speak right now.".into()));
-        }
-        let handler = handler(&parsed.name).ok_or_else(|| {
+        let command = find_command(&self.commands, &parsed.name).ok_or_else(|| {
             GameError::Rejected(format!("Unknown command '{}'. Try help.", parsed.name))
         })?;
-        let mut transition = handler(self, session_id, &parsed)?;
+        match command.access {
+            CommandAccess::Play if !permissions.can_play() => {
+                return Err(GameError::Rejected("You cannot do that from this session.".into()));
+            }
+            CommandAccess::Speak if !permissions.can_speak() => {
+                return Err(GameError::Rejected("You cannot speak right now.".into()));
+            }
+            _ => {}
+        }
+        let mut transition = (command.handler)(self, session_id, &parsed)?;
         if parsed.name == "inspect" {
             self.attach_inspect_hint(session_id, &mut transition);
         }
@@ -542,7 +549,7 @@ impl WorldState {
         self.emit(Channel::System, Audience::Player(player), None, text)
     }
 
-    fn cmd_look(
+    pub(crate) fn cmd_look(
         &mut self,
         session_id: SessionId,
         _cmd: &ParsedCommand,
@@ -551,7 +558,7 @@ impl WorldState {
         Ok(quiet())
     }
 
-    fn cmd_map(
+    pub(crate) fn cmd_map(
         &mut self,
         session_id: SessionId,
         _cmd: &ParsedCommand,
@@ -579,7 +586,7 @@ impl WorldState {
         Ok(quiet())
     }
 
-    fn cmd_who(
+    pub(crate) fn cmd_who(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -628,7 +635,7 @@ impl WorldState {
         Ok(quiet())
     }
 
-    fn cmd_go(
+    pub(crate) fn cmd_go(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -762,7 +769,7 @@ impl WorldState {
         self.settlements.is_member(settle_id, player)
     }
 
-    fn cmd_say(
+    pub(crate) fn cmd_say(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -770,7 +777,7 @@ impl WorldState {
         self.speak(session_id, &cmd.rest, false)
     }
 
-    fn cmd_chat(
+    pub(crate) fn cmd_chat(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -805,7 +812,7 @@ impl WorldState {
         })
     }
 
-    fn cmd_status(
+    pub(crate) fn cmd_status(
         &mut self,
         session_id: SessionId,
         _cmd: &ParsedCommand,
@@ -815,7 +822,7 @@ impl WorldState {
         Ok(quiet())
     }
 
-    fn cmd_inventory(
+    pub(crate) fn cmd_inventory(
         &mut self,
         session_id: SessionId,
         _cmd: &ParsedCommand,
@@ -835,7 +842,7 @@ impl WorldState {
         Ok(quiet())
     }
 
-    fn cmd_inspect(
+    pub(crate) fn cmd_inspect(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -947,7 +954,7 @@ impl WorldState {
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
-    fn cmd_mark(
+    pub(crate) fn cmd_mark(
         &mut self,
         session_id: SessionId,
         cmd: &ParsedCommand,
@@ -1013,7 +1020,7 @@ impl WorldState {
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
 
-    fn cmd_quit(
+    pub(crate) fn cmd_quit(
         &mut self,
         _session_id: SessionId,
         _cmd: &ParsedCommand,
@@ -2044,77 +2051,6 @@ impl Game for WorldState {
     }
 }
 
-fn handler(name: &str) -> Option<Handler> {
-    Some(match name {
-        "help" => WorldState::cmd_help,
-        "welcome" => WorldState::cmd_welcome,
-        "look" => WorldState::cmd_look,
-        "map" => WorldState::cmd_map,
-        "who" => WorldState::cmd_who,
-        "go" => WorldState::cmd_go,
-        "say" => WorldState::cmd_say,
-        "chat" => WorldState::cmd_chat,
-        "whisper" => WorldState::cmd_whisper,
-        "emote" => WorldState::cmd_emote,
-        "profile" => WorldState::cmd_profile,
-        "friend" => WorldState::cmd_friend,
-        "friends" => WorldState::cmd_friends,
-        "ignore" => WorldState::cmd_ignore,
-        "unignore" => WorldState::cmd_unignore,
-        "ignores" => WorldState::cmd_ignores,
-        "status" => WorldState::cmd_status,
-        "inventory" => WorldState::cmd_inventory,
-        "inspect" => WorldState::cmd_inspect,
-        "journal" => WorldState::cmd_journal,
-        "theory" => WorldState::cmd_theory,
-        "waypoint" => WorldState::cmd_waypoint,
-        "mail" => WorldState::cmd_mail,
-        "invite" => WorldState::cmd_invite,
-        "mark" => WorldState::cmd_mark,
-        "build" => WorldState::cmd_build,
-        "enter" => WorldState::cmd_enter,
-        "leave" => WorldState::cmd_leave,
-        "home" => WorldState::cmd_home,
-        "workshop" => WorldState::cmd_workshop,
-        "sign" => WorldState::cmd_sign,
-        "trail" => WorldState::cmd_trail,
-        "board" => WorldState::cmd_board,
-        "region" => WorldState::cmd_region,
-        "settle" => WorldState::cmd_settle,
-        "settlements" => WorldState::cmd_settlements,
-        "quit" => WorldState::cmd_quit,
-        _ => return None,
-    })
-}
-
-fn needs_play(name: &str) -> bool {
-    matches!(
-        name,
-        "go" | "inspect"
-            | "mark"
-            | "build"
-            | "enter"
-            | "leave"
-            | "home"
-            | "workshop"
-            | "sign"
-            | "trail"
-            | "board"
-            | "friend"
-            | "friends"
-            | "ignore"
-            | "unignore"
-            | "ignores"
-            | "profile"
-            | "settle"
-            | "settlements"
-    )
-}
-
-fn needs_speak(name: &str) -> bool {
-    matches!(name, "say" | "chat" | "whisper" | "emote" | "region")
-}
-
 pub(crate) fn quiet() -> Transition {
     Transition { outcome: CommandOutcome::default(), ops: Vec::new() }
 }
@@ -2373,8 +2309,18 @@ mod tests {
     fn every_command_has_a_handler() {
         let world = WorldState::new();
         for spec in world.registry().specs() {
-            assert!(handler(spec.name).is_some(), "{}", spec.name);
+            assert!(find_command(&world.commands, spec.name).is_some(), "{}", spec.name);
         }
+    }
+
+    #[test]
+    fn command_rollback_round_trip() {
+        let (mut world, ada, _, _, _) = pair();
+        world.set_overlay(ada, "held note");
+        let snap = world.command_rollback_snapshot();
+        world.overlays.clear();
+        world.restore_command_rollback(snap);
+        assert_eq!(world.overlays.get(&ada).map(String::as_str), Some("held note"));
     }
 
     #[test]

@@ -457,34 +457,14 @@ impl Actor {
         if !self.limiter.allow(rec.session_id) {
             return Err(GameError::Rejected("You are sending commands too quickly.".into()));
         }
-        let snapshot = self.world.log_snapshot();
-        let operator = self.world.operator(rec.player_id).cloned();
-        let geography = self.world.geography_snapshot();
-        let social = self.world.social_snapshot();
-        let settlements = self.world.settlement_snapshot();
-        let waypoints = self.world.waypoint_snapshot();
-        let homes = self.world.home_snapshot();
-        let mailbox = self.world.mail_snapshot();
-        let theories = self.world.theory_snapshot();
-        let overlays = self.world.overlay_snapshot();
+        let rollback = self.world.command_rollback_snapshot();
         let transition = match self.world.apply(rec.session_id, &line) {
             Ok(transition) => transition,
             Err(err) => return Err(err),
         };
         if let Err(err) = self.store.commit(&transition.ops).await {
             tracing::error!(error = %err, "failed to persist command");
-            self.world.replace_log(snapshot);
-            self.world.restore_geography(geography);
-            self.world.restore_social(social);
-            self.world.restore_settlements(settlements);
-            self.world.restore_waypoints(waypoints);
-            self.world.restore_homes(homes);
-            self.world.restore_mail(mailbox);
-            self.world.restore_theories(theories);
-            self.world.restore_overlays(overlays);
-            if let Some(operator) = operator {
-                self.world.insert_operator(operator);
-            }
+            self.world.restore_command_rollback(rollback);
             return Err(GameError::Rejected(
                 "The world could not save that. Nothing was kept.".into(),
             ));
