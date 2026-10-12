@@ -49,6 +49,7 @@ Player text (speech, bios, signs, notices, cabin names, shared theories) is leng
 - Shared theories are a separate table. A post is at most 120 characters, the delisted-floor topic holds 32 entries, and one operator can post every 2 seconds. A full topic refuses the new row. Authors delete only their own entries. Reading or posting does not copy journal rows, flags, or items, and does not open the Black Archive. Ignore does not hide or block a theory post: the record is public, not a directed message. There is no moderator role; a post stays until its author removes it.
 - `seen-welcome` and `hint-inspect` are operator flags that only remember a shown note. They are not privileges, they are not listed on the status card, and the arrival line is addressed to that operator alone.
 - Waypoint names and notes are private to the owning operator. Commands look the row up by that operator's id, not by a client-supplied record id. The note is not written into public chat, signs, boards, or another operator's list. A saved place key does not let someone else read the note.
+- Personal homes are a public designation on a place key. Claiming or abandoning a home does not copy journal entries, waypoints, discovery flags, or private notes into the home row. Only one active home per operator is allowed; the store enforces that with a partial unique index.
 
 ## What you should still do
 
