@@ -93,7 +93,7 @@ A personal home is a designation on an existing Squalor place key. It is not a c
 - `home move` / `home move confirm` abandons the old home and claims the new one in one transaction. Bare `home claim` never silently replaces an existing home.
 - `home abandon confirm` leaves the player with no home. The place stays in the world as abandoned and may keep its historical public name.
 - Habitation (active homes): unsettled → settling in → established → distinctive. Driven by claim age (1 day / 7 days) and meaningful returns after at least 10 minutes away. When a return counts, the owner receives a private arrival line; `home` also shows how many returns have counted toward settling. Distinctive details use the owner's existing journal notes, survey/delisted flags, entered districts, and subway-related evidence — never invented discoveries. Visitor look text stays generic.
-- Abandoned presentation is derived from the abandonment timestamp: recently abandoned (< 7 days), forgotten (< 30 days), then absorbed into ordinary Squalor look text. No upkeep, no offline penalty, no background worker.
+- Abandoned presentation is derived from the abandonment timestamp: recently abandoned (< 7 days), forgotten (< 30 days), then absorbed into ordinary Squalor look text. Within those stages, look prose also reflects how long the home was kept and how many expedition returns had counted — using persisted row data only, not private journals. No upkeep, no offline penalty, no background worker.
 - Journals, waypoints, and discovery flags stay private. Claiming, naming, or abandoning a home does not copy or publish them.
 - Cabins remain a separate construction feature. Settlement membership does not require giving up a personal home.
 
