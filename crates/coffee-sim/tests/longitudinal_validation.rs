@@ -5,8 +5,10 @@ use coffee_sim::experiment::{
     run_population_scale_experiment, PopulationScaleRequest, MAX_SCALE_EXPERIMENT_RUNS,
 };
 use coffee_sim::population::PopulationMix;
+use coffee_sim::profile::Profile;
 use coffee_sim::runner::{run_with_config, RunConfig, MS_PER_DAY};
 use coffee_sim::scheduler::SchedulerConfig;
+use coffee_sim::snapshot::ObservationKind;
 
 fn snapshot_config(interval_days: f64) -> SnapshotConfig {
     SnapshotConfig {
@@ -54,7 +56,9 @@ fn snapshots_do_not_change_gameplay_outcomes() {
     fn gameplay_core(mut report: coffee_sim::RunReport) -> coffee_sim::RunReport {
         report.execution.real_elapsed_ms = 0;
         report.longitudinal_snapshots = None;
+        report.snapshot_sampling = None;
         report.config.snapshots = SnapshotConfig::disabled();
+        report.timing.observation_events_processed = 0;
         report
     }
     assert_eq!(gameplay_core(without), gameplay_core(with));
@@ -148,4 +152,206 @@ fn modest_long_horizon_run_completes_with_snapshots() {
     let snaps = report.longitudinal_snapshots.expect("snapshots");
     assert!(snaps.len() <= 64);
     assert!(!snaps.is_empty());
+}
+
+#[test]
+fn initial_snapshot_has_zero_counters_and_initial_kind() {
+    let config = RunConfig {
+        seed: 3,
+        agent_count: 2,
+        virtual_days: 5.0,
+        snapshots: SnapshotConfig { interval_ms: Some(MS_PER_DAY), max_snapshots: 16 },
+        max_actions: Some(20),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    let initial = &snaps[0];
+    assert_eq!(initial.kind, ObservationKind::Initial);
+    assert_eq!(initial.observation_ms, report.config.virtual_start_ms);
+    assert_eq!(initial.cumulative.attempted_commands, 0);
+    assert_eq!(initial.cumulative.events_processed, 0);
+}
+
+#[test]
+fn interval_snapshot_at_action_boundary_excludes_that_action() {
+    let start = 1_000_000u64;
+    let interval = MS_PER_DAY;
+    let config = RunConfig {
+        seed: 8,
+        agent_count: 1,
+        virtual_days: 10.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: interval, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(interval), max_snapshots: 32 },
+        max_actions: Some(3),
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    let boundary = start + interval;
+    let at_boundary = snaps
+        .iter()
+        .find(|snap| snap.observation_ms == boundary && snap.kind == ObservationKind::Interval)
+        .expect("interval row at first day boundary");
+    assert_eq!(
+        at_boundary.cumulative.attempted_commands, 1,
+        "observation at boundary must precede the agent action scheduled at the same time"
+    );
+    assert!(report.execution.total_attempted >= 2);
+}
+
+#[test]
+fn snapshots_after_offline_gap_do_not_backfill_later_counters() {
+    let start = 2_000_000u64;
+    let interval = MS_PER_DAY;
+    let config = RunConfig {
+        seed: 21,
+        agent_count: 1,
+        virtual_days: 14.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: MS_PER_DAY / 4, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(interval), max_snapshots: 64 },
+        max_actions: Some(40),
+        population: PopulationMix::monolithic(Profile::OccasionalVisitor),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    let final_attempted = report.execution.total_attempted;
+    for snap in snaps.iter().filter(|s| s.kind == ObservationKind::Interval) {
+        assert!(
+            snap.cumulative.attempted_commands <= final_attempted,
+            "observation at {} must not include counters from after it was taken",
+            snap.observation_ms
+        );
+    }
+    if final_attempted > 0 {
+        let mid = snaps
+            .iter()
+            .find(|s| {
+                s.kind == ObservationKind::Interval
+                    && s.observation_ms > start + interval
+                    && s.observation_ms < report.timing.last_event_slot_ms.unwrap_or(0)
+            })
+            .expect("mid-horizon interval snapshot");
+        assert!(
+            mid.cumulative.attempted_commands < final_attempted,
+            "mid-horizon snapshot must not already reflect the final command tally"
+        );
+    }
+}
+
+#[test]
+fn equal_timestamp_observation_precedes_gameplay_in_runner() {
+    let start = 50_000u64;
+    let week = 7 * MS_PER_DAY;
+    let slot = start + week;
+    let config = RunConfig {
+        seed: 4,
+        agent_count: 1,
+        virtual_days: 14.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: week, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(week), max_snapshots: 8 },
+        max_actions: Some(2),
+        record_action_trace: true,
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    let interval_snap = snaps
+        .iter()
+        .find(|s| s.observation_ms == slot && s.kind == ObservationKind::Interval)
+        .expect("interval at gameplay slot");
+    assert_eq!(
+        interval_snap.cumulative.attempted_commands, 1,
+        "weekly observation at the second action slot must not include that action"
+    );
+    let trace = report.action_trace.expect("trace");
+    assert_eq!(trace.entries.len(), 2);
+    assert_eq!(trace.entries[1].event_slot_ms, slot);
+}
+
+#[test]
+fn terminal_snapshot_is_distinct_and_reconciles_when_present() {
+    let config = RunConfig {
+        seed: 6,
+        agent_count: 2,
+        virtual_days: 4.0,
+        snapshots: SnapshotConfig { interval_ms: Some(MS_PER_DAY), max_snapshots: 20 },
+        max_actions: Some(30),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let sampling = report.snapshot_sampling.expect("sampling");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    let last = snaps.last().expect("last");
+    if sampling.terminal_included {
+        assert_eq!(last.kind, ObservationKind::Terminal);
+    }
+    assert_eq!(last.cumulative.attempted_commands, report.execution.total_attempted);
+}
+
+#[test]
+fn snapshot_capacity_bounds_storage_and_reports_skips() {
+    let config = RunConfig {
+        seed: 10,
+        agent_count: 2,
+        virtual_days: 30.0,
+        snapshots: SnapshotConfig { interval_ms: Some(MS_PER_DAY), max_snapshots: 4 },
+        max_actions: Some(50),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let snaps = report.longitudinal_snapshots.expect("snaps");
+    assert!(snaps.len() <= 4);
+    let sampling = report.snapshot_sampling.expect("sampling");
+    assert!(sampling.grid_boundaries_skipped_capacity > 0);
+}
+
+#[test]
+fn snapshot_histories_are_deterministic() {
+    let config = RunConfig {
+        seed: 44,
+        agent_count: 3,
+        virtual_days: 8.0,
+        snapshots: snapshot_config(2.0),
+        max_actions: Some(60),
+        ..RunConfig::default()
+    };
+    let a = run_with_config(config.clone()).expect("a");
+    let b = run_with_config(config).expect("b");
+    assert_eq!(a.longitudinal_snapshots, b.longitudinal_snapshots);
+    assert_eq!(a.snapshot_sampling, b.snapshot_sampling);
+}
+
+#[test]
+fn population_scale_snapshots_follow_same_temporal_rules() {
+    let base = RunConfig {
+        seed: 12,
+        agent_count: 6,
+        virtual_days: 10.0,
+        snapshots: SnapshotConfig { interval_ms: Some(MS_PER_DAY * 2), max_snapshots: 16 },
+        max_actions: Some(40),
+        ..RunConfig::default()
+    };
+    let report = run_population_scale_experiment(PopulationScaleRequest {
+        base,
+        player_counts: vec![6, 12],
+    })
+    .expect("scale");
+    for run in &report.runs {
+        let snaps = run.longitudinal_snapshots.as_ref().expect("snaps");
+        for window in snaps.windows(2) {
+            assert!(window[0].observation_ms < window[1].observation_ms);
+        }
+        if let Some(last) = snaps.last() {
+            if last.kind == ObservationKind::Terminal {
+                assert_eq!(last.cumulative.attempted_commands, run.execution.total_attempted);
+            }
+        }
+    }
 }

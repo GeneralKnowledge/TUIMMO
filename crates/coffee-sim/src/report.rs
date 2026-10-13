@@ -10,7 +10,7 @@ use crate::config::SnapshotConfig;
 use crate::population::PopulationMix;
 use crate::profile::Profile;
 use crate::scheduler::SchedulerConfig;
-use crate::snapshot::LongitudinalSnapshot;
+use crate::snapshot::{LongitudinalSnapshot, SnapshotSamplingSummary};
 use crate::trace::ActionTrace;
 
 pub const SIM_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -35,6 +35,8 @@ pub struct RunReport {
     pub action_trace: Option<ActionTrace>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub longitudinal_snapshots: Option<Vec<LongitudinalSnapshot>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_sampling: Option<SnapshotSamplingSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -72,6 +74,9 @@ pub struct SimulationTiming {
     /// Authoritative world clock after the last processed command.
     pub final_world_ms: u64,
     pub events_processed: u64,
+    /// Observation-only scheduler events (longitudinal sampling); not included in `events_processed`.
+    #[serde(default)]
+    pub observation_events_processed: u64,
     /// Scheduler slots with no attempted command (idle or offline gaps).
     pub inactive_slots: u64,
     pub stop_reason: StopReason,

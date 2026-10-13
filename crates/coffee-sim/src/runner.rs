@@ -23,8 +23,8 @@ use crate::report::{
     ExecutionStats, RunReport, RunReportConfig, SimVersion, SimulationTiming, StopReason,
     WorldMetricsInput, SIM_CRATE_VERSION,
 };
-use crate::scheduler::{EventScheduler, SchedulerConfig};
-use crate::snapshot::{MetricsSnapshotInput, SnapshotCollector};
+use crate::scheduler::{EventScheduler, ScheduledEventKind, SchedulerConfig};
+use crate::snapshot::{MetricsSnapshotInput, SnapshotCollector, SnapshotSamplingSummary};
 use crate::trace::{ActionTrace, ActionTraceEntry, TraceOutcome};
 
 pub const MS_PER_DAY: u64 = 86_400_000;
@@ -189,16 +189,18 @@ impl SimulationRunner {
             scheduler.schedule(self.schedule.virtual_start_ms, agent.index);
         }
 
-        let horizon_ms = self.schedule.configured_horizon_ms;
         let mut total_attempted = 0u64;
         let mut successful_commands = 0u64;
         let mut metrics = MetricsAccumulator::default();
+        let horizon_ms = self.schedule.configured_horizon_ms;
         let mut snapshot_collector = SnapshotCollector::new(
             &self.config.snapshots,
             self.schedule.virtual_start_ms,
+            horizon_ms,
             self.config.agent_count,
         )?;
         if let Some(collector) = snapshot_collector.as_mut() {
+            collector.enqueue_interval_observations(&mut scheduler);
             collector.capture_initial(
                 &world,
                 &snapshot_metrics(&metrics, &agents, total_attempted, successful_commands, 0, 0),
@@ -209,6 +211,7 @@ impl SimulationRunner {
         let mut inactive_by_index = vec![0u64; self.config.agent_count as usize];
 
         let mut events_processed = 0u64;
+        let mut observation_events_processed = 0u64;
         let mut inactive_slots = 0u64;
         let mut last_event_slot_ms = None::<u64>;
         let mut stop_reason = StopReason::QueueExhausted;
@@ -218,6 +221,27 @@ impl SimulationRunner {
                 stop_reason = StopReason::HorizonReached;
                 break;
             }
+
+            if event.kind == ScheduledEventKind::Observation {
+                advance_world_time(&mut world, event.time_ms);
+                if let Some(collector) = snapshot_collector.as_mut() {
+                    collector.capture_interval(
+                        event.time_ms,
+                        &world,
+                        &snapshot_metrics(
+                            &metrics,
+                            &agents,
+                            total_attempted,
+                            successful_commands,
+                            inactive_slots,
+                            events_processed,
+                        ),
+                    );
+                }
+                observation_events_processed += 1;
+                continue;
+            }
+
             if let Some(max) = self.config.max_actions {
                 if total_attempted >= max {
                     stop_reason = StopReason::ActionLimit;
@@ -251,17 +275,6 @@ impl SimulationRunner {
                         agent.index,
                         ActionChoice { command: String::new(), idle: true, offline_gap_ms: None },
                     );
-                    snapshot_at(
-                        &mut snapshot_collector,
-                        &world,
-                        &metrics,
-                        &agents,
-                        total_attempted,
-                        successful_commands,
-                        inactive_slots,
-                        events_processed,
-                        event.time_ms,
-                    );
                     continue;
                 }
             };
@@ -278,17 +291,6 @@ impl SimulationRunner {
                     horizon_ms,
                     agent.index,
                     choice,
-                );
-                snapshot_at(
-                    &mut snapshot_collector,
-                    &world,
-                    &metrics,
-                    &agents,
-                    total_attempted,
-                    successful_commands,
-                    inactive_slots,
-                    events_processed,
-                    event.time_ms,
                 );
                 continue;
             }
@@ -395,17 +397,6 @@ impl SimulationRunner {
                 agent.index,
                 choice,
             );
-            snapshot_at(
-                &mut snapshot_collector,
-                &world,
-                &metrics,
-                &agents,
-                total_attempted,
-                successful_commands,
-                inactive_slots,
-                events_processed,
-                event.time_ms,
-            );
         }
 
         if let Some(slot) = last_event_slot_ms {
@@ -429,6 +420,9 @@ impl SimulationRunner {
         let final_world_ms = world.simulation_now_ms();
         metrics.merge_agent_memory(&agents);
 
+        let snapshot_sampling =
+            snapshot_collector.as_ref().map(SnapshotCollector::sampling_summary);
+
         Ok(assemble_report(ReportInputs {
             config: &self.config,
             schedule: &self.schedule,
@@ -438,12 +432,14 @@ impl SimulationRunner {
             metrics,
             total_attempted,
             longitudinal_snapshots: snapshot_collector.map(|c| c.snapshots),
+            snapshot_sampling,
             timing: SimulationTiming {
                 configured_start_ms: self.schedule.virtual_start_ms,
                 configured_horizon_ms: horizon_ms,
                 last_event_slot_ms,
                 final_world_ms,
                 events_processed,
+                observation_events_processed,
                 inactive_slots,
                 stop_reason,
             },
@@ -532,6 +528,7 @@ struct ReportInputs<'a> {
     metrics: MetricsAccumulator,
     total_attempted: u64,
     longitudinal_snapshots: Option<Vec<crate::snapshot::LongitudinalSnapshot>>,
+    snapshot_sampling: Option<SnapshotSamplingSummary>,
     timing: SimulationTiming,
     real_elapsed_ms: u64,
     action_trace: Option<ActionTrace>,
@@ -548,6 +545,7 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         metrics,
         total_attempted,
         longitudinal_snapshots,
+        snapshot_sampling,
         timing,
         real_elapsed_ms,
         action_trace,
@@ -624,6 +622,7 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         per_profile: aggregate_profile_stats(agents, &inactive_by_index),
         action_trace,
         longitudinal_snapshots,
+        snapshot_sampling,
     }
 }
 
@@ -650,34 +649,6 @@ fn snapshot_metrics<'a>(
         successful_commands,
         inactive_slots,
         events_processed,
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn snapshot_at(
-    collector: &mut Option<SnapshotCollector>,
-    world: &WorldState,
-    metrics: &MetricsAccumulator,
-    agents: &[SimAgent],
-    total_attempted: u64,
-    successful_commands: u64,
-    inactive_slots: u64,
-    events_processed: u64,
-    current_slot_ms: u64,
-) {
-    if let Some(collector) = collector.as_mut() {
-        collector.capture_due(
-            world,
-            &snapshot_metrics(
-                metrics,
-                agents,
-                total_attempted,
-                successful_commands,
-                inactive_slots,
-                events_processed,
-            ),
-            current_slot_ms,
-        );
     }
 }
 

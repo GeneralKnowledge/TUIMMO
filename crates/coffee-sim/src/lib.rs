@@ -28,4 +28,4 @@ pub use population::PopulationMix;
 pub use profile::Profile;
 pub use report::{DerivedRates, RunReport, SimVersion};
 pub use runner::{RunConfig, SimulationError, SimulationRunner};
-pub use snapshot::LongitudinalSnapshot;
+pub use snapshot::{LongitudinalSnapshot, ObservationKind, SnapshotSamplingSummary};
