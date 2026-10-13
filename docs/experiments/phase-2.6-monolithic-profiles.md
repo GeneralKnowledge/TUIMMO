@@ -13,7 +13,7 @@ Follow-up to [Phase 2.5](./phase-2.5-explore-vs-home.md): isolate **single-profi
 | Field | Value |
 |--------|--------|
 | Experiment tooling | Adds CLI presets `homebody` and `visitor` (`uniform` = monolithic wanderer) |
-| **Reproduce at commit** | `0a732b1` (presets + report; rerun command in §2 after checkout) |
+| **Reproduce at commit** | `60e14ab` (presets + report; rerun command in §2 after checkout) |
 | **First run note** | JSON was produced from a release build with these presets before this commit was recorded |
 | Parent doc baseline | `9c09efa` (Phase 2.5 report on `main`) |
 
