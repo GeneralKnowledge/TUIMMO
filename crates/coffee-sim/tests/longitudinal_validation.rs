@@ -62,7 +62,7 @@ fn snapshots_do_not_change_gameplay_outcomes() {
 
 #[test]
 fn final_snapshot_cumulative_matches_report_when_present() {
-    let mut config = RunConfig {
+    let config = RunConfig {
         seed: 5,
         agent_count: 2,
         virtual_days: 10.0,
