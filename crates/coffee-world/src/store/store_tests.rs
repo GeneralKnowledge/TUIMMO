@@ -1041,6 +1041,68 @@ async fn mail_survives_reopen_and_a_failed_write_keeps_the_old_mailbox() {
 }
 
 #[tokio::test]
+async fn field_discovery_corroboration_survives_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("coffee.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+    let ada_id = PlayerId::new();
+    let bob_id = PlayerId::new();
+    let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
+    let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "Robert");
+    store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+    store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+
+    let mut world = WorldState::for_tests();
+    let loaded = store.load().await.unwrap();
+    world.install_loaded(loaded.operators, loaded.log);
+    let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+    let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+    let ada_session = ada_ident.session_id;
+    let bob_session = bob_ident.session_id;
+    store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+    store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+    for session in [ada_session, bob_session] {
+        for line in ["go up", "outskirts", "west"] {
+            let ops = world.apply(session, line).unwrap().ops;
+            store.commit(&ops).await.unwrap();
+        }
+    }
+    for session in [ada_session, bob_session] {
+        let ops = world.apply(session, "journal record").unwrap().ops;
+        store.commit(&ops).await.unwrap();
+    }
+    world.apply(ada_session, "inspect mark").unwrap();
+    world.apply(bob_session, "inspect mark").unwrap();
+    assert!(world
+        .view(bob_session)
+        .unwrap()
+        .feed
+        .iter()
+        .any(|line| line.text.contains("2 operators have kept a private field note")));
+
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    let loaded = store.load().await.unwrap();
+    assert_eq!(loaded.geography.field_note_recorder_count("survey-mark"), 2);
+
+    let mut again = WorldState::for_tests();
+    again.install_loaded(loaded.operators, loaded.log);
+    again.install_geography(loaded.geography);
+    let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+    let bob_session = bob_ident.session_id;
+    again.connect_player(bob_ident).unwrap();
+    again.apply(bob_session, "inspect mark").unwrap();
+    assert!(again
+        .view(bob_session)
+        .unwrap()
+        .feed
+        .iter()
+        .any(|line| line.text.contains("2 operators have kept a private field note")));
+}
+
+#[tokio::test]
 async fn shared_theories_survive_reopen_and_a_failed_write_keeps_the_old_rows() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("coffee.sqlite");

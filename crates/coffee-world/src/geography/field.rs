@@ -23,6 +23,24 @@ pub const SURVEY_LOCAL_X: u8 = 7;
 pub const SURVEY_LOCAL_Y: u8 = 8;
 
 const JOURNAL_HINT: &str = "This could go in your field journal. `journal record`.";
+
+/// Public inspect line when multiple operators recorded the same discovery key.
+pub fn corroboration_inspect_line(recorder_count: usize) -> Option<String> {
+    if recorder_count < 2 {
+        return None;
+    }
+    Some(format!("{recorder_count} operators have kept a private field note for this discovery."))
+}
+
+/// Private feed line after a successful `journal record` when others recorded the same key.
+pub fn corroboration_record_line(recorder_count: usize) -> Option<String> {
+    if recorder_count < 2 {
+        return None;
+    }
+    Some(format!(
+        "You are not the only one — {recorder_count} operators have recorded this discovery in a private journal."
+    ))
+}
 const OVERVIEW_LIMIT: usize = 8;
 const RECENT_LIMIT: usize = 5;
 const RECENT_NOTE_CHARS: usize = 68;

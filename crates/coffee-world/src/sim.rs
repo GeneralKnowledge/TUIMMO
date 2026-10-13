@@ -23,6 +23,8 @@ pub struct WorldOutcomeSnapshot {
     pub discovery_count: usize,
     pub active_home_count: usize,
     pub unique_locations_occupied: usize,
+    /// Field journal content keys with at least two distinct recorders.
+    pub corroborated_field_keys: usize,
 }
 
 /// Aggregate agent placement for simulation reporting (no per-location keys exposed).
@@ -95,6 +97,7 @@ impl WorldState {
             discovery_count: self.geography.discoveries.len(),
             active_home_count: self.homes.homes.iter().filter(|h| h.is_active()).count(),
             unique_locations_occupied,
+            corroborated_field_keys: self.geography.corroborated_field_key_count(),
         }
     }
 

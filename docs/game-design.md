@@ -138,6 +138,8 @@ Wilderness `inspect` names the landmark and, on some tiles, an unusual detail wo
 
 A journal entry is not a sign, a trail post, or a region visit. `region_discoveries` rows with kind `entered` are shared history of who first opened a birth cell. Kind `field` is the personal note. Signs and structures stay world-visible. Journal text is not copied into chat, settlement boards, or another operator's journal.
 
+When two or more operators have recorded the same discovery id (`content_key`), `inspect` at that authored feature may add one system line: how many operators kept a private field note. It never names them and never quotes their journals. After your own `journal record`, if others already recorded the same id, your feed may say you are not the only one — again without revealing their text. This is corroboration, not a shared journal and not a theory post.
+
 ## Mail
 
 `mail` leaves a private letter for one existing operator. It is not a whisper, a noticeboard, or a journal entry.

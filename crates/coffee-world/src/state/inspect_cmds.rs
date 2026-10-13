@@ -6,10 +6,12 @@ use terminus_core::{
 use uuid::Uuid;
 
 use crate::geography::{
-    closure_inspect_text, is_survey_tile, landmark_sight, panel_after_log, stacks_after_log,
-    story_aliases, story_sight, survey_aliases, survey_sight, torn_page_text, trace_aliases,
-    validate_marker_name, EffectiveTile, GenerateError, LandmarkKind, Structure, Terrain,
-    UrbanContext, WildernessPos, MARKER_KIND, SHARE_PRIVATE, SURVEY_MARK_FLAG,
+    closure_inspect_text, corroboration_inspect_line, is_survey_tile, landmark_sight,
+    panel_after_log, stacks_after_log, story_aliases, story_finding, story_sight, survey_aliases,
+    survey_sight, torn_page_text, trace_aliases, validate_marker_name, EffectiveTile,
+    GenerateError, LandmarkKind, Structure, Terrain, UrbanContext, WildernessPos,
+    DELISTED_FLOOR_ID, MARKER_KIND, SHARE_PRIVATE, SURVEY_CLOSURE_ID, SURVEY_MARK_FLAG,
+    SURVEY_MARK_ID, SURVEY_SCRATCH_ID,
 };
 use crate::model::{Item, PersistOp};
 use crate::state::{Transition, WorldState};
@@ -33,6 +35,17 @@ impl WorldState {
     ) -> (GameEvent, PersistOp) {
         self.remember_finding(session_id, &text);
         self.emit(Channel::System, Audience::Player(player), None, text)
+    }
+
+    fn with_corroboration(&self, text: String, content_key: Option<&str>) -> String {
+        let Some(key) = content_key else {
+            return text;
+        };
+        let count = self.geography.field_note_recorder_count(key);
+        let Some(line) = corroboration_inspect_line(count) else {
+            return text;
+        };
+        format!("{text}\n{line}")
     }
     pub(crate) fn cmd_inspect(
         &mut self,
@@ -141,6 +154,12 @@ impl WorldState {
         if read_terminal && object.keyword == "stacks" {
             text = format!("{}\n{}", stacks_after_log(), object.description);
         }
+        let location = self.location_id(session_id)?;
+        let saw_mark =
+            self.operators.get(&player).is_some_and(|op| op.flags.contains(SURVEY_MARK_FLAG));
+        let content_key =
+            static_inspect_content_key(&location, object.keyword, read_terminal, saw_mark);
+        text = self.with_corroboration(text, content_key);
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
@@ -251,7 +270,7 @@ impl WorldState {
         }
         let tile = self.effective_at(pos)?;
         let mut ops = Vec::new();
-        let text = if let Some(entrance) =
+        let mut text = if let Some(entrance) =
             subway::entrance_at(pos).filter(|_| metro_inspect_target(target))
         {
             metro_entrance_inspect(entrance)
@@ -292,6 +311,9 @@ impl WorldState {
         } else {
             scene.description
         };
+        let tile_for_key = self.effective_at(pos).ok();
+        let content_key = wild_inspect_content_key(pos, target, tile_for_key.as_ref(), &urban);
+        text = self.with_corroboration(text, content_key.as_deref());
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
@@ -379,6 +401,44 @@ fn find_object(location: &str, target: &str) -> Option<ObjectDef> {
 }
 fn metro_inspect_target(target: &str) -> bool {
     matches!(target, "stair" | "metro" | "entrance" | "subway" | "stairs")
+}
+
+fn wild_inspect_content_key(
+    pos: WildernessPos,
+    target: &str,
+    tile: Option<&EffectiveTile>,
+    urban: &UrbanContext,
+) -> Option<String> {
+    if is_survey_tile(pos) && survey_aliases(target) {
+        return Some(SURVEY_MARK_ID.to_string());
+    }
+    if let Some(site) = urban.story.filter(|site| story_aliases(*site, target)) {
+        return Some(story_finding(site).content_key);
+    }
+    let tile = tile?;
+    if let Some(kind) = tile.landmark {
+        if target.eq_ignore_ascii_case(kind.keyword()) || target.eq_ignore_ascii_case(kind.name()) {
+            return landmark_sight(pos, kind).finding.map(|finding| finding.content_key);
+        }
+    }
+    None
+}
+
+fn static_inspect_content_key(
+    location: &str,
+    object_keyword: &str,
+    read_terminal: bool,
+    saw_survey_mark: bool,
+) -> Option<&'static str> {
+    match (location, object_keyword) {
+        ("roof-array", "antenna") => Some(SURVEY_SCRATCH_ID),
+        ("old-relay", "dish") if saw_survey_mark => Some(SURVEY_CLOSURE_ID),
+        (
+            "service-corridor" | "abandoned-exchange" | "black-archive",
+            "panel" | "terminal" | "stacks",
+        ) if read_terminal => Some(DELISTED_FLOOR_ID),
+        _ => None,
+    }
 }
 
 fn metro_entrance_inspect(entrance: &MetroEntrance) -> String {
