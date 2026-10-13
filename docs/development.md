@@ -34,7 +34,7 @@ Offline deterministic runs (no SSH/TUI):
 cargo run -p coffee-sim -- --players 10 --days 7 --seed 42
 ```
 
-See [simulation.md](simulation.md) for virtual time, identities, and report fields.
+See [simulation.md](simulation.md) for virtual time policy, termination semantics, metrics, and report fields.
 
 Confirm the server does not depend on the simulator:
 

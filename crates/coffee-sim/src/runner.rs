@@ -1,5 +1,6 @@
 //! Simulation runner: world bootstrap, scheduling, and reporting.
 
+use std::collections::BTreeSet;
 use std::time::Instant;
 
 use coffee_world::geography::{WildernessPos, OUTSKIRTS_FROM};
@@ -11,12 +12,18 @@ use terminus_core::SessionId;
 use thiserror::Error;
 
 use crate::agent::SimAgent;
+use crate::config::{
+    configured_horizon_ms, virtual_duration_from_days, ValidatedSchedule, DEFAULT_TRACE_LIMIT,
+    MAX_AGENT_COUNT,
+};
 use crate::execute::{execute_line, ActionResult};
 use crate::report::{
     duration_to_ms, world_report_from_snapshot, AgentStats, ExecutionStats, RunReport,
-    RunReportConfig, SimVersion, SIM_CRATE_VERSION,
+    RunReportConfig, SimVersion, SimulationTiming, StopReason, WorldMetricsInput,
+    SIM_CRATE_VERSION,
 };
 use crate::scheduler::{EventScheduler, SchedulerConfig};
+use crate::trace::{ActionTrace, ActionTraceEntry, TraceOutcome};
 
 pub const MS_PER_DAY: u64 = 86_400_000;
 
@@ -28,47 +35,107 @@ pub struct RunConfig {
     pub scheduler: SchedulerConfig,
     pub max_actions: Option<u64>,
     pub virtual_start_ms: u64,
+    /// Record a bounded deterministic action trace in the report.
+    pub record_action_trace: bool,
+    pub action_trace_limit: u32,
+}
+
+impl Default for RunConfig {
+    fn default() -> Self {
+        Self {
+            seed: 42,
+            agent_count: 8,
+            virtual_days: 7.0,
+            scheduler: SchedulerConfig::default(),
+            max_actions: None,
+            virtual_start_ms: 1_700_000_000_000,
+            record_action_trace: false,
+            action_trace_limit: DEFAULT_TRACE_LIMIT,
+        }
+    }
 }
 
 impl RunConfig {
-    pub fn virtual_duration_ms(&self) -> u64 {
-        ((self.virtual_days * MS_PER_DAY as f64).round()).max(0.0) as u64
+    pub fn virtual_duration_ms(&self) -> Result<u64, SimulationError> {
+        virtual_duration_from_days(self.virtual_days)
     }
 
-    pub fn virtual_end_ms(&self) -> u64 {
-        self.virtual_start_ms.saturating_add(self.virtual_duration_ms())
+    pub fn configured_horizon_ms(&self) -> Result<u64, SimulationError> {
+        let schedule = self.validate()?;
+        Ok(schedule.configured_horizon_ms)
+    }
+
+    pub fn validate(&self) -> Result<ValidatedSchedule, SimulationError> {
+        if self.agent_count == 0 {
+            return Err(SimulationError::NoAgents);
+        }
+        if self.agent_count > MAX_AGENT_COUNT {
+            return Err(SimulationError::TooManyAgents { max: MAX_AGENT_COUNT });
+        }
+        let virtual_duration_ms = virtual_duration_from_days(self.virtual_days)?;
+        if virtual_duration_ms == 0 {
+            return Err(SimulationError::ZeroDuration);
+        }
+        if self.scheduler.action_interval_ms == 0 {
+            return Err(SimulationError::ZeroActionInterval);
+        }
+        if let Some(max) = self.max_actions {
+            if max == 0 {
+                return Err(SimulationError::ZeroActionLimit);
+            }
+        }
+        if self.record_action_trace && self.action_trace_limit == 0 {
+            return Err(SimulationError::ZeroTraceLimit);
+        }
+        let configured_horizon_ms =
+            configured_horizon_ms(self.virtual_start_ms, virtual_duration_ms)?;
+        Ok(ValidatedSchedule {
+            virtual_start_ms: self.virtual_start_ms,
+            virtual_duration_ms,
+            configured_horizon_ms,
+        })
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum SimulationError {
     #[error("agent count must be at least 1")]
     NoAgents,
-    #[error("virtual duration must be positive")]
+    #[error("agent count must be at most {max}")]
+    TooManyAgents { max: u32 },
+    #[error("virtual duration must be finite and positive")]
+    InvalidDuration,
+    #[error("virtual duration overflows milliseconds")]
+    DurationOverflow,
+    #[error("virtual duration must be positive after conversion")]
     ZeroDuration,
+    #[error("action interval must be at least 1 ms")]
+    ZeroActionInterval,
+    #[error("max action limit must be at least 1 when set")]
+    ZeroActionLimit,
+    #[error("action trace limit must be at least 1 when tracing is enabled")]
+    ZeroTraceLimit,
+    #[error("timestamp arithmetic overflow")]
+    TimestampOverflow,
     #[error("{0}")]
     Engine(String),
 }
 
 pub struct SimulationRunner {
     config: RunConfig,
+    schedule: ValidatedSchedule,
 }
 
 impl SimulationRunner {
     pub fn new(config: RunConfig) -> Result<Self, SimulationError> {
-        if config.agent_count == 0 {
-            return Err(SimulationError::NoAgents);
-        }
-        if config.virtual_duration_ms() == 0 {
-            return Err(SimulationError::ZeroDuration);
-        }
-        Ok(Self { config })
+        let schedule = config.validate()?;
+        Ok(Self { config, schedule })
     }
 
     pub fn run(&self) -> Result<RunReport, SimulationError> {
         let started = Instant::now();
         let mut rng = StdRng::seed_from_u64(self.config.seed);
-        let mut world = WorldState::for_simulation(self.config.virtual_start_ms);
+        let mut world = WorldState::for_simulation(self.schedule.virtual_start_ms);
         let mut agents: Vec<SimAgent> = (0..self.config.agent_count)
             .map(|index| SimAgent::new(self.config.seed, index))
             .collect();
@@ -80,84 +147,133 @@ impl SimulationRunner {
                 .connect_player(agent.identity.clone())
                 .map_err(|err| SimulationError::Engine(err.to_string()))?;
         }
+        // Registration/connect ticks advance the test clock; realign before scheduled play.
+        world.align_simulation_clock(self.schedule.virtual_start_ms);
 
         let mut scheduler = EventScheduler::new();
         for agent in &agents {
-            scheduler.schedule(self.config.virtual_start_ms, agent.index);
+            scheduler.schedule(self.schedule.virtual_start_ms, agent.index);
         }
 
-        let end_ms = self.config.virtual_end_ms();
+        let horizon_ms = self.schedule.configured_horizon_ms;
         let mut total_attempted = 0u64;
-        let mut inspect_total = 0u64;
-        let mut move_total = 0u64;
-        let mut locations_visited: std::collections::BTreeSet<String> =
-            std::collections::BTreeSet::new();
+        let mut metrics = MetricsAccumulator::default();
+        let mut trace =
+            if self.config.record_action_trace { Some(ActionTrace::default()) } else { None };
+
+        let mut events_processed = 0u64;
+        let mut last_event_slot_ms = None::<u64>;
+        let mut stop_reason = StopReason::QueueExhausted;
 
         while let Some(event) = scheduler.pop_next() {
-            if event.time_ms > end_ms {
+            if event.time_ms > horizon_ms {
+                stop_reason = StopReason::HorizonReached;
                 break;
             }
             if let Some(max) = self.config.max_actions {
                 if total_attempted >= max {
+                    stop_reason = StopReason::ActionLimit;
                     break;
                 }
             }
 
-            let agent = agents
-                .iter_mut()
-                .find(|a| a.index == event.agent_index)
-                .expect("scheduled agent exists");
+            let agent = &mut agents[event.agent_index as usize];
 
             advance_world_time(&mut world, event.time_ms);
+            let world_ms_before = world.simulation_now_ms();
 
             let (line, idle) = choose_action(&world, agent, &mut rng);
             if !line.is_empty() {
                 total_attempted += 1;
                 agent.attempted += 1;
+                let location_before = world.location_id_for_sim(agent.session_id).ok();
+                let is_inspect = line.starts_with("inspect");
+                let is_move = is_cardinal(&line);
+                if is_inspect {
+                    metrics.inspect_attempts += 1;
+                }
+                if is_move {
+                    metrics.exploration_move_attempts += 1;
+                }
+
                 let (result, _) = execute_line(&mut world, agent.session_id, &line);
                 record_outcome(agent, &result);
+
+                let world_ms_after = world.simulation_now_ms();
+                if let Some(trace) = trace.as_mut() {
+                    let outcome = match &result {
+                        ActionResult::Success { .. } => TraceOutcome::Success,
+                        ActionResult::Rejected { .. } => TraceOutcome::Rejected,
+                        ActionResult::Failed { .. } => TraceOutcome::Failed,
+                    };
+                    trace.push_bounded(
+                        ActionTraceEntry {
+                            event_slot_ms: event.time_ms,
+                            world_ms_before_command: world_ms_before,
+                            world_ms_after_command: world_ms_after,
+                            agent_index: agent.index,
+                            command: line.clone(),
+                            outcome,
+                        },
+                        self.config.action_trace_limit,
+                    );
+                }
+
                 if result.is_success() {
-                    if line.starts_with("inspect") {
-                        agent.inspect_actions += 1;
-                        inspect_total += 1;
+                    if is_inspect {
+                        metrics.successful_inspections += 1;
                     }
-                    if is_cardinal(&line) {
-                        agent.exploration_moves += 1;
-                        move_total += 1;
+                    if is_move {
+                        metrics.successful_exploration_moves += 1;
                     }
-                    if let Ok(loc) = world.location_id_for_sim(agent.session_id) {
-                        locations_visited.insert(loc);
+                    if let Ok(location_after) = world.location_id_for_sim(agent.session_id) {
+                        if location_before.as_deref() != Some(location_after.as_str()) {
+                            metrics.locations_visited.insert(location_after);
+                        }
                     }
                 }
             }
 
-            let mut next_interval = self.config.scheduler.action_interval_ms;
-            if idle {
-                next_interval = next_interval.saturating_add(self.config.scheduler.idle_extra_ms);
-            }
-            let next_time = event.time_ms.saturating_add(next_interval);
-            if next_time <= end_ms {
+            events_processed += 1;
+            last_event_slot_ms = Some(event.time_ms);
+
+            let next_time = self.config.scheduler.next_event_ms(event.time_ms, idle);
+            if next_time <= horizon_ms {
                 scheduler.schedule(next_time, agent.index);
             }
         }
 
-        world.advance_virtual_time(0); // document final now via event loop
         let snapshot = world.outcome_snapshot();
-        let virtual_end_ms = world.simulation_now_ms();
+        let final_world_ms = world.simulation_now_ms();
 
-        let report = assemble_report(ReportInputs {
+        Ok(assemble_report(ReportInputs {
             config: &self.config,
+            schedule: &self.schedule,
             agents: &agents,
             snapshot,
-            unique_locations_visited: locations_visited.len(),
-            inspect_total,
-            move_total,
+            metrics,
             total_attempted,
-            virtual_end_ms,
+            timing: SimulationTiming {
+                configured_start_ms: self.schedule.virtual_start_ms,
+                configured_horizon_ms: horizon_ms,
+                last_event_slot_ms,
+                final_world_ms,
+                events_processed,
+                stop_reason,
+            },
             real_elapsed_ms: duration_to_ms(started.elapsed()),
-        });
-        Ok(report)
+            action_trace: trace,
+        }))
     }
+}
+
+#[derive(Default)]
+struct MetricsAccumulator {
+    locations_visited: BTreeSet<String>,
+    inspect_attempts: u64,
+    successful_inspections: u64,
+    exploration_move_attempts: u64,
+    successful_exploration_moves: u64,
 }
 
 fn advance_world_time(world: &mut WorldState, target_ms: u64) {
@@ -228,27 +344,27 @@ fn choose_action(world: &WorldState, agent: &mut SimAgent, rng: &mut StdRng) -> 
 
 struct ReportInputs<'a> {
     config: &'a RunConfig,
+    schedule: &'a ValidatedSchedule,
     agents: &'a [SimAgent],
     snapshot: WorldOutcomeSnapshot,
-    unique_locations_visited: usize,
-    inspect_total: u64,
-    move_total: u64,
+    metrics: MetricsAccumulator,
     total_attempted: u64,
-    virtual_end_ms: u64,
+    timing: SimulationTiming,
     real_elapsed_ms: u64,
+    action_trace: Option<ActionTrace>,
 }
 
 fn assemble_report(input: ReportInputs<'_>) -> RunReport {
     let ReportInputs {
         config,
+        schedule,
         agents,
         snapshot,
-        unique_locations_visited,
-        inspect_total,
-        move_total,
+        metrics,
         total_attempted,
-        virtual_end_ms,
+        timing,
         real_elapsed_ms,
+        action_trace,
     } = input;
     let mut successful = 0u64;
     let mut rejected = 0u64;
@@ -277,12 +393,12 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         config: RunReportConfig {
             seed: config.seed,
             agent_count: config.agent_count,
-            virtual_start_ms: config.virtual_start_ms,
-            virtual_end_ms,
-            virtual_duration_ms: virtual_end_ms.saturating_sub(config.virtual_start_ms),
+            virtual_start_ms: schedule.virtual_start_ms,
+            virtual_duration_ms: schedule.virtual_duration_ms,
             scheduler: config.scheduler.clone(),
             max_actions: config.max_actions,
         },
+        timing,
         execution: ExecutionStats {
             total_attempted,
             successful,
@@ -292,11 +408,16 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         },
         world: world_report_from_snapshot(
             &snapshot,
-            unique_locations_visited,
-            inspect_total,
-            move_total,
+            WorldMetricsInput {
+                unique_locations_visited: metrics.locations_visited.len(),
+                inspect_attempts: metrics.inspect_attempts,
+                successful_inspections: metrics.successful_inspections,
+                exploration_move_attempts: metrics.exploration_move_attempts,
+                successful_exploration_moves: metrics.successful_exploration_moves,
+            },
         ),
         per_agent,
+        action_trace,
     }
 }
 

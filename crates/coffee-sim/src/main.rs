@@ -37,6 +37,10 @@ struct Cli {
     #[arg(long, default_value_t = 1_700_000_000_000u64)]
     start_ms: u64,
 
+    /// Record a bounded action trace in the JSON report.
+    #[arg(long)]
+    trace: bool,
+
     /// Emit JSON instead of human-readable text.
     #[arg(long)]
     json: bool,
@@ -44,18 +48,6 @@ struct Cli {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    if cli.players == 0 {
-        eprintln!("error: --players must be at least 1");
-        return ExitCode::from(2);
-    }
-    if cli.days <= 0.0 {
-        eprintln!("error: --days must be positive");
-        return ExitCode::from(2);
-    }
-    if cli.players > 256 {
-        eprintln!("error: --players must be at most 256 for phase 1");
-        return ExitCode::from(2);
-    }
 
     let config = RunConfig {
         seed: cli.seed,
@@ -67,6 +59,8 @@ fn main() -> ExitCode {
         },
         max_actions: if cli.max_actions == 0 { None } else { Some(cli.max_actions) },
         virtual_start_ms: cli.start_ms,
+        record_action_trace: cli.trace,
+        ..RunConfig::default()
     };
 
     match SimulationRunner::new(config).and_then(|runner| runner.run()) {
