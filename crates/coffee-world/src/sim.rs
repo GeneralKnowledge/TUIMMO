@@ -3,10 +3,14 @@
 //! Production servers use [`WorldState::new`] with the system clock. Simulators
 //! should use [`WorldState::for_simulation`] and [`WorldState::advance_virtual_time`].
 
+use std::collections::BTreeMap;
+
 use terminus_core::{GameError, PlayerId, SessionId};
 
 use crate::geography::GENERATION_V1;
+use crate::geography::{DensityBand, UrbanContext, WildernessPos, OUTSKIRTS_FROM, ROOF_LOCATION};
 use crate::home::Habitation;
+use crate::model::STARTER_LOCATION;
 use crate::state::WorldState;
 
 /// Stable world-generation label recorded in simulation reports.
@@ -19,6 +23,25 @@ pub struct WorldOutcomeSnapshot {
     pub discovery_count: usize,
     pub active_home_count: usize,
     pub unique_locations_occupied: usize,
+}
+
+/// Aggregate agent placement for simulation reporting (no per-location keys exposed).
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct SimulationOccupancySummary {
+    /// Distinct place keys with one or more agents present.
+    pub occupied_location_count: usize,
+    /// Largest number of agents sharing a single place key.
+    pub max_agents_sharing_one_location: u32,
+    /// Agents in authored Hub rooms (`coffee-shop`, `roof-array`).
+    pub agents_in_hub_building: u32,
+    /// Wilderness tiles classified as near-Hub density band.
+    pub agents_in_wilderness_near_hub: u32,
+    /// Wilderness tiles in the outer fringe band.
+    pub agents_in_wilderness_fringe: u32,
+    /// Wilderness tiles in deep Squalor density band.
+    pub agents_in_wilderness_deep_squalor: u32,
+    /// Other static places (e.g. subway stations), not Hub building or wilderness.
+    pub agents_in_other_static_places: u32,
 }
 
 impl WorldState {
@@ -75,6 +98,23 @@ impl WorldState {
         }
     }
 
+    /// Where agents stand right now, aggregated for offline experiments.
+    pub fn simulation_occupancy_summary(&self) -> SimulationOccupancySummary {
+        let mut per_location: BTreeMap<String, u32> = BTreeMap::new();
+        for op in self.operators.values() {
+            *per_location.entry(op.location_id.clone()).or_default() += 1;
+        }
+        let mut summary = SimulationOccupancySummary {
+            occupied_location_count: per_location.len(),
+            max_agents_sharing_one_location: per_location.values().copied().max().unwrap_or(0),
+            ..Default::default()
+        };
+        for (location, count) in per_location {
+            summary = summary.add_agents(classify_sim_location(&location), count);
+        }
+        summary
+    }
+
     /// Base habitation for a player's active home at the current world time.
     pub fn active_home_place_key(&self, player: PlayerId) -> Option<String> {
         self.homes.active_for(player).map(|home| home.place_key.clone())
@@ -96,6 +136,44 @@ impl WorldState {
             let traits = self.exploration_traits_for(player);
             home.habitation(self.now_ms, traits)
         })
+    }
+}
+
+fn classify_sim_location(location: &str) -> SimLocationZone {
+    if location == STARTER_LOCATION || location == ROOF_LOCATION || location == OUTSKIRTS_FROM {
+        return SimLocationZone::HubBuilding;
+    }
+    if let Some(pos) = WildernessPos::parse(location) {
+        return match UrbanContext::at(pos).band {
+            DensityBand::NearHub => SimLocationZone::WildernessNearHub,
+            DensityBand::Fringe => SimLocationZone::WildernessFringe,
+            DensityBand::Deep => SimLocationZone::WildernessDeepSqualor,
+        };
+    }
+    SimLocationZone::OtherStatic
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SimLocationZone {
+    HubBuilding,
+    WildernessNearHub,
+    WildernessFringe,
+    WildernessDeepSqualor,
+    OtherStatic,
+}
+
+impl SimulationOccupancySummary {
+    fn add_agents(mut self, zone: SimLocationZone, count: u32) -> Self {
+        match zone {
+            SimLocationZone::HubBuilding => self.agents_in_hub_building += count,
+            SimLocationZone::WildernessNearHub => self.agents_in_wilderness_near_hub += count,
+            SimLocationZone::WildernessFringe => self.agents_in_wilderness_fringe += count,
+            SimLocationZone::WildernessDeepSqualor => {
+                self.agents_in_wilderness_deep_squalor += count
+            }
+            SimLocationZone::OtherStatic => self.agents_in_other_static_places += count,
+        }
+        self
     }
 }
 

@@ -1,4 +1,4 @@
-# Population simulation (Phase 1–2.1)
+# Population simulation (Phase 1–2.2)
 
 `coffee-sim` is an offline harness that drives synthetic players through the same
 [`WorldState`](../crates/coffee-world/src/state/mod.rs) command path used by the
@@ -12,6 +12,10 @@ mixes under identical seeds and horizons.
 Phase 2.1 validates that those profiles produce **interpretable behavioural differences**
 under controlled conditions, that **report metrics match their definitions**, and that
 **population comparisons** are isolated and easier to interpret (including derived rates).
+
+Phase 2.2 adds **longitudinal snapshots** (optional virtual-time sampling), **geographical
+occupancy aggregates**, and a bounded **`scale` experiment** command for population-size
+comparisons over multi-week horizons — without wall-clock waiting or new game mechanics.
 
 ## Build and run
 
@@ -54,6 +58,8 @@ Preset mixes:
 | `exploration` | 60 / 30 / 0 / 10 / 0 |
 | `home` | 10 / 0 / 50 / 5 / 35 |
 | `uniform` | 100 / 0 / 0 / 0 / 0 |
+| `social` | 0 / 0 / 0 / 50 / 50 |
+| `mixed` | 20 / 20 / 20 / 20 / 20 |
 
 Library-only preset for calibration (social + sparse visitors):
 
@@ -73,10 +79,38 @@ Library-only preset for calibration (social + sparse visitors):
 | `--start-ms` | Virtual epoch start (milliseconds since Unix epoch) |
 | `--wanderer-weight` … `--visitor-weight` | Profile mix weights (at least one non-zero) |
 | `--trace` | Include a bounded action trace in JSON output |
+| `--snapshot-interval-ms` | Virtual ms between longitudinal snapshots (`0` = disabled) |
+| `--snapshot-max` | Maximum snapshots stored per run (default `128`, hard cap `4096`) |
 | `--json` | Print the report as JSON |
 
+Long multi-week run with weekly snapshots (JSON):
+
+```bash
+cargo run -p coffee-sim -- \
+  --players 25 \
+  --days 56 \
+  --seed 77 \
+  --max-actions 400 \
+  --snapshot-interval-ms 604800000 \
+  --json > long_run.json
+```
+
+Population-size experiment (same mix, independent worlds, max 6 sizes):
+
+```bash
+cargo run -p coffee-sim -- scale \
+  --sizes 10,25,50 \
+  --days 28 \
+  --seed 88 \
+  --wanderer-weight 60 --investigator-weight 30 --social-weight 10 \
+  --snapshot-interval-ms 604800000 \
+  --json > scale_explore.json
+```
+
+`scale` reuses global `--*-weight` flags for the mix (defaults remain wanderer-only unless changed). Each size runs in a **separate** world with the same seed and horizon.
+
 Reproducing a run: record `--seed`, `--players`, profile weights (or compare presets),
-`--days`, `--action-interval-ms`, `--start-ms`, `--max-actions`, and `--trace`.
+`--days`, `--action-interval-ms`, `--start-ms`, `--max-actions`, `--trace`, and snapshot settings.
 Equivalent settings produce equivalent gameplay outcomes and virtual event histories.
 Wall-clock duration is excluded from reproducibility comparisons (`for_reproducibility_comparison()`).
 
@@ -198,6 +232,32 @@ Same counters aggregated per profile name (`wanderer`, `investigator`, …), inc
 When the denominator is zero, the rate is JSON `null` (text compare prints `(undefined)`).
 This avoids treating “no opportunities” as a zero success rate.
 
+## Longitudinal snapshots (Phase 2.2)
+
+Enable with `--snapshot-interval-ms` > 0. JSON reports include `longitudinal_snapshots`
+(omitted when disabled). Sampling is **read-only** and does not change command outcomes.
+
+| Field | Meaning |
+|-------|---------|
+| `observation_ms` | Virtual timestamp of the observation boundary (interval grid or final processed event slot) |
+| `elapsed_virtual_ms` | `observation_ms - configured_start` |
+| `world_clock_ms` | Authoritative world clock after events processed up to this observation |
+| `cumulative.*` | Event counters **since run start** through this observation (attempts, move-based uniques, social/journal tallies, etc.) |
+| `world_state.*` | **Current** world counts at observation time (active homes, materialized regions, occupied locations) |
+| `occupancy.*` | **Current** agent placement aggregates from [`simulation_occupancy_summary`](../crates/coffee-world/src/sim.rs) |
+
+**Distinctions:**
+
+- **Visited (move-based)** — in `cumulative.unique_locations_visited_move_based`; requires successful moves that changed location. Not inferred from region generation.
+- **Explored regions** — `cumulative.unique_wilderness_regions_explored` from simulator memory (regions reached via qualifying activity).
+- **Materialized regions** — `world_state.regions_materialized` from engine geography state (includes on-demand generation).
+- **Occupied locations** — distinct place keys with ≥1 agent now (`world_state.unique_locations_occupied` / `occupancy.occupied_location_count`).
+- **Hub vs Squalor (occupancy)** — Hub building = `coffee-shop`, `roof-array`, `roof-array` gateway room; wilderness bands use engine `UrbanContext` density (`near_hub`, `fringe`, `deep_squalor`).
+
+A **terminal snapshot** at the last processed scheduler slot is appended when capacity allows, so the final cumulative row matches the run report.
+
+`config.allocated_profile_counts` records actual profile allocation after largest-remainder rounding.
+
 ## Game pathways and limits
 
 All gameplay goes through [`WorldState::apply`](../crates/coffee-world/src/state/mod.rs).
@@ -306,6 +366,7 @@ cargo test -p coffee-sim
 
 - `sim_harness.rs` — scheduling, reproducibility, metric reconciliation, engine path smoke tests
 - `profile_validation.rs` — profile separation, mixed populations, compare isolation, derived rates
+- `longitudinal_validation.rs` — snapshot ordering, terminal reconciliation, scale experiments, long horizons
 
 ## Not implemented
 

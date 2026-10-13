@@ -1,5 +1,7 @@
 //! Duration arithmetic and configuration limits.
 
+use serde::{Deserialize, Serialize};
+
 use crate::runner::MS_PER_DAY;
 use crate::SimulationError;
 
@@ -8,6 +10,25 @@ pub const MAX_AGENT_COUNT: u32 = 256;
 
 /// Default cap on optional action trace entries.
 pub const DEFAULT_TRACE_LIMIT: u32 = 5_000;
+
+/// Default cap on longitudinal snapshots when sampling is enabled.
+pub const DEFAULT_SNAPSHOT_MAX: u32 = 128;
+
+/// Hard upper bound on stored snapshots per run.
+pub const MAX_SNAPSHOT_COUNT: u32 = 4_096;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SnapshotConfig {
+    /// Virtual milliseconds between observations (`None` = disabled).
+    pub interval_ms: Option<u64>,
+    pub max_snapshots: u32,
+}
+
+impl SnapshotConfig {
+    pub fn disabled() -> Self {
+        Self { interval_ms: None, max_snapshots: DEFAULT_SNAPSHOT_MAX }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ValidatedSchedule {
