@@ -36,6 +36,7 @@ You may have one active home. Claiming again does not move it.
 Moving abandons the old place. Abandoning leaves you without a home.
 Names are public on the street. Journals and waypoints stay private.
 A home is not a teleport. Time and real returns settle it.
+After ten minutes away, returning home counts as an expedition return — you will notice when it lands.
 
 `look` returns to the place.";
 
@@ -267,55 +268,69 @@ impl WorldState {
         player: PlayerId,
         from: &str,
         to: &str,
-    ) -> Vec<PersistOp> {
+    ) -> HomeTravelNote {
         if from == to {
-            return Vec::new();
+            return HomeTravelNote::empty();
         }
         let Some(home) = self.homes.active_for(player).cloned() else {
-            return Vec::new();
+            return HomeTravelNote::empty();
         };
         let now = self.now_ms;
         if from == home.place_key {
             let Some(row) = self.homes.active_for_mut(player) else {
-                return Vec::new();
+                return HomeTravelNote::empty();
             };
             row.last_departed_at = Some(now);
-            return vec![PersistOp::HomeHabitation {
+            return HomeTravelNote {
+                ops: vec![PersistOp::HomeHabitation {
+                    id: row.id,
+                    operator_id: player,
+                    meaningful_returns: row.meaningful_returns,
+                    last_departed_at: row.last_departed_at,
+                    last_returned_at: row.last_returned_at,
+                }],
+                owner_message: None,
+            };
+        }
+        if to != home.place_key {
+            return HomeTravelNote::empty();
+        }
+        let (counted_return, habitation_op) = {
+            let Some(row) = self.homes.active_for_mut(player) else {
+                return HomeTravelNote::empty();
+            };
+            let mut counted_return = false;
+            if let Some(departed) = row.last_departed_at {
+                if now.saturating_sub(departed) >= MIN_AWAY_MS {
+                    row.meaningful_returns = row.meaningful_returns.saturating_add(1);
+                    row.last_returned_at = Some(now);
+                    counted_return = true;
+                }
+            }
+            let had_departed = row.last_departed_at.is_some();
+            if had_departed {
+                row.last_departed_at = None;
+            }
+            if !counted_return && !had_departed {
+                return HomeTravelNote::empty();
+            }
+            let op = PersistOp::HomeHabitation {
                 id: row.id,
                 operator_id: player,
                 meaningful_returns: row.meaningful_returns,
                 last_departed_at: row.last_departed_at,
                 last_returned_at: row.last_returned_at,
-            }];
-        }
-        if to != home.place_key {
-            return Vec::new();
-        }
-        let Some(row) = self.homes.active_for_mut(player) else {
-            return Vec::new();
+            };
+            (counted_return, op)
         };
-        let mut changed = false;
-        if let Some(departed) = row.last_departed_at {
-            if now.saturating_sub(departed) >= MIN_AWAY_MS {
-                row.meaningful_returns = row.meaningful_returns.saturating_add(1);
-                row.last_returned_at = Some(now);
-                changed = true;
-            }
-        }
-        if row.last_departed_at.is_some() {
-            row.last_departed_at = None;
-            changed = true;
-        }
-        if !changed {
-            return Vec::new();
-        }
-        vec![PersistOp::HomeHabitation {
-            id: row.id,
-            operator_id: player,
-            meaningful_returns: row.meaningful_returns,
-            last_departed_at: row.last_departed_at,
-            last_returned_at: row.last_returned_at,
-        }]
+        let owner_message = if counted_return {
+            let traits = self.exploration_traits_for(player);
+            let home = self.homes.active_for(player).expect("active home");
+            Some(home.meaningful_return_message(now, traits))
+        } else {
+            None
+        };
+        HomeTravelNote { ops: vec![habitation_op], owner_message }
     }
 
     pub(crate) fn exploration_traits_for(&self, player: PlayerId) -> ExplorationTraits {
@@ -375,6 +390,19 @@ impl WorldState {
 
 pub(crate) fn home_usage() -> &'static str {
     USAGE
+}
+
+/// Side effects of recording home departure or return during movement.
+pub(crate) struct HomeTravelNote {
+    pub ops: Vec<PersistOp>,
+    /// Private system line when a meaningful return was counted.
+    pub owner_message: Option<String>,
+}
+
+impl HomeTravelNote {
+    pub fn empty() -> Self {
+        Self { ops: Vec::new(), owner_message: None }
+    }
 }
 
 fn fresh_home(player: PlayerId, place_key: String, claimed_at: u64) -> PersonalHome {
@@ -787,6 +815,28 @@ mod tests {
     }
 
     #[test]
+    fn meaningful_return_notifies_owner_on_arrival() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        world.apply(ada, "west").unwrap();
+        world.now_ms += MIN_AWAY_MS + 1;
+        world.apply(ada, "east").unwrap();
+        let text = feed(&world, ada);
+        assert!(
+            text.contains("return") && text.contains("home"),
+            "expected return feedback in feed, got: {text}"
+        );
+        world.apply(ada, "home").unwrap();
+        let page = overlay(&world, ada);
+        assert!(
+            page.contains("Counted returns from expeditions: 1"),
+            "expected visible return count, got: {page}"
+        );
+    }
+
+    #[test]
     fn habitation_advances_by_time_returns_and_exploration() {
         let (mut world, ada, _, ada_id, _) = pair();
         let place = walkable_near_gate(&mut world, ada_id);
@@ -825,17 +875,20 @@ mod tests {
         // Reset habitation clock for return counting on a fresh claim age.
         world.homes.active_for_mut(ada_id).unwrap().claimed_at = world.now_ms;
         world.homes.active_for_mut(ada_id).unwrap().meaningful_returns = 0;
-        let ops = world.note_home_travel(ada_id, &place, &elsewhere);
-        assert!(!ops.is_empty());
+        let note = world.note_home_travel(ada_id, &place, &elsewhere);
+        assert!(!note.ops.is_empty());
         stand_at(&mut world, ada_id, &elsewhere);
         // Instant return does not count.
         world.now_ms += 1;
-        let ops = world.note_home_travel(ada_id, &elsewhere, &place);
-        assert!(ops.is_empty() || world.homes.active_for(ada_id).unwrap().meaningful_returns == 0);
+        let note = world.note_home_travel(ada_id, &elsewhere, &place);
+        assert!(
+            note.ops.is_empty() || world.homes.active_for(ada_id).unwrap().meaningful_returns == 0
+        );
         world.homes.active_for_mut(ada_id).unwrap().last_departed_at = Some(world.now_ms);
         world.now_ms += MIN_AWAY_MS;
-        let ops = world.note_home_travel(ada_id, &elsewhere, &place);
-        assert!(!ops.is_empty());
+        let note = world.note_home_travel(ada_id, &elsewhere, &place);
+        assert!(!note.ops.is_empty());
+        assert!(note.owner_message.is_some());
         assert_eq!(world.homes.active_for(ada_id).unwrap().meaningful_returns, 1);
         assert_eq!(
             world
@@ -848,7 +901,7 @@ mod tests {
 
         // Stationary / same-place travel does not farm returns.
         let before = world.homes.active_for(ada_id).unwrap().meaningful_returns;
-        assert!(world.note_home_travel(ada_id, &place, &place).is_empty());
+        assert!(world.note_home_travel(ada_id, &place, &place).ops.is_empty());
         assert_eq!(world.homes.active_for(ada_id).unwrap().meaningful_returns, before);
 
         // Exploration traits from real journal state unlock Distinctive when established.

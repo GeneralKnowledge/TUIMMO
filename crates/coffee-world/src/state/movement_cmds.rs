@@ -55,7 +55,8 @@ impl WorldState {
         if let Some(op) = self.operators.get_mut(&player) {
             op.location_id.clone_from(&target.to);
         }
-        ops.extend(self.note_home_travel(player, &from, &target.to));
+        let home_travel = self.note_home_travel(player, &from, &target.to);
+        ops.extend(home_travel.ops);
         self.clear_overlay(session_id);
         let (leave, leave_op) = self.emit(
             Channel::System,
@@ -81,10 +82,14 @@ impl WorldState {
             last_seen: self.now_ms,
         });
         ops.extend([leave_op, arrive_op, note_op]);
-        Ok(Transition {
-            outcome: CommandOutcome { events: vec![leave, arrive, note], quit: false },
-            ops,
-        })
+        let mut events = vec![leave, arrive, note];
+        if let Some(text) = home_travel.owner_message {
+            let (home_note, home_op) =
+                self.emit(Channel::System, Audience::Player(player), None, text);
+            ops.push(home_op);
+            events.push(home_note);
+        }
+        Ok(Transition { outcome: CommandOutcome { events, quit: false }, ops })
     }
 
     pub(crate) fn ensure_cabin_access_for_move(
