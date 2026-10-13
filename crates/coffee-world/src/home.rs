@@ -598,9 +598,8 @@ mod tests {
         deep.meaningful_returns = ESTABLISHED_RETURNS;
         let recent = deep.look_line(10_001, false, ExplorationTraits::default()).unwrap();
         assert!(recent.contains("path worn"));
-        let forgotten = deep
-            .look_line(10_000 + FORGOTTEN_MS - 1, false, ExplorationTraits::default())
-            .unwrap();
+        let forgotten =
+            deep.look_line(10_000 + FORGOTTEN_MS - 1, false, ExplorationTraits::default()).unwrap();
         assert!(forgotten.contains("well-kept home"));
         assert!(!forgotten.contains("survey-mark"));
     }
