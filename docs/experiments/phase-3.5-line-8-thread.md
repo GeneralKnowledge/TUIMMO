@@ -5,7 +5,7 @@
 | | SHA |
 |---|-----|
 | **Starting commit** | `22d793399991105b2ee5544180f3cf01f1366a35` (Phase 3.4 on main) |
-| **Resulting commit** | `e0320d7` |
+| **Resulting commit** | `88473b6` |
 
 ## Baseline weakness
 
