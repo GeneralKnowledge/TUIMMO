@@ -6,9 +6,10 @@ use coffee_sim::experiment::{
 };
 use coffee_sim::population::PopulationMix;
 use coffee_sim::profile::Profile;
+use coffee_sim::report::StopReason;
 use coffee_sim::runner::{run_with_config, RunConfig, MS_PER_DAY};
 use coffee_sim::scheduler::SchedulerConfig;
-use coffee_sim::snapshot::ObservationKind;
+use coffee_sim::snapshot::{ObservationKind, TerminalSnapshotStatus};
 
 fn snapshot_config(interval_days: f64) -> SnapshotConfig {
     SnapshotConfig {
@@ -59,6 +60,7 @@ fn snapshots_do_not_change_gameplay_outcomes() {
         report.snapshot_sampling = None;
         report.config.snapshots = SnapshotConfig::disabled();
         report.timing.observation_events_processed = 0;
+        report.timing.last_scheduler_slot_ms = report.timing.last_event_slot_ms;
         report
     }
     assert_eq!(gameplay_core(without), gameplay_core(with));
@@ -354,4 +356,213 @@ fn population_scale_snapshots_follow_same_temporal_rules() {
             }
         }
     }
+}
+
+#[test]
+fn action_limit_stops_before_post_termination_observations_advance_clock() {
+    let start = 100_000u64;
+    let day = MS_PER_DAY;
+    let base = RunConfig {
+        seed: 31,
+        agent_count: 1,
+        virtual_days: 21.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: day, idle_extra_ms: 0 },
+        max_actions: Some(2),
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let without =
+        run_with_config(RunConfig { snapshots: SnapshotConfig::disabled(), ..base.clone() })
+            .expect("without");
+    let with = run_with_config(RunConfig {
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 32 },
+        ..base
+    })
+    .expect("with");
+    assert_eq!(without.timing.stop_reason, StopReason::ActionLimit);
+    assert_eq!(with.timing.stop_reason, StopReason::ActionLimit);
+    assert_eq!(without.timing.final_world_ms, with.timing.final_world_ms);
+    assert_eq!(without.timing.last_event_slot_ms, with.timing.last_event_slot_ms);
+    assert_eq!(
+        with.timing.final_world_ms,
+        with.timing.effective_termination_slot_ms.unwrap() + 1,
+        "world clock should reflect the last command tick, not later observation boundaries"
+    );
+    assert!(with.timing.final_world_ms < start + 5 * day);
+}
+
+#[test]
+fn action_limit_blocks_pending_observations_without_clock_advance() {
+    let start = 0u64;
+    let day = MS_PER_DAY;
+    let config = RunConfig {
+        seed: 32,
+        agent_count: 1,
+        virtual_days: 10.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: day / 2, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 16 },
+        max_actions: Some(1),
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    assert_eq!(report.timing.stop_reason, StopReason::ActionLimit);
+    assert_eq!(report.execution.total_attempted, 1);
+    assert_eq!(report.timing.observation_events_processed, 0);
+    assert_eq!(report.timing.final_world_ms, start + 1);
+}
+
+#[test]
+fn snapshots_enabled_matches_gameplay_final_state_and_metrics() {
+    let mut base = RunConfig {
+        seed: 55,
+        agent_count: 3,
+        virtual_days: 12.0,
+        scheduler: SchedulerConfig { action_interval_ms: MS_PER_DAY, idle_extra_ms: 0 },
+        max_actions: Some(25),
+        snapshots: SnapshotConfig::disabled(),
+        ..RunConfig::default()
+    };
+    base.population = PopulationMix::exploration_heavy();
+    let mut without = run_with_config(base.clone()).expect("without");
+    base.snapshots = snapshot_config(2.0);
+    let mut with = run_with_config(base).expect("with");
+    without.execution.real_elapsed_ms = 0;
+    with.execution.real_elapsed_ms = 0;
+    assert_eq!(without.timing.final_world_ms, with.timing.final_world_ms);
+    assert_eq!(without.timing.stop_reason, with.timing.stop_reason);
+    assert_eq!(without.timing.last_event_slot_ms, with.timing.last_event_slot_ms);
+    assert_eq!(without.execution, with.execution);
+    assert_eq!(without.world, with.world);
+}
+
+#[test]
+fn terminal_snapshot_world_clock_matches_authoritative_clock() {
+    let config = RunConfig {
+        seed: 7,
+        agent_count: 2,
+        virtual_days: 6.0,
+        snapshots: SnapshotConfig { interval_ms: Some(MS_PER_DAY * 2), max_snapshots: 12 },
+        max_actions: Some(18),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    let terminal = report
+        .longitudinal_snapshots
+        .as_ref()
+        .and_then(|snaps| snaps.iter().find(|s| s.kind == ObservationKind::Terminal))
+        .expect("terminal row");
+    assert_eq!(terminal.world_clock_ms, report.timing.final_world_ms);
+    assert_eq!(terminal.observation_ms, report.timing.effective_termination_slot_ms.unwrap());
+    assert!(terminal.world_clock_ms >= terminal.observation_ms);
+}
+
+#[test]
+fn terminal_snapshot_capacity_one_two_and_many() {
+    let start = 500u64;
+    let day = MS_PER_DAY;
+    let base = RunConfig {
+        seed: 9,
+        agent_count: 1,
+        virtual_days: 5.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: day, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 1 },
+        max_actions: Some(4),
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let one = run_with_config(base.clone()).expect("one");
+    assert_eq!(one.longitudinal_snapshots.as_ref().map(|s| s.len()), Some(1));
+    assert_eq!(
+        one.snapshot_sampling.as_ref().unwrap().terminal_status,
+        TerminalSnapshotStatus::OmittedCapacity
+    );
+
+    let two = run_with_config(RunConfig {
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 2 },
+        ..base.clone()
+    })
+    .expect("two");
+    assert_eq!(two.longitudinal_snapshots.as_ref().map(|s| s.len()), Some(2));
+    let sampling_two = two.snapshot_sampling.expect("sampling");
+    assert!(
+        sampling_two.terminal_included
+            || sampling_two.terminal_status != TerminalSnapshotStatus::Included
+    );
+
+    let many = run_with_config(RunConfig {
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 8 },
+        ..base
+    })
+    .expect("many");
+    assert!(many.longitudinal_snapshots.as_ref().is_some_and(|s| s.len() >= 3));
+    let sampling_many = many.snapshot_sampling.as_ref().unwrap();
+    assert!(matches!(
+        sampling_many.terminal_status,
+        TerminalSnapshotStatus::Included | TerminalSnapshotStatus::DuplicateLastObservation
+    ));
+}
+
+#[test]
+fn queue_exhaustion_does_not_advance_clock_for_trailing_observations() {
+    let start = 0u64;
+    let day = MS_PER_DAY;
+    let config = RunConfig {
+        seed: 18,
+        agent_count: 1,
+        virtual_days: 14.0,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: day * 3, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 20 },
+        max_actions: Some(3),
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    assert_eq!(report.timing.stop_reason, StopReason::ActionLimit);
+    let last_gp = report.timing.last_event_slot_ms.unwrap();
+    assert_eq!(report.timing.final_world_ms, last_gp + 1);
+    assert!(report.timing.final_world_ms < start + day * 10);
+}
+
+#[test]
+fn horizon_termination_preserves_observation_before_gameplay_ordering() {
+    let start = 1_000u64;
+    let day = MS_PER_DAY;
+    let horizon_days = 3.0;
+    let config = RunConfig {
+        seed: 20,
+        agent_count: 1,
+        virtual_days: horizon_days,
+        virtual_start_ms: start,
+        scheduler: SchedulerConfig { action_interval_ms: day * 2, idle_extra_ms: 0 },
+        snapshots: SnapshotConfig { interval_ms: Some(day), max_snapshots: 10 },
+        max_actions: None,
+        record_action_trace: true,
+        population: PopulationMix::monolithic(Profile::Wanderer),
+        ..RunConfig::default()
+    };
+    let report = run_with_config(config).expect("run");
+    assert_eq!(report.timing.stop_reason, StopReason::QueueExhausted);
+    let horizon = report.timing.configured_horizon_ms;
+    assert!(report.timing.final_world_ms <= horizon);
+}
+
+#[test]
+fn termination_reports_are_reproducible_with_snapshots() {
+    let config = RunConfig {
+        seed: 66,
+        agent_count: 2,
+        virtual_days: 9.0,
+        snapshots: snapshot_config(3.0),
+        max_actions: Some(15),
+        ..RunConfig::default()
+    };
+    let a = run_with_config(config.clone()).expect("a");
+    let b = run_with_config(config).expect("b");
+    assert_eq!(a.longitudinal_snapshots, b.longitudinal_snapshots);
+    assert_eq!(a.for_reproducibility_comparison(), b.for_reproducibility_comparison());
 }
