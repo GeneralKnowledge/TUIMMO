@@ -5,7 +5,7 @@
 | | SHA |
 |---|-----|
 | **Starting commit** | `ab62609a4fc86d240f7b2f74a6a35e39b893be5a` |
-| **Resulting commit** | (branch tip after merge) |
+| **Resulting commit** | `8a8c03b` |
 
 ## Previous phase verified (3.0 on main)
 
