@@ -82,6 +82,74 @@ mod tests {
     }
 
     #[test]
+    fn line_8_environmental_thread_links_surface_station_and_timetable() {
+        use crate::geography::{gate_identity, DistrictKind, TraceKind, UrbanContext};
+
+        let mut world = WorldState::for_tests();
+        let (ada, _) = session(&mut world, "ada");
+        world.apply(ada, "go up").unwrap();
+        world.apply(ada, "outskirts").unwrap();
+        for _ in 0..6 {
+            world.apply(ada, "west").unwrap();
+        }
+        let ash_key = ash_entrance_pos().key();
+        assert_eq!(world.location_key(ada).unwrap(), ash_key);
+        let landing = world.view(ada).unwrap();
+        let landing_lower = landing.description.to_ascii_lowercase();
+        assert!(
+            landing_lower.contains("line 8") || landing_lower.contains("peeled"),
+            "{}",
+            landing.description
+        );
+
+        world.apply(ada, "metro").unwrap();
+        world.apply(ada, "inspect diagram").unwrap();
+        let diagram = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(diagram.contains("LINE 8"), "{diagram}");
+        assert!(diagram.contains("peeled") || diagram.contains("whole"), "{diagram}");
+
+        world.apply(ada, "west").unwrap();
+        world.apply(ada, "inspect pillar").unwrap();
+        let pillar = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(pillar.contains("WARD WEST"), "{pillar}");
+        assert!(pillar.contains("SECTOR 14"), "{pillar}");
+
+        world.apply(ada, "inspect platform").unwrap();
+        let platform = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(
+            platform.contains("not written") || platform.contains("map was taken"),
+            "{platform}"
+        );
+
+        world.apply(ada, "east").unwrap();
+        assert_eq!(world.location_key(ada).unwrap(), ASH_STATION);
+        world.apply(ada, "inspect diagram").unwrap();
+        let again = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(again.contains("LINE 8"), "{again}");
+
+        // Civic timetable trace corroborates the same Line 8 pairing (deterministic overlay).
+        let mut found = false;
+        for lx in 0..16u8 {
+            for ly in 0..16u8 {
+                let pos = WildernessPos { identity: gate_identity(), local_x: lx, local_y: ly };
+                let ctx = UrbanContext::at(pos);
+                if ctx.trace != Some(TraceKind::Timetable) || ctx.district != DistrictKind::Civic {
+                    continue;
+                }
+                let text = TraceKind::Timetable.inspect_text(ctx.band, ctx.district);
+                assert!(text.contains("Line 8") || text.contains("Ash Plaza"), "{text}");
+                assert!(text.contains("peeled") || text.contains("wall map"), "{text}");
+                found = true;
+                break;
+            }
+            if found {
+                break;
+            }
+        }
+        assert!(found, "expected at least one civic timetable trace in origin region");
+    }
+
+    #[test]
     fn squalor_alias_enters_the_gate_and_subway_stays_deterministic() {
         let mut world = WorldState::for_tests();
         let (ada, _) = session(&mut world, "ada");

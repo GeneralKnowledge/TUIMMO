@@ -279,16 +279,13 @@ Beyond it, abandoned towers stretch without an end you can trust. \
         }
         return text;
     }
+    let (abs_x, abs_y) = pos.absolute();
     let base = if tile.metro {
-        // Metro landings keep a short civic seam line; district prose sits around them.
-        match urban.band {
-            crate::geography::DensityBand::NearHub => {
-                "Municipal landing on a still-legible street. Routes fan out into the Squalor."
-            }
-            _ => "Municipal landing. The stair is clearer than the streets it opens onto.",
-        }
+        subway::entrance_at(pos)
+            .map(subway::entrance_landing_prose)
+            .unwrap_or("Municipal landing. The stair is clearer than the streets it opens onto.")
     } else {
-        urban.ordinary_prose(tile.terrain)
+        urban.ordinary_prose(tile.terrain, abs_x, abs_y)
     };
     if tile.modified {
         format!("{base}\nThe ground here has been changed.")
