@@ -204,6 +204,19 @@ There is no quest marker. `journal record` is optional at each inspectable site.
 
 The prose is a pure overlay in `geography/density.rs`. It does not change the version-1 fingerprint or place keys.
 
+## Line 8 (municipal subway)
+
+This chain is optional and solo. It uses the Ash Plaza and Ward West surface entrances, the two static stations, and civic-band timetable traces in the Squalor. One subway hop between stations covers eight surface tiles west. It does not grant items or change the archive door.
+
+There is no quest marker. `journal record` is optional where inspect text offers it.
+
+1. From the Hub gate, walk west six open tiles to the Ash Plaza entrance (`go metro` from the landing). `look` on the landing mentions the peeled Line 8 map stencil.
+2. `inspect diagram` at Ash Plaza Station — the route map was removed whole; stencil reads ASH PLAZA — LINE 8 WEST.
+3. `west` to Ward West Station. `inspect pillar` — WARD WEST vs struck-through SECTOR 14-W; `inspect platform` — edge paint maintained after the towers emptied; who kept the line alive stays unresolved.
+4. On the surface, civic tiles may show a faded timetable (`inspect timetable`) listing Ash Plaza and Ward West as paired Line 8 stops — corroboration, not a required step.
+
+Player-authored signs are separate. Ordinary Squalor look lines vary by coordinate within each district/block (deterministic, not random per visit).
+
 ## The delisted floor
 
 This chain is optional and solo. It uses the Service Corridor panel, the Abandoned Exchange terminal, and, only as corroboration, the Black Archive stacks. It does not grant the cipher plate and does not change the archive door. A player can ignore it and keep using the city.

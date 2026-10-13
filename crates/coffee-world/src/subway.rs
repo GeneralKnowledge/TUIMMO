@@ -69,6 +69,23 @@ pub fn entrance_for_station(station_id: &str) -> Option<&'static MetroEntrance> 
     ENTRANCES.iter().find(|entry| entry.station_id == station_id)
 }
 
+/// Surface look prose for a metro seam tile. Authored like the gate seam — not a random trace.
+pub fn entrance_landing_prose(entrance: &MetroEntrance) -> &'static str {
+    if entrance.station_id == ASH_STATION {
+        "Municipal landing under the Hub fringe. Adhesive ghosts on the stair housing outline \
+where a Line 8 route map was peeled away whole — the stencil still reads ASH PLAZA — LINE 8 WEST. \
+`go metro` descends to the platform."
+    } else {
+        "Municipal landing eight surface blocks west. The surface sign and the pillar name below \
+no longer agree. Dust on the stair is scuffed, as if the line stayed in use after the towers \
+emptied. `go metro` descends to Ward West Station."
+    }
+}
+
+pub fn entrance_landing_prose_at(pos: WildernessPos) -> Option<&'static str> {
+    entrance_at(pos).map(entrance_landing_prose)
+}
+
 pub fn is_station(id: &str) -> bool {
     location(id).is_some()
 }
@@ -148,7 +165,8 @@ One tunnel mouths west toward Ward West.",
                 aliases: &["map", "chart", "wall"],
                 name: "service diagram",
                 description: "Adhesive ghosts outline where the route map sat. \
-Whoever removed it took the sheet whole. The remaining stencil reads ASH PLAZA — LINE 8 WEST.",
+Whoever removed it took the sheet whole — the same peeling visible on the surface landing above. \
+The remaining stencil reads ASH PLAZA — LINE 8 WEST.",
                 grant: None,
             },
             ObjectDef {
@@ -174,7 +192,8 @@ Stairs climb to a sealed stairwell in the Squalor. The tunnel runs east back tow
                 name: "district pillar",
                 description:
                     "Cast lettering: WARD WEST. Under it, a newer stencil reads SECTOR 14-W, \
-struck through once. Neither name appears on the Coffee Shop district board.",
+struck through once — the same renaming argument posted on civic timetables still listing \
+Ash Plaza and Ward West as paired stops. Neither name appears on the Coffee Shop district board.",
                 grant: None,
             },
             ObjectDef {
@@ -182,7 +201,8 @@ struck through once. Neither name appears on the Coffee Shop district board.",
                 aliases: &["edge", "track"],
                 name: "platform edge",
                 description: "The edge paint is newer than the rest of the station. \
-Someone maintained this after the surrounding towers emptied — or wanted it to look that way.",
+Someone maintained this after the surrounding towers emptied — or wanted it to look that way. \
+Who kept Line 8 nominally alive, and why the map was taken whole, is not written on the platform.",
                 grant: None,
             },
         ],
