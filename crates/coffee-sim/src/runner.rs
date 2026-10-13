@@ -251,8 +251,8 @@ impl SimulationRunner {
                         agent.index,
                         ActionChoice { command: String::new(), idle: true, offline_gap_ms: None },
                     );
-                    capture_snapshots(
-                        snapshot_collector.as_mut(),
+                    snapshot_at(
+                        &mut snapshot_collector,
                         &world,
                         &metrics,
                         &agents,
@@ -279,8 +279,8 @@ impl SimulationRunner {
                     agent.index,
                     choice,
                 );
-                capture_snapshots(
-                    snapshot_collector.as_mut(),
+                snapshot_at(
+                    &mut snapshot_collector,
                     &world,
                     &metrics,
                     &agents,
@@ -395,8 +395,8 @@ impl SimulationRunner {
                 agent.index,
                 choice,
             );
-            capture_snapshots(
-                snapshot_collector.as_mut(),
+            snapshot_at(
+                &mut snapshot_collector,
                 &world,
                 &metrics,
                 &agents,
@@ -408,19 +408,21 @@ impl SimulationRunner {
             );
         }
 
-        if let (Some(collector), Some(slot)) = (snapshot_collector.as_mut(), last_event_slot_ms) {
-            collector.capture_terminal(
-                &world,
-                &snapshot_metrics(
-                    &metrics,
-                    &agents,
-                    total_attempted,
-                    successful_commands,
-                    inactive_slots,
-                    events_processed,
-                ),
-                slot,
-            );
+        if let Some(slot) = last_event_slot_ms {
+            if let Some(collector) = snapshot_collector.as_mut() {
+                collector.capture_terminal(
+                    &world,
+                    &snapshot_metrics(
+                        &metrics,
+                        &agents,
+                        total_attempted,
+                        successful_commands,
+                        inactive_slots,
+                        events_processed,
+                    ),
+                    slot,
+                );
+            }
         }
 
         let snapshot = world.outcome_snapshot();
@@ -651,8 +653,9 @@ fn snapshot_metrics<'a>(
     }
 }
 
-fn capture_snapshots(
-    collector: Option<&mut SnapshotCollector>,
+#[allow(clippy::too_many_arguments)]
+fn snapshot_at(
+    collector: &mut Option<SnapshotCollector>,
     world: &WorldState,
     metrics: &MetricsAccumulator,
     agents: &[SimAgent],
@@ -662,7 +665,7 @@ fn capture_snapshots(
     events_processed: u64,
     current_slot_ms: u64,
 ) {
-    if let Some(collector) = collector {
+    if let Some(collector) = collector.as_mut() {
         collector.capture_due(
             world,
             &snapshot_metrics(

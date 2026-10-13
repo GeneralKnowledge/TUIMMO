@@ -82,17 +82,17 @@ impl From<SimulationOccupancySummary> for OccupancyObservation {
     }
 }
 
-pub struct SnapshotCollector {
+pub(crate) struct SnapshotCollector {
     interval_ms: u64,
     max_snapshots: u32,
     start_ms: u64,
     agent_count: u32,
     next_observation_ms: u64,
-    pub snapshots: Vec<LongitudinalSnapshot>,
+    pub(crate) snapshots: Vec<LongitudinalSnapshot>,
 }
 
 impl SnapshotCollector {
-    pub fn new(
+    pub(crate) fn new(
         config: &SnapshotConfig,
         virtual_start_ms: u64,
         agent_count: u32,
@@ -119,11 +119,11 @@ impl SnapshotCollector {
         }))
     }
 
-    pub fn capture_initial(&mut self, world: &WorldState, metrics: &MetricsSnapshotInput) {
+    pub(crate) fn capture_initial(&mut self, world: &WorldState, metrics: &MetricsSnapshotInput) {
         self.capture_due(world, metrics, self.start_ms);
     }
 
-    pub fn capture_due(
+    pub(crate) fn capture_due(
         &mut self,
         world: &WorldState,
         metrics: &MetricsSnapshotInput,
@@ -140,13 +140,12 @@ impl SnapshotCollector {
                 metrics,
                 self.agent_count,
             ));
-            self.next_observation_ms =
-                self.next_observation_ms.checked_add(self.interval_ms).unwrap_or(u64::MAX);
+            self.next_observation_ms = self.next_observation_ms.saturating_add(self.interval_ms);
         }
     }
 
     /// Final observation at the last processed scheduler slot when capacity allows.
-    pub fn capture_terminal(
+    pub(crate) fn capture_terminal(
         &mut self,
         world: &WorldState,
         metrics: &MetricsSnapshotInput,
