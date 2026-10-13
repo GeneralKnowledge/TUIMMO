@@ -1,0 +1,29 @@
+[package]
+name = "coffee-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Deterministic population simulator for Coffee.shop (TUIMMO)"
+
+[[bin]]
+name = "coffee-sim"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+coffee-world.workspace = true
+rand = { workspace = true, features = ["std_rng"] }
+serde.workspace = true
+serde_json.workspace = true
+terminus-core.workspace = true
+thiserror.workspace = true
+uuid = { workspace = true, features = ["v5"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

@@ -26,6 +26,24 @@ cargo tree -p minimal-game -i coffee-world
 
 That command should report that `coffee-world` is not a dependency.
 
+## Population simulator
+
+Offline deterministic runs (no SSH/TUI):
+
+```bash
+cargo run -p coffee-sim -- --players 10 --days 7 --seed 42
+```
+
+See [simulation.md](simulation.md) for virtual time, identities, and report fields.
+
+Confirm the server does not depend on the simulator:
+
+```bash
+cargo tree -p coffee-server -i coffee-sim
+```
+
+That command should report that `coffee-sim` is not a dependency.
+
 ## Database
 
 The server creates `data/coffee.sqlite` on startup and applies migrations embedded in `coffee-world`. To begin again, stop the server and remove the `data/` directory. The next start generates a new host key. Tell players the new fingerprint.
