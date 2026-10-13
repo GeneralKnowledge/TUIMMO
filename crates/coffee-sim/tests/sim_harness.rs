@@ -21,7 +21,10 @@ fn identical_seed_and_config_produce_identical_reports() {
     };
     let a = run_with_config(config.clone()).expect("run a");
     let b = run_with_config(config).expect("run b");
-    assert_eq!(a, b);
+    assert_eq!(
+        a.for_reproducibility_comparison(),
+        b.for_reproducibility_comparison()
+    );
 }
 
 #[test]

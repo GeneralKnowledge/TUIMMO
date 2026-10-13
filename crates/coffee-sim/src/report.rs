@@ -65,6 +65,14 @@ pub struct AgentStats {
 }
 
 impl RunReport {
+    /// Same report with operational-only fields cleared for seed/config equality checks.
+    ///
+    /// Gameplay outcomes and virtual time must match; wall-clock duration may differ.
+    pub fn for_reproducibility_comparison(mut self) -> Self {
+        self.execution.real_elapsed_ms = 0;
+        self
+    }
+
     pub fn to_pretty_text(&self) -> String {
         let mut lines = vec![
             "Coffee.shop population simulation report".into(),
