@@ -192,6 +192,18 @@ Player-facing text reveals the path one step at a time. The ending is not in `he
 
 The stone is an authored overlay in presentation. It is not a terrain edit and not a new landmark in `generate_region`. Version 1's fingerprint stays `0x8812_F1DB_241C_39A1`.
 
+## Ward Clinic closure
+
+This chain is optional and solo. It uses three authored tiles near the Hub in birth region `(0, 0)`. It does not grant items, change terrain, or open doors. Player-authored signs and trail posts are separate; they never replace these environmental lines.
+
+There is no quest marker. `journal record` is optional at each inspectable site.
+
+1. From the city gate, walk the open tiles toward tile `(6, 10)` — one route is west, north, west, north from the survey side of the gate (direct north from the gate hits floodwater). `look` shows a lobby directory stamped CLOSED while a handwritten strip still sends clerks to the entrance for records. `inspect directory`.
+2. The clinic entrance is at `(5, 12)` — north, north, west from the directory. `inspect clinic` shows a re-posted corridor warning on fresh tape.
+3. The service corridor mouth is one step east at `(6, 12)`. `inspect corridor` shows an unfinished seal, scuffed dust, and a truncated work order. Who kept using the passage, and why the seal stalled, stays unresolved.
+
+The prose is a pure overlay in `geography/density.rs`. It does not change the version-1 fingerprint or place keys.
+
 ## The delisted floor
 
 This chain is optional and solo. It uses the Service Corridor panel, the Abandoned Exchange terminal, and, only as corroboration, the Black Archive stacks. It does not grant the cipher plate and does not change the archive door. A player can ignore it and keep using the city.
