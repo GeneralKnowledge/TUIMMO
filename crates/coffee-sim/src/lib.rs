@@ -19,5 +19,5 @@ pub mod trace;
 pub use compare::{compare_populations, ComparisonReport, ComparisonRequest};
 pub use population::PopulationMix;
 pub use profile::Profile;
-pub use report::{RunReport, SimVersion};
+pub use report::{DerivedRates, RunReport, SimVersion};
 pub use runner::{RunConfig, SimulationError, SimulationRunner};

@@ -138,11 +138,42 @@ pub struct ProfileStats {
     pub inactive_slots: u64,
 }
 
+/// Derived rates from world counters (denominator zero → `None`, not 0.0).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DerivedRates {
+    pub exploration_move_success_rate: Option<f64>,
+    pub inspect_success_rate: Option<f64>,
+    pub social_success_rate: Option<f64>,
+    pub unique_locations_per_agent: f64,
+    pub attempted_commands_per_agent: f64,
+    /// Share of scheduler slots with no attempted command (`inactive / events_processed`).
+    pub inactive_slot_share: Option<f64>,
+}
+
 impl RunReport {
     /// Same report with operational-only fields cleared for seed/config equality checks.
     pub fn for_reproducibility_comparison(mut self) -> Self {
         self.execution.real_elapsed_ms = 0;
         self
+    }
+
+    pub fn derived_rates(&self) -> DerivedRates {
+        DerivedRates {
+            exploration_move_success_rate: rate(
+                self.world.successful_exploration_moves,
+                self.world.exploration_move_attempts,
+            ),
+            inspect_success_rate: rate(
+                self.world.successful_inspections,
+                self.world.inspect_attempts,
+            ),
+            social_success_rate: rate(self.world.social_successes, self.world.social_attempts),
+            unique_locations_per_agent: self.world.unique_locations_visited as f64
+                / f64::from(self.config.agent_count.max(1)),
+            attempted_commands_per_agent: self.execution.total_attempted as f64
+                / f64::from(self.config.agent_count.max(1)),
+            inactive_slot_share: rate(self.timing.inactive_slots, self.timing.events_processed),
+        }
     }
 
     pub fn to_pretty_text(&self) -> String {
@@ -334,4 +365,12 @@ pub fn aggregate_profile_stats(
 
 pub fn duration_to_ms(duration: Duration) -> u64 {
     duration.as_millis().try_into().unwrap_or(u64::MAX)
+}
+
+fn rate(numerator: u64, denominator: u64) -> Option<f64> {
+    if denominator == 0 {
+        None
+    } else {
+        Some(numerator as f64 / denominator as f64)
+    }
 }

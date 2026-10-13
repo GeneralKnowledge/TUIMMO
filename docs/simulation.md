@@ -1,4 +1,4 @@
-# Population simulation (Phase 1–2)
+# Population simulation (Phase 1–2.1)
 
 `coffee-sim` is an offline harness that drives synthetic players through the same
 [`WorldState`](../crates/coffee-world/src/state/mod.rs) command path used by the
@@ -8,6 +8,10 @@ database.
 Phase 2 adds **behavioural profiles** (weighted action preferences), **population
 mix configuration**, **profile-aware reporting**, and a **compare** command for two
 mixes under identical seeds and horizons.
+
+Phase 2.1 validates that those profiles produce **interpretable behavioural differences**
+under controlled conditions, that **report metrics match their definitions**, and that
+**population comparisons** are isolated and easier to interpret (including derived rates).
 
 ## Build and run
 
@@ -51,6 +55,12 @@ Preset mixes:
 | `home` | 10 / 0 / 50 / 5 / 35 |
 | `uniform` | 100 / 0 / 0 / 0 / 0 |
 
+Library-only preset for calibration (social + sparse visitors):
+
+| Preset | Weights |
+|--------|---------|
+| `PopulationMix::social_and_visitors()` | 0 / 0 / 0 / 50 / 50 |
+
 ### CLI flags
 
 | Flag | Meaning |
@@ -93,6 +103,22 @@ Assignment: [`PopulationMix::allocate`](../crates/coffee-sim/src/population.rs) 
 largest-remainder counting to match `--players`, then a seeded shuffle assigns profiles
 to agent indices deterministically.
 
+### Observable behavioural indicators (Phase 2.1)
+
+These are **proxies** measured from command outcomes and simulator memory, not claims
+about real player psychology.
+
+| Profile | What to inspect in reports | Notes |
+|---------|---------------------------|--------|
+| Wanderer | `successful_exploration_moves`, `unique_locations_visited`, `unique_regions_visited` | Preference for movement; success requires engine acceptance |
+| Investigator | `inspect_attempts` / `successful_inspections`, `journal_records` | Journals only when the game offers journal context (same as live play) |
+| Homebody | `home_claims_active`, `repeat_visits`, `home_returns` | Home claim ≠ emotional attachment; returns counted only on successful move onto home place key |
+| Social player | `social_attempts` / `social_successes` | Success = engine accepted command; not a relationship metric |
+| Occasional visitor | `timing.inactive_slots`, `derived_rates.inactive_slot_share`, lower `total_attempted` vs active profiles | Offline gaps schedule slots **without** attempted commands |
+
+Validation tests live in [`profile_validation.rs`](../crates/coffee-sim/tests/profile_validation.rs)
+(monolithic mixes, seed `77`, 4 agents, 7 virtual days, 200 action cap unless noted).
+
 ## Virtual time policy
 
 Simulations use [`WorldState::for_simulation`](../crates/coffee-world/src/sim.rs),
@@ -120,7 +146,7 @@ Min-heap: `time_ms`, then `agent_index`, then `sequence`.
 |-------|---------|
 | `config.population` | Profile weights used for this run |
 | `timing.configured_horizon_ms` | `start + duration` |
-| `timing.inactive_slots` | Scheduler events with no attempted command (offline / idle) |
+| `timing.inactive_slots` | Scheduler events with no attempted command (offline / idle / missing context) |
 | `timing.stop_reason` | `queue_exhausted`, `horizon_reached`, or `action_limit` |
 
 ## Metrics
@@ -129,21 +155,48 @@ Min-heap: `time_ms`, then `agent_index`, then `sequence`.
 
 | Metric | Definition |
 |--------|------------|
-| `unique_locations_visited` | Distinct place keys after a **successful** move that changed location |
-| `unique_regions_visited` | Union of wilderness region keys from simulator memory |
-| `inspect_attempts` / `successful_inspections` | Commands starting with `inspect` |
-| `exploration_move_attempts` / `successful_exploration_moves` | Cardinal exit words |
-| `home_claims_active` | Active personal homes in world state |
+| `unique_locations_visited` | Distinct place keys after a **successful** move that **changed** location |
+| `unique_regions_visited` | Union of wilderness region keys from simulator memory (all agents) |
+| `unique_locations_occupied` | Distinct place keys where agents stand at end of run (world snapshot) |
+| `inspect_attempts` / `successful_inspections` | Commands starting with `inspect`; success only when `WorldState::apply` succeeds |
+| `exploration_move_attempts` / `successful_exploration_moves` | Cardinal exit words; success when apply succeeds (location may still be unchanged if move fails silently — success counter follows apply outcome) |
+| `home_claims_active` | Active personal homes in world state at end of run |
 | `journal_records` | Successful `journal record` commands (simulator count) |
 | `social_attempts` / `social_successes` | `say` / `emote` / `whisper` prefixes; success only when the engine accepts |
-| `repeat_visits` / `home_returns` | Simulator memory tallies |
+| `repeat_visits` / `home_returns` | Simulator memory tallies (repeat = known location revisited; home return = successful move onto own home key) |
 
-Rejected commands never increment successful counters or visits.
+**Accounting rules (Phase 2.1):**
+
+- Rejected or failed commands never increment successful counters, visits, or journal/social success.
+- Failed moves do not add to `unique_locations_visited`.
+- Inactive scheduler slots (empty command, offline gap, or missing action context) do **not** increment `execution.total_attempted`.
+- Per-profile additive counters (`journal_records`, `social_*`, inspections, repeats, inactive slots) sum to world totals where applicable.
+- `per_profile.unique_locations_visited` is the **union** of agent memories for that profile, not a sum — it can differ from the global move-based unique count.
+
+### Per agent (`per_agent`)
+
+Same successful-outcome counters as above for the assigned profile only. `unique_locations_visited`
+on an agent is the size of that agent's visited-location memory (updated on successful commands),
+which can differ slightly from the global move-only unique count.
 
 ### Per profile (`per_profile`)
 
 Same counters aggregated per profile name (`wanderer`, `investigator`, …), including
-`inactive_slots` for visitors.
+`social_attempts` and `inactive_slots`.
+
+### Derived rates (`RunReport::derived_rates()` / compare JSON `derived_a` / `derived_b`)
+
+| Field | Numerator / denominator |
+|-------|-------------------------|
+| `exploration_move_success_rate` | successful exploration moves / attempts |
+| `inspect_success_rate` | successful inspections / inspect attempts |
+| `social_success_rate` | social successes / social attempts |
+| `unique_locations_per_agent` | world unique locations visited / agent count |
+| `attempted_commands_per_agent` | total attempted / agent count |
+| `inactive_slot_share` | inactive slots / events processed |
+
+When the denominator is zero, the rate is JSON `null` (text compare prints `(undefined)`).
+This avoids treating “no opportunities” as a zero success rate.
 
 ## Game pathways and limits
 
@@ -153,7 +206,7 @@ The simulator does not mutate world state directly or fabricate discoveries.
 **Supported social behaviour:** when the game view lists other players in the same
 location, Social players may `say` / `emote` / `whisper` through the normal path.
 There is no separate social layer; if agents are not co-located, social commands are
-simply not preferred.
+simply not preferred (low weight), which is **missing opportunity**, not a failed attempt.
 
 **Known limitations:**
 
@@ -162,6 +215,7 @@ simply not preferred.
 - `journal record` only succeeds when the game offers journal context (same as live play).
 - Inspect targets use `inspect ground` in wilderness where exits exist; no invented clues.
 - Whisper requires a valid co-present name from the game view.
+- The simulator is not a validated model of human psychology; reproducibility ≠ realism.
 
 ## Compare API
 
@@ -177,7 +231,81 @@ let report = compare_populations(ComparisonRequest {
 })?;
 ```
 
-Each run uses an independent in-memory `WorldState`.
+Each run uses an **independent** in-memory `WorldState`, RNG stream (same seed, separate runs),
+and agent memory. Only `mix_a` / `mix_b` profile weights should differ unless you intentionally
+change other `RunConfig` fields.
+
+**What comparison establishes:** under identical horizon, seed, player count, and scheduler
+settings, differences in metrics reflect profile mix and resulting world interactions.
+
+**What it does not establish:** real-world player counts, long-term friendships, mystery solve
+rates, server capacity, or months-long world evolution without further validation.
+
+JSON compare output adds `derived_a` and `derived_b` (backwards compatible: existing delta
+fields unchanged).
+
+## Calibration workflow (baseline experiment)
+
+Use the simulator as a **hypothesis-driven instrument**, not a prediction engine.
+
+### 1. State a hypothesis
+
+Example: “A home-oriented mix produces more active home claims but fewer distinct places
+visited per agent than an exploration-heavy mix, even when total attempted commands differ
+because of visitor inactive slots.”
+
+### 2. Hold settings constant
+
+Fix `--players`, `--days`, `--seed`, `--action-interval-ms`, `--start-ms`, and `--max-actions`.
+Change only profile weights (or compare presets).
+
+### 3. Record configuration
+
+Save the full CLI or `RunConfig`, including weights and seed.
+
+### 4. Run three baseline comparisons
+
+```bash
+# A vs B: exploration-heavy vs home-oriented (built-in presets)
+cargo run -p coffee-sim -- compare --mix-a exploration --mix-b home \
+  --players 4 --days 7 --seed 77 --max-actions 200 --json > compare_explore_home.json
+
+# Single-run social + visitor mix (library preset or manual weights)
+cargo run -p coffee-sim -- --players 4 --days 7 --seed 77 --max-actions 200 \
+  --wanderer-weight 0 --investigator-weight 0 --homebody-weight 0 \
+  --social-weight 50 --visitor-weight 50 --json > run_social_visitor.json
+```
+
+### 5. Read global, profile, and derived fields
+
+- Global: `world.*`, `execution.total_attempted`, `timing.inactive_slots`
+- Per profile: `per_profile.*`
+- Rates: `derived_rates()` or compare `derived_a` / `derived_b`
+
+### 6. Separate volume from behaviour
+
+Compare `attempted_commands_per_agent` and `inactive_slot_share` before interpreting raw
+totals. A lower unique-location count may reflect fewer attempts or more offline time, not
+weaker wander preference.
+
+### 7. Sensitivity runs
+
+Repeat with 2–3 seeds (e.g. `77`, `88`, `99`). Treat multi-seed spread as **sensitivity**,
+not proof of real-player behaviour.
+
+### 8. Avoid single-run conclusions
+
+Do not generalize from one lucky or empty journal run; check denominators (e.g. zero social
+attempts → undefined social rate).
+
+## Validation suite
+
+```bash
+cargo test -p coffee-sim
+```
+
+- `sim_harness.rs` — scheduling, reproducibility, metric reconciliation, engine path smoke tests
+- `profile_validation.rs` — profile separation, mixed populations, compare isolation, derived rates
 
 ## Not implemented
 
@@ -186,6 +314,7 @@ Each run uses an independent in-memory `WorldState`.
 - SSH load testing or concurrent sessions
 - New player-facing mechanics invented for the simulator
 - Parallel or distributed simulation
+- Statistical analysis framework beyond deterministic regression tests
 
 Determinism applies to this scheduler and profile model only; it does not predict
 real human play or server capacity.

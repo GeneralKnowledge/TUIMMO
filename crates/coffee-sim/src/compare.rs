@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::population::PopulationMix;
-use crate::report::RunReport;
+use crate::report::{DerivedRates, RunReport};
 use crate::runner::RunConfig;
 use crate::SimulationError;
 use crate::SimulationRunner;
@@ -22,6 +22,8 @@ pub struct ComparisonReport {
     pub run_a: RunReport,
     pub run_b: RunReport,
     pub summary: ComparisonSummary,
+    pub derived_a: DerivedRates,
+    pub derived_b: DerivedRates,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -48,7 +50,9 @@ impl ComparisonReport {
              Active home claims: A={} B={} (Δ {})\n\
              Journal records (sim memory): A={} B={} (Δ {})\n\
              Social successes: A={} B={} (Δ {})\n\
-             Attempted actions: A={} B={} (Δ {})\n",
+             Attempted actions: A={} B={} (Δ {})\n\
+             {}\n\
+             {}",
             self.run_a.config.seed,
             self.mix_a.wanderer,
             self.mix_a.investigator,
@@ -81,7 +85,29 @@ impl ComparisonReport {
             self.run_a.execution.total_attempted,
             self.run_b.execution.total_attempted,
             self.summary.total_attempted_delta,
+            self.format_derived_block("A", &self.derived_a),
+            self.format_derived_block("B", &self.derived_b),
         )
+    }
+
+    fn format_derived_block(&self, label: &str, d: &DerivedRates) -> String {
+        format!(
+            "Derived {label}: exploration move ok rate {} | inspect ok rate {} | social ok rate {} | \
+             unique locations/agent {:.2} | attempted/agent {:.1} | inactive slot share {}\n",
+            fmt_rate(d.exploration_move_success_rate),
+            fmt_rate(d.inspect_success_rate),
+            fmt_rate(d.social_success_rate),
+            d.unique_locations_per_agent,
+            d.attempted_commands_per_agent,
+            fmt_rate(d.inactive_slot_share),
+        )
+    }
+}
+
+fn fmt_rate(rate: Option<f64>) -> String {
+    match rate {
+        Some(v) => format!("{v:.3}"),
+        None => "(undefined)".into(),
     }
 }
 
@@ -113,5 +139,15 @@ pub fn compare_populations(
         total_attempted_delta: i64::try_from(run_b.execution.total_attempted).unwrap_or(0)
             - i64::try_from(run_a.execution.total_attempted).unwrap_or(0),
     };
-    Ok(ComparisonReport { mix_a: request.mix_a, mix_b: request.mix_b, run_a, run_b, summary })
+    let derived_a = run_a.derived_rates();
+    let derived_b = run_b.derived_rates();
+    Ok(ComparisonReport {
+        mix_a: request.mix_a,
+        mix_b: request.mix_b,
+        run_a,
+        run_b,
+        summary,
+        derived_a,
+        derived_b,
+    })
 }

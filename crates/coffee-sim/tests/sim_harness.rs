@@ -279,17 +279,20 @@ fn different_seeds_can_differ_while_each_seed_is_stable() {
 #[test]
 fn investigator_mix_records_more_journal_attempts_than_pure_wanderers() {
     let mut wander = base_config();
+    wander.seed = 77;
     wander.agent_count = 4;
-    wander.population = PopulationMix::uniform_wanderer();
-    wander.max_actions = Some(120);
-    wander.scheduler.action_interval_ms = 15 * 60 * 1000;
+    wander.virtual_days = 7.0;
+    wander.population = PopulationMix::monolithic(Profile::Wanderer);
+    wander.max_actions = Some(200);
+    wander.scheduler.action_interval_ms = 30 * 60 * 1000;
     let mut invest = wander.clone();
-    invest.population = PopulationMix { investigator: 100, ..Default::default() };
+    invest.population = PopulationMix::monolithic(Profile::Investigator);
     let rw = run_with_config(wander).expect("wander");
     let ri = run_with_config(invest).expect("invest");
     let w_j = rw.per_profile.get("wanderer").map(|p| p.journal_records).unwrap_or(0);
     let i_j = ri.per_profile.get("investigator").map(|p| p.journal_records).unwrap_or(0);
-    assert!(i_j >= w_j);
+    assert!(i_j > 0, "investigator run should record at least one journal entry");
+    assert!(i_j > w_j, "investigator journals {i_j} should exceed wanderer {w_j}");
 }
 
 #[test]
