@@ -6,6 +6,8 @@ use std::time::Duration;
 use coffee_world::WorldOutcomeSnapshot;
 use serde::{Deserialize, Serialize};
 
+use crate::population::PopulationMix;
+use crate::profile::Profile;
 use crate::scheduler::SchedulerConfig;
 use crate::trace::ActionTrace;
 
@@ -26,6 +28,7 @@ pub struct RunReport {
     pub execution: ExecutionStats,
     pub world: WorldReport,
     pub per_agent: BTreeMap<String, AgentStats>,
+    pub per_profile: BTreeMap<String, ProfileStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action_trace: Option<ActionTrace>,
 }
@@ -34,6 +37,7 @@ pub struct RunReport {
 pub struct RunReportConfig {
     pub seed: u64,
     pub agent_count: u32,
+    pub population: PopulationMix,
     pub virtual_start_ms: u64,
     pub virtual_duration_ms: u64,
     pub scheduler: SchedulerConfig,
@@ -61,6 +65,8 @@ pub struct SimulationTiming {
     /// Authoritative world clock after the last processed command.
     pub final_world_ms: u64,
     pub events_processed: u64,
+    /// Scheduler slots with no attempted command (idle or offline gaps).
+    pub inactive_slots: u64,
     pub stop_reason: StopReason,
 }
 
@@ -77,6 +83,8 @@ pub struct ExecutionStats {
 pub struct WorldReport {
     /// Distinct place keys reached after a successful move (location changed).
     pub unique_locations_visited: usize,
+    /// Distinct wilderness region keys visited (simulator memory union).
+    pub unique_regions_visited: usize,
     /// Distinct place keys where agents stand at end of run.
     pub unique_locations_occupied: usize,
     /// Regions present in geography state (materialized during play).
@@ -88,14 +96,46 @@ pub struct WorldReport {
     pub exploration_move_attempts: u64,
     pub successful_exploration_moves: u64,
     pub home_claims_active: usize,
+    /// Successful `journal record` commands (simulator count).
+    pub journal_records: u64,
+    pub social_attempts: u64,
+    pub social_successes: u64,
+    pub repeat_visits: u64,
+    pub home_returns: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentStats {
+    pub profile: String,
     pub attempted: u64,
     pub successful: u64,
     pub rejected: u64,
     pub failed: u64,
+    pub unique_locations_visited: usize,
+    pub unique_regions_visited: usize,
+    pub successful_inspections: u64,
+    pub journal_records: u64,
+    pub social_successes: u64,
+    pub repeat_visits: u64,
+    pub home_returns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ProfileStats {
+    pub agent_count: u32,
+    pub attempted: u64,
+    pub successful: u64,
+    pub rejected: u64,
+    pub failed: u64,
+    pub unique_locations_visited: usize,
+    pub unique_regions_visited: usize,
+    pub successful_inspections: u64,
+    pub journal_records: u64,
+    pub social_attempts: u64,
+    pub social_successes: u64,
+    pub repeat_visits: u64,
+    pub home_returns: u64,
+    pub inactive_slots: u64,
 }
 
 impl RunReport {
@@ -114,6 +154,14 @@ impl RunReport {
             String::new(),
             "Run configuration".into(),
             format!("  Agents: {}", self.config.agent_count),
+            format!(
+                "  Population mix (weights): wanderer {} / investigator {} / homebody {} / social {} / visitor {}",
+                self.config.population.wanderer,
+                self.config.population.investigator,
+                self.config.population.homebody,
+                self.config.population.social_player,
+                self.config.population.occasional_visitor,
+            ),
             format!("  Seed: {}", self.config.seed),
             format!(
                 "  Configured duration: {} ms (~{:.2} days)",
@@ -134,6 +182,7 @@ impl RunReport {
             ),
             format!("  Final world clock: {}", self.timing.final_world_ms),
             format!("  Events processed: {}", self.timing.events_processed),
+            format!("  Inactive slots (no command): {}", self.timing.inactive_slots),
             format!("  Stop reason: {:?}", self.timing.stop_reason),
             String::new(),
             "Execution outcomes".into(),
@@ -148,6 +197,7 @@ impl RunReport {
                 "  Unique locations visited (successful moves): {}",
                 self.world.unique_locations_visited
             ),
+            format!("  Unique regions visited (sim memory): {}", self.world.unique_regions_visited),
             format!(
                 "  Unique locations occupied (end state): {}",
                 self.world.unique_locations_occupied
@@ -163,14 +213,36 @@ impl RunReport {
                 self.world.exploration_move_attempts, self.world.successful_exploration_moves
             ),
             format!("  Active home claims: {}", self.world.home_claims_active),
+            format!("  Journal records (successful): {}", self.world.journal_records),
+            format!(
+                "  Social: {} attempted / {} successful",
+                self.world.social_attempts, self.world.social_successes
+            ),
+            format!("  Repeat visits (sim memory): {}", self.world.repeat_visits),
+            format!("  Home returns (sim memory): {}", self.world.home_returns),
         ];
+        if !self.per_profile.is_empty() {
+            lines.push(String::new());
+            lines.push("Per profile".into());
+            for (name, stats) in &self.per_profile {
+                lines.push(format!(
+                    "  {name} ({} agents): attempted {} ok {} / inspect ok {} / journal {} / social ok {}",
+                    stats.agent_count,
+                    stats.attempted,
+                    stats.successful,
+                    stats.successful_inspections,
+                    stats.journal_records,
+                    stats.social_successes,
+                ));
+            }
+        }
         if !self.per_agent.is_empty() {
             lines.push(String::new());
             lines.push("Per agent".into());
             for (name, stats) in &self.per_agent {
                 lines.push(format!(
-                    "  {name}: ok {} / rejected {} / failed {} (attempted {})",
-                    stats.successful, stats.rejected, stats.failed, stats.attempted
+                    "  {name} [{}]: ok {} / rejected {} / failed {} (attempted {})",
+                    stats.profile, stats.successful, stats.rejected, stats.failed, stats.attempted
                 ));
             }
         }
@@ -180,10 +252,16 @@ impl RunReport {
 
 pub struct WorldMetricsInput {
     pub unique_locations_visited: usize,
+    pub unique_regions_visited: usize,
     pub inspect_attempts: u64,
     pub successful_inspections: u64,
     pub exploration_move_attempts: u64,
     pub successful_exploration_moves: u64,
+    pub journal_records: u64,
+    pub social_attempts: u64,
+    pub social_successes: u64,
+    pub repeat_visits: u64,
+    pub home_returns: u64,
 }
 
 pub fn world_report_from_snapshot(
@@ -192,6 +270,7 @@ pub fn world_report_from_snapshot(
 ) -> WorldReport {
     WorldReport {
         unique_locations_visited: metrics.unique_locations_visited,
+        unique_regions_visited: metrics.unique_regions_visited,
         unique_locations_occupied: snapshot.unique_locations_occupied,
         regions_materialized: snapshot.region_count,
         discoveries_recorded: snapshot.discovery_count,
@@ -200,7 +279,57 @@ pub fn world_report_from_snapshot(
         exploration_move_attempts: metrics.exploration_move_attempts,
         successful_exploration_moves: metrics.successful_exploration_moves,
         home_claims_active: snapshot.active_home_count,
+        journal_records: metrics.journal_records,
+        social_attempts: metrics.social_attempts,
+        social_successes: metrics.social_successes,
+        repeat_visits: metrics.repeat_visits,
+        home_returns: metrics.home_returns,
     }
+}
+
+pub fn aggregate_profile_stats(
+    agents: &[crate::agent::SimAgent],
+    inactive_by_index: &[u64],
+) -> BTreeMap<String, ProfileStats> {
+    let mut map = BTreeMap::new();
+    for profile in Profile::ALL {
+        let key = profile.as_str().to_string();
+        let subset: Vec<_> = agents.iter().filter(|a| a.profile == profile).collect();
+        if subset.is_empty() {
+            continue;
+        }
+        let mut regions = std::collections::BTreeSet::new();
+        let mut locations = std::collections::BTreeSet::new();
+        for agent in &subset {
+            regions.extend(agent.memory.region_keys_visited.iter().cloned());
+            locations.extend(agent.memory.visited_locations.iter().cloned());
+        }
+        let inspections: u64 = subset.iter().map(|a| a.memory.successful_inspections).sum();
+        let inactive: u64 = subset
+            .iter()
+            .map(|a| inactive_by_index.get(a.index as usize).copied().unwrap_or(0))
+            .sum();
+        map.insert(
+            key,
+            ProfileStats {
+                agent_count: subset.len() as u32,
+                attempted: subset.iter().map(|a| a.attempted).sum(),
+                successful: subset.iter().map(|a| a.successful).sum(),
+                rejected: subset.iter().map(|a| a.rejected).sum(),
+                failed: subset.iter().map(|a| a.failed).sum(),
+                unique_locations_visited: locations.len(),
+                unique_regions_visited: regions.len(),
+                successful_inspections: inspections,
+                journal_records: subset.iter().map(|a| a.memory.journal_records).sum(),
+                social_attempts: subset.iter().map(|a| a.memory.social_attempts).sum(),
+                social_successes: subset.iter().map(|a| a.memory.social_successes).sum(),
+                repeat_visits: subset.iter().map(|a| a.memory.repeat_visits).sum(),
+                home_returns: subset.iter().map(|a| a.memory.home_returns).sum(),
+                inactive_slots: inactive,
+            },
+        );
+    }
+    map
 }
 
 pub fn duration_to_ms(duration: Duration) -> u64 {
