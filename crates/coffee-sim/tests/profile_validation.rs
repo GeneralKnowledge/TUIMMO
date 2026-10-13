@@ -60,11 +60,7 @@ fn investigator_records_journals_in_journal_context_wanderers_do_not() {
     let base = profile_scenario();
     let invest = run_monolithic(Profile::Investigator, &base);
     let wander = run_monolithic(Profile::Wanderer, &base);
-    let i_j = invest
-        .per_profile
-        .get("investigator")
-        .map(|p| p.journal_records)
-        .unwrap_or(0);
+    let i_j = invest.per_profile.get("investigator").map(|p| p.journal_records).unwrap_or(0);
     let w_j = wander.per_profile.get("wanderer").map(|p| p.journal_records).unwrap_or(0);
     assert!(i_j > 0, "investigator mix should produce successful journal records");
     assert!(i_j > w_j, "investigator {i_j} should exceed wanderer {w_j} with same seed/horizon");
@@ -153,11 +149,7 @@ fn additive_world_metrics_reconcile_with_per_profile_sums() {
 fn per_agent_metrics_use_assigned_profile_only() {
     let mut config = profile_scenario();
     config.agent_count = 8;
-    config.population = PopulationMix {
-        wanderer: 50,
-        investigator: 50,
-        ..Default::default()
-    };
+    config.population = PopulationMix { wanderer: 50, investigator: 50, ..Default::default() };
     let report = run_with_config(config).expect("run");
     for stats in report.per_agent.values() {
         assert!(
@@ -208,10 +200,7 @@ fn population_comparison_is_reproducible_and_configuration_matched() {
         second.run_b.for_reproducibility_comparison()
     );
     assert_eq!(first.run_a.config.seed, first.run_b.config.seed);
-    assert_eq!(
-        first.run_a.config.virtual_duration_ms,
-        first.run_b.config.virtual_duration_ms
-    );
+    assert_eq!(first.run_a.config.virtual_duration_ms, first.run_b.config.virtual_duration_ms);
     assert_eq!(first.run_a.config.agent_count, first.run_b.config.agent_count);
     assert_eq!(first.run_a.config.scheduler, first.run_b.config.scheduler);
     assert_ne!(first.run_a.config.population, first.run_b.config.population);
@@ -260,8 +249,5 @@ fn long_horizon_visitor_scenario_uses_multi_day_offline_gaps() {
     assert!(report.timing.inactive_slots > 0);
     assert!(report.execution.total_attempted > 0);
     let again = run_with_config(config).expect("repeat");
-    assert_eq!(
-        report.for_reproducibility_comparison(),
-        again.for_reproducibility_comparison()
-    );
+    assert_eq!(report.for_reproducibility_comparison(), again.for_reproducibility_comparison());
 }
