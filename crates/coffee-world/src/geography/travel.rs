@@ -233,6 +233,12 @@ pub fn describe_tile(
             objects.push((trace.keyword().to_string(), trace.label().to_string()));
         }
     }
+    if markers_here.iter().any(|sight| sight.kind == SIGN_KIND) {
+        objects.push(("sign".to_string(), "roadside sign".to_string()));
+    }
+    if markers_here.iter().any(|sight| sight.kind == TRAIL_KIND) {
+        objects.push(("trail".to_string(), "trail post".to_string()));
+    }
     for sight in markers_here {
         let label = match sight.kind.as_str() {
             CABIN_KIND => format!("cabin \"{}\"", sight.name),

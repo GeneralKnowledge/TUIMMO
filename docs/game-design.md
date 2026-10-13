@@ -103,7 +103,7 @@ A personal home is a designation on an existing Squalor place key. It is not a c
 - Enterable structures have an interior place (`i:<id>`) linked by validated `world_connections`. Cabin visitor access defaults to `public`; workshops default to `private`. Owners may set `public` / `private` / `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
 - Settlement sharing is separate from visitor access. `home share private|shared|communal` controls whether linked settlement members may enter. Joining a settlement never opens a private structure by itself.
 - Demolition removes connections and moves anyone inside to the exterior door tile. Reconnecting inside a demolished cabin relocates you safely.
-- Signs are short (≤80 chars). Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
+- Signs are short (≤80 chars). Trail posts name a stretch of ground. Both persist in the wilderness and appear in any visitor's `look` prose (with the author's display name). `inspect sign` or `inspect trail` reads the public artifact on your tile; private journals and waypoints are never copied into signs or trail posts. Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
 
 ### Settlements
 

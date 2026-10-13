@@ -9,7 +9,8 @@ use crate::geography::{
     closure_inspect_text, is_survey_tile, landmark_sight, panel_after_log, stacks_after_log,
     story_aliases, story_sight, survey_aliases, survey_sight, torn_page_text, trace_aliases,
     validate_marker_name, EffectiveTile, GenerateError, LandmarkKind, Structure, Terrain,
-    UrbanContext, WildernessPos, MARKER_KIND, SHARE_PRIVATE, SURVEY_MARK_FLAG,
+    UrbanContext, WildernessPos, MARKER_KIND, SHARE_PRIVATE, SIGN_KIND, SURVEY_MARK_FLAG,
+    TRAIL_KIND,
 };
 use crate::model::{Item, PersistOp};
 use crate::state::{Transition, WorldState};
@@ -219,6 +220,13 @@ impl WorldState {
         pos: WildernessPos,
         target: &str,
     ) -> Result<Transition, GameError> {
+        if let Some(text) = self.inspect_public_trace_at(pos, target) {
+            let (event, op) = self.inspect_note(session_id, player, text);
+            return Ok(Transition {
+                outcome: CommandOutcome { events: vec![event], quit: false },
+                ops: vec![op],
+            });
+        }
         let scene = self
             .wild_scene(pos, Some(player))
             .map_err(|err| GameError::Rejected(unreadable_wilderness(&err)))?;
@@ -295,6 +303,34 @@ impl WorldState {
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
+    fn inspect_public_trace_at(&self, pos: WildernessPos, target: &str) -> Option<String> {
+        let region_id = self.geography.region(pos.identity.coord_key()).map(|region| region.id)?;
+        if target.eq_ignore_ascii_case("sign") {
+            let sign = self.geography.structure_of_kind_at(
+                region_id,
+                pos.local_x,
+                pos.local_y,
+                SIGN_KIND,
+            )?;
+            let owner = self.owner_name(sign.owner_id);
+            return Some(format!("Sign by {owner}: \"{}\"", sign.name));
+        }
+        if target.eq_ignore_ascii_case("trail") {
+            let trail = self.geography.structure_of_kind_at(
+                region_id,
+                pos.local_x,
+                pos.local_y,
+                TRAIL_KIND,
+            )?;
+            let owner = self.owner_name(trail.owner_id);
+            return Some(format!(
+                "Trail post \"{}\". {owner} set it to mark this stretch.",
+                trail.name
+            ));
+        }
+        None
     }
 
     pub(crate) fn note_survey_mark(&mut self, player: PlayerId, ops: &mut Vec<PersistOp>) {
