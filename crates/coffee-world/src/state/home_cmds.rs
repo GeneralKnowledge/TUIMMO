@@ -622,7 +622,10 @@ mod tests {
         world.now_ms = abandoned_at;
         let recent =
             world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
-        assert!(recent.contains("inhabited until recently"), "{recent}");
+        assert!(
+            recent.contains("inhabited until recently") || recent.contains("left behind recently"),
+            "{recent}"
+        );
         world.now_ms = abandoned_at + RECENTLY_ABANDONED_MS;
         let forgotten =
             world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
@@ -743,7 +746,10 @@ mod tests {
         assert_ne!(world.homes.active_for(ada_id).unwrap().place_key, place);
         stand_at(&mut world, ada_id, &place);
         let scene = world.wild_scene_for_tests(far, Some(ada_id));
-        assert!(scene.contains("inhabited until recently"), "{scene}");
+        assert!(
+            scene.contains("inhabited until recently") || scene.contains("left behind recently"),
+            "{scene}"
+        );
         assert!(!scene.contains("You have made a home here"), "{scene}");
     }
 
@@ -812,6 +818,35 @@ mod tests {
         let scene = world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
         assert!(scene.contains("Wire Nest") || scene.contains("once called"), "{scene}");
         let _ = bob;
+    }
+
+    #[test]
+    fn abandoned_home_trace_reflects_persisted_returns_for_visitors() {
+        let (mut world, ada, _bob, ada_id, bob_id) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &place);
+        world.apply(ada, "home claim").unwrap();
+        world.apply(ada, "home name Dust Shelf").unwrap();
+        {
+            let home = world.homes.active_for_mut(ada_id).unwrap();
+            home.claimed_at = 0;
+            home.meaningful_returns = crate::home::ESTABLISHED_RETURNS;
+        }
+        world.apply(ada, "home abandon confirm").unwrap();
+        let abandoned =
+            world.homes.homes.iter().find(|h| h.place_key == place).expect("abandoned row");
+        let abandoned_at = abandoned.abandoned_at.expect("abandoned_at");
+        assert_eq!(abandoned.meaningful_returns, crate::home::ESTABLISHED_RETURNS);
+
+        stand_at(&mut world, bob_id, &place);
+        world.now_ms = abandoned_at + 1;
+        let scene = world.wild_scene_for_tests(WildernessPos::parse(&place).unwrap(), Some(bob_id));
+        assert!(
+            scene.contains("path worn") || scene.contains("had been kept"),
+            "expected deep abandoned trace, got: {scene}"
+        );
+        assert!(scene.contains("Dust Shelf") || scene.contains("once called"));
+        assert!(!scene.contains("field journal"), "{scene}");
     }
 
     #[test]

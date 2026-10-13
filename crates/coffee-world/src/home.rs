@@ -52,6 +52,14 @@ impl HomeStage {
     }
 }
 
+/// How strongly a home had been lived in before abandonment (derived from durable rows).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LivedInTrace {
+    Faint,
+    Moderate,
+    Deep,
+}
+
 /// Descriptive habitation for an active home. Not a character level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Habitation {
@@ -189,6 +197,21 @@ impl PersonalHome {
         }
     }
 
+    /// Frozen history at abandonment: tenure and counted returns only (no private data).
+    fn lived_in_trace_at_abandon(&self) -> LivedInTrace {
+        let Some(abandoned_at) = self.abandoned_at else {
+            return LivedInTrace::Faint;
+        };
+        let tenure = abandoned_at.saturating_sub(self.claimed_at);
+        if self.meaningful_returns >= ESTABLISHED_RETURNS || tenure >= ESTABLISHED_TIME_MS {
+            LivedInTrace::Deep
+        } else if self.meaningful_returns >= SETTLING_RETURNS || tenure >= SETTLING_TIME_MS {
+            LivedInTrace::Moderate
+        } else {
+            LivedInTrace::Faint
+        }
+    }
+
     /// Public look line. Exploration details stay generic; private keys stay out.
     pub fn look_line(
         &self,
@@ -214,14 +237,15 @@ impl PersonalHome {
                     Some(name) => format!(" once called \"{name}\""),
                     None => String::new(),
                 };
-                Some(format!(
-                    "This place was inhabited until recently{named}. Signs of a kept room remain among the Squalor's dust."
-                ))
+                Some(recently_abandoned_look_line(named, self.lived_in_trace_at_abandon()))
             }
-            HomeStage::Forgotten => Some(
-                "Dust covers what was once a home. Whatever traces of its former occupant remained have become nearly indistinguishable from the decay surrounding it."
-                    .into(),
-            ),
+            HomeStage::Forgotten => {
+                let named = match self.display_name() {
+                    Some(name) => format!(" once called \"{name}\""),
+                    None => String::new(),
+                };
+                Some(forgotten_look_line(named, self.lived_in_trace_at_abandon()))
+            }
             HomeStage::Absorbed => None,
         }
     }
@@ -342,6 +366,34 @@ fn distinctive_public_detail(home_id: Uuid, traits: ExplorationTraits) -> String
     let idx =
         (home_id.as_u128() as usize).wrapping_add(traits.bit_mask() as usize) % variants.len();
     variants[idx].to_string()
+}
+
+fn recently_abandoned_look_line(named: String, trace: LivedInTrace) -> String {
+    match trace {
+        LivedInTrace::Faint => format!(
+            "This place was left behind recently{named}. A corner had been cleared, but it never quite settled into a kept room."
+        ),
+        LivedInTrace::Moderate => format!(
+            "This place was inhabited until recently{named}. Scuffed dust and a kept corner still show through the Squalor."
+        ),
+        LivedInTrace::Deep => format!(
+            "This place was inhabited until recently{named}. It had been kept — dust held back, a path worn in from returns."
+        ),
+    }
+}
+
+fn forgotten_look_line(named: String, trace: LivedInTrace) -> String {
+    match trace {
+        LivedInTrace::Deep => format!(
+            "Dust covers what was once a well-kept home{named}. Even the deeper marks are dissolving into the decay around them."
+        ),
+        LivedInTrace::Moderate => format!(
+            "Dust covers what was once a home{named}. The kept corner is fading into the same grey decay as the towers around it."
+        ),
+        LivedInTrace::Faint => format!(
+            "Dust covers what was once a home{named}. Whatever traces remained have become nearly indistinguishable from the decay surrounding it."
+        ),
+    }
 }
 
 fn habitation_blurb(habitation: Habitation) -> &'static str {
@@ -529,7 +581,28 @@ mod tests {
         assert!(home
             .look_line(1, false, ExplorationTraits::default())
             .unwrap()
-            .contains("inhabited until recently"));
+            .contains("left behind recently"));
+    }
+
+    #[test]
+    fn abandoned_look_reflects_lived_in_trace_without_private_data() {
+        let mut faint = sample(Some(1_000));
+        faint.claimed_at = 0;
+        faint.meaningful_returns = 0;
+        let faint_line = faint.look_line(1_500, false, ExplorationTraits::default()).unwrap();
+        assert!(faint_line.contains("never quite settled"));
+        assert!(!faint_line.contains("journal"));
+
+        let mut deep = sample(Some(10_000));
+        deep.claimed_at = 0;
+        deep.meaningful_returns = ESTABLISHED_RETURNS;
+        let recent = deep.look_line(10_001, false, ExplorationTraits::default()).unwrap();
+        assert!(recent.contains("path worn"));
+        let forgotten = deep
+            .look_line(10_000 + FORGOTTEN_MS - 1, false, ExplorationTraits::default())
+            .unwrap();
+        assert!(forgotten.contains("well-kept home"));
+        assert!(!forgotten.contains("survey-mark"));
     }
 
     #[test]
