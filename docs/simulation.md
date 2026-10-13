@@ -509,14 +509,21 @@ Invalid workloads are rejected **before** any simulation runs.
   reported separately as `pooled_rate` (not interchangeable with the mean of per-run rates).
 - Undefined rates (zero denominator on a run) are excluded from rate distributions
   (`n_undefined` counted). Genuine zero numerators remain valid measurements.
-- Missing snapshot rows are not fabricated; time-series points include `replicate_count`
-  for how many runs contributed at each `(elapsed_virtual_ms, kind)`.
+- Missing snapshot rows are not fabricated. Longitudinal summaries live under each
+  **`conditions[]` entry** as `snapshot_series` (not a single experiment-wide series).
+  `replicate_count` is the number of **that condition's** replicates contributing at
+  `(elapsed_virtual_ms, kind)` — never pooled across conditions.
 
 ### Terminology (timing vs snapshots)
 
 See Phase 2.2.2 termination section for `effective_termination_slot_ms` and terminal snapshot
-rules. Multi-seed snapshot series treat **terminal** observations separately from **interval**
-grid rows (aligned by elapsed virtual time, not array index).
+rules. Multi-seed snapshot series are **per condition**: each `ConditionResult.snapshot_series`
+aggregates only that condition's replicates. **Terminal** observations stay separate from
+**interval** grid rows (aligned by elapsed virtual time and `kind`, not array index).
+
+**JSON note (Phase 2.3.1):** The top-level `snapshot_series` field was removed. Use
+`conditions[i].snapshot_series` together with `conditions[i].label`, `agent_count`, and
+`allocated_profile_counts` to identify the series.
 
 ### Recommended protocol
 

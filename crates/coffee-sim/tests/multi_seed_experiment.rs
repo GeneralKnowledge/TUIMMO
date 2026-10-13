@@ -5,8 +5,10 @@ use coffee_sim::multi_seed::{
     run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
 };
 use coffee_sim::population::PopulationMix;
+use coffee_sim::profile::Profile;
 use coffee_sim::runner::{run_with_config, RunConfig, MS_PER_DAY};
 use coffee_sim::seeds::{replicate_seed, ReplicateSeedSchedule};
+use coffee_sim::snapshot::ObservationKind;
 use coffee_sim::stats::numeric_summary;
 use coffee_sim::SimulationError;
 
@@ -151,26 +153,164 @@ fn pooled_and_distribution_rates_are_both_present() {
     assert!(inspect.pooled_denominator > 0 || inspect.pooled_rate.is_none());
 }
 
+fn snapshot_experiment(
+    conditions: Vec<ExperimentCondition>,
+    replicates: u32,
+) -> MultiSeedExperimentRequest {
+    let mut base = small_base();
+    base.max_actions = None;
+    base.snapshots = SnapshotConfig { interval_ms: Some(MS_PER_DAY), max_snapshots: 12 };
+    MultiSeedExperimentRequest {
+        base,
+        conditions,
+        seed_schedule: ReplicateSeedSchedule::FromBase {
+            base_seed: 77,
+            replicate_count: replicates,
+        },
+        include_full_run_reports: true,
+    }
+}
+
 #[test]
 fn snapshot_series_aligns_by_elapsed_time_not_index() {
-    let mut base = small_base();
-    base.snapshots = SnapshotConfig { interval_ms: Some(MS_PER_DAY), max_snapshots: 8 };
-    let req = MultiSeedExperimentRequest {
-        base,
-        conditions: vec![ExperimentCondition {
+    let report = run_multi_seed_experiment(snapshot_experiment(
+        vec![ExperimentCondition {
             label: "N=4".into(),
             agent_count: 4,
             population: PopulationMix::exploration_heavy(),
         }],
-        seed_schedule: ReplicateSeedSchedule::FromBase { base_seed: 77, replicate_count: 2 },
-        include_full_run_reports: true,
-    };
-    let report = run_multi_seed_experiment(req).expect("run");
-    let series = report.snapshot_series.expect("series");
+        2,
+    ))
+    .expect("run");
+    let series = report.conditions[0].snapshot_series.as_ref().expect("series");
     assert!(series.iter().any(|p| p.replicate_count >= 1 && p.elapsed_virtual_ms == 0));
-    for point in &series {
+    for point in series {
         assert!(point.replicate_count <= 2);
     }
+}
+
+#[test]
+fn different_population_sizes_get_separate_snapshot_series() {
+    let report = run_multi_seed_experiment(snapshot_experiment(
+        vec![
+            ExperimentCondition {
+                label: "N=4".into(),
+                agent_count: 4,
+                population: PopulationMix::exploration_heavy(),
+            },
+            ExperimentCondition {
+                label: "N=8".into(),
+                agent_count: 8,
+                population: PopulationMix::exploration_heavy(),
+            },
+        ],
+        2,
+    ))
+    .expect("run");
+    let s4 = report.conditions[0].snapshot_series.as_ref().expect("series n4");
+    let s8 = report.conditions[1].snapshot_series.as_ref().expect("series n8");
+    assert!(!s4.is_empty() && !s8.is_empty());
+    let initial4 = s4
+        .iter()
+        .find(|p| p.elapsed_virtual_ms == 0 && p.kind == ObservationKind::Initial)
+        .expect("initial n4");
+    let initial8 = s8
+        .iter()
+        .find(|p| p.elapsed_virtual_ms == 0 && p.kind == ObservationKind::Initial)
+        .expect("initial n8");
+    assert_eq!(initial4.replicate_count, 2);
+    assert_eq!(initial8.replicate_count, 2);
+    for point in s4.iter().chain(s8.iter()) {
+        assert!(
+            point.replicate_count <= 2,
+            "cross-condition pooling would inflate replicate_count beyond this condition's replicates"
+        );
+    }
+    assert_ne!(
+        report.conditions[0].aggregate.total_attempted.mean,
+        report.conditions[1].aggregate.total_attempted.mean,
+    );
+}
+
+#[test]
+fn different_behavioural_mixes_are_not_merged_in_snapshot_series() {
+    let report = run_multi_seed_experiment(snapshot_experiment(
+        vec![
+            ExperimentCondition {
+                label: "wanderer".into(),
+                agent_count: 6,
+                population: PopulationMix::monolithic(Profile::Wanderer),
+            },
+            ExperimentCondition {
+                label: "homebody".into(),
+                agent_count: 6,
+                population: PopulationMix::monolithic(Profile::Homebody),
+            },
+        ],
+        2,
+    ))
+    .expect("run");
+    let wanderer = &report.conditions[0];
+    let homebody = &report.conditions[1];
+    assert!(wanderer.snapshot_series.is_some());
+    assert!(homebody.snapshot_series.is_some());
+    assert_ne!(
+        wanderer.aggregate.home_claims_active.mean,
+        homebody.aggregate.home_claims_active.mean
+    );
+    for point in wanderer
+        .snapshot_series
+        .as_ref()
+        .unwrap()
+        .iter()
+        .chain(homebody.snapshot_series.as_ref().unwrap().iter())
+    {
+        assert!(point.replicate_count <= 2);
+    }
+}
+
+#[test]
+fn snapshot_series_json_is_nested_under_each_condition() {
+    let report = run_multi_seed_experiment(snapshot_experiment(
+        vec![
+            ExperimentCondition {
+                label: "A".into(),
+                agent_count: 4,
+                population: PopulationMix::exploration_heavy(),
+            },
+            ExperimentCondition {
+                label: "B".into(),
+                agent_count: 6,
+                population: PopulationMix::exploration_heavy(),
+            },
+        ],
+        1,
+    ))
+    .expect("run");
+    let json = serde_json::to_value(&report).expect("json");
+    assert!(json.get("snapshot_series").is_none());
+    assert!(json["conditions"][0].get("snapshot_series").is_some());
+    assert!(json["conditions"][1].get("snapshot_series").is_some());
+    assert_eq!(json["conditions"][0]["label"], "A");
+}
+
+#[test]
+fn snapshot_points_use_distinct_elapsed_and_kind_keys() {
+    let report = run_multi_seed_experiment(snapshot_experiment(
+        vec![ExperimentCondition {
+            label: "N=4".into(),
+            agent_count: 4,
+            population: PopulationMix::exploration_heavy(),
+        }],
+        2,
+    ))
+    .expect("run");
+    let series = report.conditions[0].snapshot_series.as_ref().expect("series");
+    assert!(series.iter().any(|p| p.kind == ObservationKind::Initial));
+    assert!(series.iter().any(|p| p.kind == ObservationKind::Interval));
+    let keys: Vec<_> = series.iter().map(|p| (p.elapsed_virtual_ms, p.kind)).collect();
+    let unique: std::collections::BTreeSet<_> = keys.iter().copied().collect();
+    assert_eq!(keys.len(), unique.len(), "each (elapsed, kind) pair appears once per condition");
 }
 
 #[test]
