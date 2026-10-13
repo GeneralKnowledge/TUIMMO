@@ -6,6 +6,9 @@ use coffee_world::{starter_operator, Operator};
 use terminus_core::{PlayerId, SessionId, SessionIdentity};
 use uuid::Uuid;
 
+use crate::memory::AgentMemory;
+use crate::profile::Profile;
+
 /// Namespace for UUID v5 simulation identities (never used for real accounts).
 const SIM_ID_NAMESPACE: Uuid = Uuid::from_u128(0xa7f3c2e1_4b5d_6e7f_8091_a2b3c4d5e6f7);
 
@@ -17,19 +20,17 @@ pub struct SimAgent {
     pub display_name: String,
     pub session_id: SessionId,
     pub identity: SessionIdentity,
-    /// Scripted progression toward the Squalor (shared path, deterministic).
-    pub script_step: u32,
+    pub profile: Profile,
+    pub memory: AgentMemory,
+    pub visitor_actions_remaining: u32,
     pub attempted: u64,
     pub successful: u64,
     pub rejected: u64,
     pub failed: u64,
-    pub inspect_actions: u64,
-    pub exploration_moves: u64,
-    pub home_claim_attempted: bool,
 }
 
 impl SimAgent {
-    pub fn new(run_seed: u64, index: u32) -> Self {
+    pub fn new(run_seed: u64, index: u32, profile: Profile) -> Self {
         let player_id = sim_player_id(run_seed, index);
         let account_id = sim_account_id(run_seed, index);
         let display_name = format!("sim-{index:04}");
@@ -39,6 +40,8 @@ impl SimAgent {
             terminus_core::Permissions::player(),
         );
         let session_id = identity.session_id;
+        let visitor_actions_remaining =
+            if profile == Profile::OccasionalVisitor { 3 } else { u32::MAX };
         Self {
             index,
             player_id,
@@ -46,14 +49,13 @@ impl SimAgent {
             display_name,
             session_id,
             identity,
-            script_step: 0,
+            profile,
+            memory: AgentMemory::default(),
+            visitor_actions_remaining,
             attempted: 0,
             successful: 0,
             rejected: 0,
             failed: 0,
-            inspect_actions: 0,
-            exploration_moves: 0,
-            home_claim_attempted: false,
         }
     }
 

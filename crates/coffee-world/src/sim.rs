@@ -3,7 +3,7 @@
 //! Production servers use [`WorldState::new`] with the system clock. Simulators
 //! should use [`WorldState::for_simulation`] and [`WorldState::advance_virtual_time`].
 
-use terminus_core::PlayerId;
+use terminus_core::{GameError, PlayerId, SessionId};
 
 use crate::geography::GENERATION_V1;
 use crate::home::Habitation;
@@ -76,6 +76,16 @@ impl WorldState {
     }
 
     /// Base habitation for a player's active home at the current world time.
+    pub fn active_home_place_key(&self, player: PlayerId) -> Option<String> {
+        self.homes.active_for(player).map(|home| home.place_key.clone())
+    }
+
+    /// Place key for a session (same as live `Game::location_key`).
+    pub fn location_key_for_sim(&self, session_id: SessionId) -> Result<String, GameError> {
+        let player = self.player_of(session_id).ok_or(GameError::UnknownSession)?;
+        self.operator(player).map(|op| op.location_id.clone()).ok_or(GameError::UnknownSession)
+    }
+
     pub fn active_home_base_habitation(&self, player: PlayerId) -> Option<Habitation> {
         self.homes.active_for(player).map(|home| home.base_habitation(self.now_ms))
     }
