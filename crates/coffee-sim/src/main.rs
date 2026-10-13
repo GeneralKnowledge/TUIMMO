@@ -6,9 +6,13 @@ use clap::{Parser, Subcommand};
 use coffee_sim::compare::{compare_populations, ComparisonRequest};
 use coffee_sim::config::{SnapshotConfig, DEFAULT_SNAPSHOT_MAX};
 use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleRequest};
+use coffee_sim::multi_seed::{
+    run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
+};
 use coffee_sim::population::PopulationMix;
 use coffee_sim::runner::RunConfig;
 use coffee_sim::scheduler::SchedulerConfig;
+use coffee_sim::seeds::ReplicateSeedSchedule;
 use coffee_sim::SimulationRunner;
 
 #[derive(Parser)]
@@ -92,6 +96,27 @@ enum Commands {
         #[arg(long, value_delimiter = ',', default_value = "10,25,50")]
         sizes: Vec<u32>,
     },
+    /// Multi-seed experiment: conditions × replicate seeds with aggregate statistics.
+    Experiment {
+        /// Comma-separated player counts (one condition per size unless `--mixes` is set).
+        #[arg(long, value_delimiter = ',', default_value = "10,25")]
+        sizes: Vec<u32>,
+        /// Number of replicate seeds derived from `--base-seed` (ignored when `--seeds` is set).
+        #[arg(long, default_value_t = 3)]
+        replicates: u32,
+        /// Base seed for replicate derivation (defaults to global `--seed`).
+        #[arg(long)]
+        base_seed: Option<u64>,
+        /// Explicit comma-separated replicate seeds (overrides `--replicates` / `--base-seed`).
+        #[arg(long, value_delimiter = ',')]
+        seeds: Option<Vec<u64>>,
+        /// Optional preset mixes; when set, runs every size × mix combination.
+        #[arg(long, value_delimiter = ',')]
+        mixes: Option<Vec<PresetMix>>,
+        /// Include full per-run reports in JSON (default: compact replicate summaries only).
+        #[arg(long)]
+        include_runs: bool,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -104,6 +129,16 @@ enum PresetMix {
 }
 
 impl PresetMix {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exploration => "exploration",
+            Self::Home => "home",
+            Self::Uniform => "uniform",
+            Self::Social => "social",
+            Self::Mixed => "mixed",
+        }
+    }
+
     fn population(self) -> PopulationMix {
         match self {
             Self::Exploration => PopulationMix::exploration_heavy(),
@@ -119,6 +154,44 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
+        Some(Commands::Experiment {
+            ref sizes,
+            replicates,
+            base_seed,
+            ref seeds,
+            ref mixes,
+            include_runs,
+        }) => {
+            let base = base_config(&cli);
+            let seed_schedule = if let Some(explicit) = seeds {
+                ReplicateSeedSchedule::Explicit { seeds: explicit.clone() }
+            } else {
+                ReplicateSeedSchedule::FromBase {
+                    base_seed: base_seed.unwrap_or(cli.seed),
+                    replicate_count: replicates,
+                }
+            };
+            let conditions = build_experiment_conditions(sizes, mixes, &base);
+            match run_multi_seed_experiment(MultiSeedExperimentRequest {
+                base,
+                conditions,
+                seed_schedule,
+                include_full_run_reports: include_runs,
+            }) {
+                Ok(report) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                    } else {
+                        println!("{}", report.to_pretty_text());
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("experiment failed: {err}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Some(Commands::Scale { ref sizes }) => {
             let base = base_config(&cli);
             match run_population_scale_experiment(PopulationScaleRequest {
@@ -181,6 +254,38 @@ fn main() -> ExitCode {
             }
         }
     }
+}
+
+fn build_experiment_conditions(
+    sizes: &[u32],
+    mixes: &Option<Vec<PresetMix>>,
+    base: &RunConfig,
+) -> Vec<ExperimentCondition> {
+    let mut conditions = Vec::new();
+    match mixes {
+        Some(presets) if !presets.is_empty() => {
+            for size in sizes {
+                for mix in presets {
+                    let population = mix.population();
+                    conditions.push(ExperimentCondition {
+                        label: format!("N={size}:{}", mix.label()),
+                        agent_count: *size,
+                        population,
+                    });
+                }
+            }
+        }
+        _ => {
+            for size in sizes {
+                conditions.push(ExperimentCondition {
+                    label: format!("N={size}"),
+                    agent_count: *size,
+                    population: base.population.clone(),
+                });
+            }
+        }
+    }
+    conditions
 }
 
 fn base_config(cli: &Cli) -> RunConfig {

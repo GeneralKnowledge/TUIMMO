@@ -10,7 +10,7 @@ use crate::scheduler::EventScheduler;
 use crate::SimulationError;
 
 /// Why this row exists in the snapshot history.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ObservationKind {
     /// Run start (`virtual_start_ms`), before any gameplay scheduler event.
