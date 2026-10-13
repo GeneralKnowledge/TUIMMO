@@ -236,6 +236,7 @@ impl PersonalHome {
         }
         lines.push(format!("Condition: {}", habitation.label()));
         lines.push(habitation_blurb(habitation).into());
+        lines.push(self.settlement_progress_line(now_ms));
         if habitation == Habitation::Distinctive {
             lines.extend(owner_exploration_lines(traits));
         } else if traits.any() && habitation < Habitation::Established {
@@ -245,6 +246,52 @@ impl PersonalHome {
         }
         lines.push("Names are public on the street. Journals and waypoints stay private.".into());
         lines
+    }
+
+    /// Owner-only line when a meaningful return was just recorded (movement arrival).
+    pub fn meaningful_return_message(&self, now_ms: u64, traits: ExplorationTraits) -> String {
+        let named = self.display_name().map(|name| format!(" \"{name}\"")).unwrap_or_default();
+        match self.habitation(now_ms, traits) {
+            Habitation::Distinctive => format!(
+                "You return to your{named} home. It feels lived in — marked by what you have actually found."
+            ),
+            Habitation::Established => {
+                "You return home after time away. The room feels kept; dust stays outside.".into()
+            }
+            Habitation::SettlingIn => {
+                "You return home after a real stretch away. The place is beginning to feel like yours.".into()
+            }
+            Habitation::Unsettled => {
+                "You return after time away. The claim is still new, but coming back matters.".into()
+            }
+        }
+    }
+
+    /// Owner-only progress toward settling (no raw timestamps).
+    pub fn settlement_progress_line(&self, now_ms: u64) -> String {
+        if !self.is_active() {
+            return String::new();
+        }
+        let returns = self.meaningful_returns;
+        let returns_part = if returns == 0 {
+            "Counted returns from expeditions: none yet (leave for at least ten minutes, then return)."
+                .to_string()
+        } else if returns < ESTABLISHED_RETURNS {
+            format!(
+                "Counted returns from expeditions: {returns} (three returns deepen the settled feeling)."
+            )
+        } else {
+            format!("Counted returns from expeditions: {returns}.")
+        };
+        let age = now_ms.saturating_sub(self.claimed_at);
+        let time_part = if age >= ESTABLISHED_TIME_MS {
+            " You have kept the claim for over a week."
+        } else if age >= SETTLING_TIME_MS {
+            " You have kept the claim for over a day."
+        } else {
+            " The claim is still new."
+        };
+        format!("{returns_part}{time_part}")
     }
 }
 
