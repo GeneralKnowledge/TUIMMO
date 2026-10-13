@@ -237,6 +237,12 @@ impl GeographyState {
     }
 
     /// Content keys with at least two independent field recorders (simulation reporting).
+    pub fn entered_for_region(&self, region_id: uuid::Uuid) -> Option<&Discovery> {
+        self.discoveries
+            .iter()
+            .find(|item| item.kind == ENTERED_KIND && item.region_id == Some(region_id))
+    }
+
     pub fn corroborated_field_key_count(&self) -> usize {
         let mut per_key: HashMap<String, HashSet<PlayerId>> = HashMap::new();
         for item in &self.discoveries {

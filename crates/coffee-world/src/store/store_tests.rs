@@ -1041,6 +1041,80 @@ async fn mail_survives_reopen_and_a_failed_write_keeps_the_old_mailbox() {
 }
 
 #[tokio::test]
+async fn charting_and_theories_survive_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("coffee.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+    let ada_id = PlayerId::new();
+    let bob_id = PlayerId::new();
+    let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "Ada");
+    let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "Robert");
+    store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+    store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+
+    let mut world = WorldState::for_tests();
+    let loaded = store.load().await.unwrap();
+    world.install_loaded(loaded.operators, loaded.log);
+    let ada_ident = SessionIdentity::new(ada_id, "Ada", Permissions::player());
+    let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+    let ada_session = ada_ident.session_id;
+    let bob_session = bob_ident.session_id;
+    store.commit(&world.connect_player(ada_ident).unwrap().0.ops).await.unwrap();
+    store.commit(&world.connect_player(bob_ident).unwrap().0.ops).await.unwrap();
+
+    for session in [ada_session, bob_session] {
+        for line in ["go up", "outskirts"] {
+            store.commit(&world.apply(session, line).unwrap().ops).await.unwrap();
+        }
+    }
+    for _ in 0..8 {
+        store.commit(&world.apply(ada_session, "west").unwrap().ops).await.unwrap();
+    }
+    store.commit(&world.apply(ada_session, "west").unwrap().ops).await.unwrap();
+    world.now_ms = world.now_ms.saturating_add(2_000);
+    store
+        .commit(
+            &world
+                .apply(
+                    ada_session,
+                    "theory post theory survey-mark Relay crew closed the survey here.",
+                )
+                .unwrap()
+                .ops,
+        )
+        .await
+        .unwrap();
+
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    let loaded = store.load().await.unwrap();
+    assert_eq!(loaded.theories.entries.len(), 1);
+    assert_eq!(loaded.theories.entries[0].topic, "survey-mark");
+
+    let mut again = WorldState::for_tests();
+    again.install_loaded(loaded.operators, loaded.log);
+    again.install_geography(loaded.geography);
+    again.install_theories(loaded.theories);
+    let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
+    let bob_session = bob_ident.session_id;
+    again.connect_player(bob_ident).unwrap();
+    for _ in 0..8 {
+        again.apply(bob_session, "west").unwrap();
+    }
+    again.apply(bob_session, "west").unwrap();
+    again.apply(bob_session, "inspect ground").unwrap();
+    assert!(again
+        .view(bob_session)
+        .unwrap()
+        .feed
+        .iter()
+        .any(|line| line.text.contains("first charted")));
+    again.apply(bob_session, "theory read 1").unwrap();
+    assert!(again.view(bob_session).unwrap().overlay.unwrap_or_default().contains("Relay crew"));
+}
+
+#[tokio::test]
 async fn field_discovery_corroboration_survives_reopen() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("coffee.sqlite");

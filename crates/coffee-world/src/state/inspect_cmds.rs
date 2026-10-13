@@ -9,9 +9,9 @@ use crate::geography::{
     closure_inspect_text, corroboration_inspect_line, is_survey_tile, landmark_sight,
     panel_after_log, stacks_after_log, story_aliases, story_finding, story_sight, survey_aliases,
     survey_sight, torn_page_text, trace_aliases, validate_marker_name, EffectiveTile,
-    GenerateError, LandmarkKind, Structure, Terrain, UrbanContext, WildernessPos, DELISTED_FLOOR_ID,
-    MARKER_KIND, SHARE_PRIVATE, SIGN_KIND, SURVEY_CLOSURE_ID, SURVEY_MARK_FLAG, SURVEY_MARK_ID,
-    SURVEY_SCRATCH_ID, TRAIL_KIND,
+    GenerateError, LandmarkKind, Structure, Terrain, UrbanContext, WildernessPos,
+    DELISTED_FLOOR_ID, MARKER_KIND, SHARE_PRIVATE, SIGN_KIND, SURVEY_CLOSURE_ID, SURVEY_MARK_FLAG,
+    SURVEY_MARK_ID, SURVEY_SCRATCH_ID, TRAIL_KIND,
 };
 use crate::model::{Item, PersistOp};
 use crate::state::{Transition, WorldState};
@@ -160,9 +160,47 @@ impl WorldState {
         let content_key =
             static_inspect_content_key(&location, object.keyword, read_terminal, saw_mark);
         text = self.with_corroboration(text, content_key);
+        if let Some(subject) = content_key {
+            if let Some(line) = self.theories_summary_line(subject) {
+                text.push('\n');
+                text.push_str(&line);
+            }
+        }
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
+    }
+
+    fn append_wilderness_history(
+        &self,
+        player: PlayerId,
+        pos: WildernessPos,
+        mut text: String,
+        target: &str,
+        content_key: Option<&str>,
+    ) -> String {
+        let authored = content_key.is_some()
+            || target == "ground"
+            || is_survey_tile(pos) && survey_aliases(target)
+            || UrbanContext::at(pos).story.is_some_and(|site| story_aliases(site, target));
+        if !authored {
+            return text;
+        }
+        if target == "ground" {
+            if let Some(line) = self.charting_inspect_line(player, pos) {
+                text.push('\n');
+                text.push_str(&line);
+            }
+        }
+        let subject =
+            content_key.map(str::to_string).or_else(|| self.theory_subject_at_location(player));
+        if let Some(subject) = subject {
+            if let Some(line) = self.theories_summary_line(&subject) {
+                text.push('\n');
+                text.push_str(&line);
+            }
+        }
+        text
     }
 
     pub(crate) fn cmd_mark(
@@ -321,6 +359,7 @@ impl WorldState {
         let tile_for_key = self.effective_at(pos).ok();
         let content_key = wild_inspect_content_key(pos, target, tile_for_key.as_ref(), &urban);
         text = self.with_corroboration(text, content_key.as_deref());
+        text = self.append_wilderness_history(player, pos, text, target, content_key.as_deref());
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
