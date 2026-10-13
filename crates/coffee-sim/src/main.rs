@@ -4,6 +4,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use coffee_sim::compare::{compare_populations, ComparisonRequest};
+use coffee_sim::config::{SnapshotConfig, DEFAULT_SNAPSHOT_MAX};
+use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleRequest};
 use coffee_sim::population::PopulationMix;
 use coffee_sim::runner::RunConfig;
 use coffee_sim::scheduler::SchedulerConfig;
@@ -65,6 +67,14 @@ struct Cli {
     /// Emit JSON instead of human-readable text.
     #[arg(long, global = true)]
     json: bool,
+
+    /// Virtual milliseconds between longitudinal snapshots (0 = disabled).
+    #[arg(long, global = true, default_value_t = 0)]
+    snapshot_interval_ms: u64,
+
+    /// Maximum longitudinal snapshots stored per run.
+    #[arg(long, global = true, default_value_t = DEFAULT_SNAPSHOT_MAX)]
+    snapshot_max: u32,
 }
 
 #[derive(Subcommand)]
@@ -76,6 +86,12 @@ enum Commands {
         #[arg(long, default_value = "home")]
         mix_b: PresetMix,
     },
+    /// Run the same mix at several population sizes (bounded, independent worlds).
+    Scale {
+        /// Comma-separated player counts (e.g. `10,25,50`).
+        #[arg(long, value_delimiter = ',', default_value = "10,25,50")]
+        sizes: Vec<u32>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -83,6 +99,8 @@ enum PresetMix {
     Exploration,
     Home,
     Uniform,
+    Social,
+    Mixed,
 }
 
 impl PresetMix {
@@ -91,6 +109,8 @@ impl PresetMix {
             Self::Exploration => PopulationMix::exploration_heavy(),
             Self::Home => PopulationMix::home_oriented(),
             Self::Uniform => PopulationMix::uniform_wanderer(),
+            Self::Social => PopulationMix::social_and_visitors(),
+            Self::Mixed => PopulationMix::all_profiles_mixed(),
         }
     }
 }
@@ -98,43 +118,66 @@ impl PresetMix {
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    if let Some(Commands::Compare { mix_a, mix_b }) = cli.command {
-        let base = base_config(&cli);
-        match compare_populations(ComparisonRequest {
-            base,
-            mix_a: mix_a.population(),
-            mix_b: mix_b.population(),
-        }) {
-            Ok(report) => {
-                if cli.json {
-                    println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
-                } else {
-                    println!("{}", report.to_pretty_text());
+    match cli.command {
+        Some(Commands::Scale { ref sizes }) => {
+            let base = base_config(&cli);
+            match run_population_scale_experiment(PopulationScaleRequest {
+                base,
+                player_counts: sizes.clone(),
+            }) {
+                Ok(report) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                    } else {
+                        println!("{}", report.to_pretty_text());
+                    }
+                    ExitCode::SUCCESS
                 }
-                ExitCode::SUCCESS
-            }
-            Err(err) => {
-                eprintln!("comparison failed: {err}");
-                ExitCode::from(1)
+                Err(err) => {
+                    eprintln!("scale experiment failed: {err}");
+                    ExitCode::from(1)
+                }
             }
         }
-    } else {
-        let config = base_config(&cli);
-        match SimulationRunner::new(config).and_then(|runner| runner.run()) {
-            Ok(report) => {
-                if cli.json {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&report).expect("serialize report")
-                    );
-                } else {
-                    println!("{}", report.to_pretty_text());
+        Some(Commands::Compare { mix_a, mix_b }) => {
+            let base = base_config(&cli);
+            match compare_populations(ComparisonRequest {
+                base,
+                mix_a: mix_a.population(),
+                mix_b: mix_b.population(),
+            }) {
+                Ok(report) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                    } else {
+                        println!("{}", report.to_pretty_text());
+                    }
+                    ExitCode::SUCCESS
                 }
-                ExitCode::SUCCESS
+                Err(err) => {
+                    eprintln!("comparison failed: {err}");
+                    ExitCode::from(1)
+                }
             }
-            Err(err) => {
-                eprintln!("simulation failed: {err}");
-                ExitCode::from(1)
+        }
+        None => {
+            let config = base_config(&cli);
+            match SimulationRunner::new(config).and_then(|runner| runner.run()) {
+                Ok(report) => {
+                    if cli.json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&report).expect("serialize report")
+                        );
+                    } else {
+                        println!("{}", report.to_pretty_text());
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("simulation failed: {err}");
+                    ExitCode::from(1)
+                }
             }
         }
     }
@@ -159,6 +202,14 @@ fn base_config(cli: &Cli) -> RunConfig {
         max_actions: if cli.max_actions == 0 { None } else { Some(cli.max_actions) },
         virtual_start_ms: cli.start_ms,
         record_action_trace: cli.trace,
+        snapshots: SnapshotConfig {
+            interval_ms: if cli.snapshot_interval_ms == 0 {
+                None
+            } else {
+                Some(cli.snapshot_interval_ms)
+            },
+            max_snapshots: cli.snapshot_max,
+        },
         ..RunConfig::default()
     }
 }

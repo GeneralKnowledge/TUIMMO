@@ -6,9 +6,11 @@ use std::time::Duration;
 use coffee_world::WorldOutcomeSnapshot;
 use serde::{Deserialize, Serialize};
 
+use crate::config::SnapshotConfig;
 use crate::population::PopulationMix;
 use crate::profile::Profile;
 use crate::scheduler::SchedulerConfig;
+use crate::snapshot::LongitudinalSnapshot;
 use crate::trace::ActionTrace;
 
 pub const SIM_CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -31,6 +33,8 @@ pub struct RunReport {
     pub per_profile: BTreeMap<String, ProfileStats>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub action_trace: Option<ActionTrace>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub longitudinal_snapshots: Option<Vec<LongitudinalSnapshot>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -42,6 +46,9 @@ pub struct RunReportConfig {
     pub virtual_duration_ms: u64,
     pub scheduler: SchedulerConfig,
     pub max_actions: Option<u64>,
+    /// Actual profile counts after largest-remainder allocation and shuffle.
+    pub allocated_profile_counts: std::collections::BTreeMap<String, u32>,
+    pub snapshots: SnapshotConfig,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

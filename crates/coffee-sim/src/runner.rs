@@ -11,19 +11,20 @@ use thiserror::Error;
 
 use crate::agent::SimAgent;
 use crate::config::{
-    configured_horizon_ms, virtual_duration_from_days, ValidatedSchedule, DEFAULT_TRACE_LIMIT,
-    MAX_AGENT_COUNT,
+    configured_horizon_ms, virtual_duration_from_days, SnapshotConfig, ValidatedSchedule,
+    DEFAULT_TRACE_LIMIT, MAX_AGENT_COUNT, MAX_SNAPSHOT_COUNT,
 };
 use crate::execute::{execute_line, ActionResult};
 use crate::navigation::build_context;
 use crate::population::{assign_profiles, PopulationMix};
-use crate::profile::{choose_action, ActionChoice};
+use crate::profile::{choose_action, ActionChoice, Profile};
 use crate::report::{
     aggregate_profile_stats, duration_to_ms, world_report_from_snapshot, AgentStats,
     ExecutionStats, RunReport, RunReportConfig, SimVersion, SimulationTiming, StopReason,
     WorldMetricsInput, SIM_CRATE_VERSION,
 };
 use crate::scheduler::{EventScheduler, SchedulerConfig};
+use crate::snapshot::{MetricsSnapshotInput, SnapshotCollector};
 use crate::trace::{ActionTrace, ActionTraceEntry, TraceOutcome};
 
 pub const MS_PER_DAY: u64 = 86_400_000;
@@ -40,6 +41,7 @@ pub struct RunConfig {
     /// Record a bounded deterministic action trace in the report.
     pub record_action_trace: bool,
     pub action_trace_limit: u32,
+    pub snapshots: SnapshotConfig,
 }
 
 impl Default for RunConfig {
@@ -54,6 +56,7 @@ impl Default for RunConfig {
             virtual_start_ms: 1_700_000_000_000,
             record_action_trace: false,
             action_trace_limit: DEFAULT_TRACE_LIMIT,
+            snapshots: SnapshotConfig::disabled(),
         }
     }
 }
@@ -91,6 +94,17 @@ impl RunConfig {
         if self.record_action_trace && self.action_trace_limit == 0 {
             return Err(SimulationError::ZeroTraceLimit);
         }
+        if let Some(interval) = self.snapshots.interval_ms {
+            if interval == 0 {
+                return Err(SimulationError::ZeroSnapshotInterval);
+            }
+            if self.snapshots.max_snapshots == 0 {
+                return Err(SimulationError::ZeroSnapshotLimit);
+            }
+            if self.snapshots.max_snapshots > MAX_SNAPSHOT_COUNT {
+                return Err(SimulationError::TooManySnapshots { max: MAX_SNAPSHOT_COUNT });
+            }
+        }
         let configured_horizon_ms =
             configured_horizon_ms(self.virtual_start_ms, virtual_duration_ms)?;
         Ok(ValidatedSchedule {
@@ -123,6 +137,16 @@ pub enum SimulationError {
     TimestampOverflow,
     #[error("invalid population mix: {0}")]
     InvalidPopulationMix(String),
+    #[error("snapshot interval must be at least 1 ms when enabled")]
+    ZeroSnapshotInterval,
+    #[error("snapshot limit must be at least 1 when sampling is enabled")]
+    ZeroSnapshotLimit,
+    #[error("snapshot limit must be at most {max}")]
+    TooManySnapshots { max: u32 },
+    #[error("population scale experiment requires at least one player count")]
+    EmptyScaleExperiment,
+    #[error("population scale experiment supports at most {max} player counts")]
+    TooManyScaleRuns { max: usize },
     #[error("{0}")]
     Engine(String),
 }
@@ -144,6 +168,7 @@ impl SimulationRunner {
         let mut world = WorldState::for_simulation(self.schedule.virtual_start_ms);
         let profiles =
             assign_profiles(self.config.seed, self.config.agent_count, &self.config.population)?;
+        let allocated_profile_counts = profile_count_map(&profiles);
         let mut agents: Vec<SimAgent> = profiles
             .into_iter()
             .enumerate()
@@ -166,7 +191,19 @@ impl SimulationRunner {
 
         let horizon_ms = self.schedule.configured_horizon_ms;
         let mut total_attempted = 0u64;
+        let mut successful_commands = 0u64;
         let mut metrics = MetricsAccumulator::default();
+        let mut snapshot_collector = SnapshotCollector::new(
+            &self.config.snapshots,
+            self.schedule.virtual_start_ms,
+            self.config.agent_count,
+        )?;
+        if let Some(collector) = snapshot_collector.as_mut() {
+            collector.capture_initial(
+                &world,
+                &snapshot_metrics(&metrics, &agents, total_attempted, successful_commands, 0, 0),
+            );
+        }
         let mut trace =
             if self.config.record_action_trace { Some(ActionTrace::default()) } else { None };
         let mut inactive_by_index = vec![0u64; self.config.agent_count as usize];
@@ -214,6 +251,17 @@ impl SimulationRunner {
                         agent.index,
                         ActionChoice { command: String::new(), idle: true, offline_gap_ms: None },
                     );
+                    snapshot_at(
+                        &mut snapshot_collector,
+                        &world,
+                        &metrics,
+                        &agents,
+                        total_attempted,
+                        successful_commands,
+                        inactive_slots,
+                        events_processed,
+                        event.time_ms,
+                    );
                     continue;
                 }
             };
@@ -230,6 +278,17 @@ impl SimulationRunner {
                     horizon_ms,
                     agent.index,
                     choice,
+                );
+                snapshot_at(
+                    &mut snapshot_collector,
+                    &world,
+                    &metrics,
+                    &agents,
+                    total_attempted,
+                    successful_commands,
+                    inactive_slots,
+                    events_processed,
+                    event.time_ms,
                 );
                 continue;
             }
@@ -255,6 +314,9 @@ impl SimulationRunner {
 
             let (result, _) = execute_line(&mut world, agent.session_id, &choice.command);
             record_outcome(agent, &result);
+            if result.is_success() {
+                successful_commands += 1;
+            }
 
             let world_ms_after = world.simulation_now_ms();
             if let Some(trace) = trace.as_mut() {
@@ -333,6 +395,34 @@ impl SimulationRunner {
                 agent.index,
                 choice,
             );
+            snapshot_at(
+                &mut snapshot_collector,
+                &world,
+                &metrics,
+                &agents,
+                total_attempted,
+                successful_commands,
+                inactive_slots,
+                events_processed,
+                event.time_ms,
+            );
+        }
+
+        if let Some(slot) = last_event_slot_ms {
+            if let Some(collector) = snapshot_collector.as_mut() {
+                collector.capture_terminal(
+                    &world,
+                    &snapshot_metrics(
+                        &metrics,
+                        &agents,
+                        total_attempted,
+                        successful_commands,
+                        inactive_slots,
+                        events_processed,
+                    ),
+                    slot,
+                );
+            }
         }
 
         let snapshot = world.outcome_snapshot();
@@ -343,9 +433,11 @@ impl SimulationRunner {
             config: &self.config,
             schedule: &self.schedule,
             agents: &agents,
+            allocated_profile_counts,
             snapshot,
             metrics,
             total_attempted,
+            longitudinal_snapshots: snapshot_collector.map(|c| c.snapshots),
             timing: SimulationTiming {
                 configured_start_ms: self.schedule.virtual_start_ms,
                 configured_horizon_ms: horizon_ms,
@@ -381,18 +473,18 @@ fn schedule_next(
 }
 
 #[derive(Default)]
-struct MetricsAccumulator {
-    locations_visited: BTreeSet<String>,
-    regions_visited: BTreeSet<String>,
-    inspect_attempts: u64,
-    successful_inspections: u64,
-    exploration_move_attempts: u64,
-    successful_exploration_moves: u64,
-    journal_records: u64,
-    social_attempts: u64,
-    social_successes: u64,
-    repeat_visits: u64,
-    home_returns: u64,
+pub(crate) struct MetricsAccumulator {
+    pub(crate) locations_visited: BTreeSet<String>,
+    pub(crate) regions_visited: BTreeSet<String>,
+    pub(crate) inspect_attempts: u64,
+    pub(crate) successful_inspections: u64,
+    pub(crate) exploration_move_attempts: u64,
+    pub(crate) successful_exploration_moves: u64,
+    pub(crate) journal_records: u64,
+    pub(crate) social_attempts: u64,
+    pub(crate) social_successes: u64,
+    pub(crate) repeat_visits: u64,
+    pub(crate) home_returns: u64,
 }
 
 impl MetricsAccumulator {
@@ -435,9 +527,11 @@ struct ReportInputs<'a> {
     config: &'a RunConfig,
     schedule: &'a ValidatedSchedule,
     agents: &'a [SimAgent],
+    allocated_profile_counts: std::collections::BTreeMap<String, u32>,
     snapshot: WorldOutcomeSnapshot,
     metrics: MetricsAccumulator,
     total_attempted: u64,
+    longitudinal_snapshots: Option<Vec<crate::snapshot::LongitudinalSnapshot>>,
     timing: SimulationTiming,
     real_elapsed_ms: u64,
     action_trace: Option<ActionTrace>,
@@ -449,9 +543,11 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         config,
         schedule,
         agents,
+        allocated_profile_counts,
         snapshot,
         metrics,
         total_attempted,
+        longitudinal_snapshots,
         timing,
         real_elapsed_ms,
         action_trace,
@@ -497,6 +593,8 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
             virtual_duration_ms: schedule.virtual_duration_ms,
             scheduler: config.scheduler.clone(),
             max_actions: config.max_actions,
+            allocated_profile_counts,
+            snapshots: config.snapshots.clone(),
         },
         timing,
         execution: ExecutionStats {
@@ -525,6 +623,61 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         per_agent,
         per_profile: aggregate_profile_stats(agents, &inactive_by_index),
         action_trace,
+        longitudinal_snapshots,
+    }
+}
+
+fn profile_count_map(profiles: &[Profile]) -> std::collections::BTreeMap<String, u32> {
+    let mut map = std::collections::BTreeMap::new();
+    for profile in profiles {
+        *map.entry(profile.as_str().to_string()).or_default() += 1;
+    }
+    map
+}
+
+fn snapshot_metrics<'a>(
+    metrics: &'a MetricsAccumulator,
+    agents: &'a [SimAgent],
+    total_attempted: u64,
+    successful_commands: u64,
+    inactive_slots: u64,
+    events_processed: u64,
+) -> MetricsSnapshotInput<'a> {
+    MetricsSnapshotInput {
+        metrics,
+        agents,
+        total_attempted,
+        successful_commands,
+        inactive_slots,
+        events_processed,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snapshot_at(
+    collector: &mut Option<SnapshotCollector>,
+    world: &WorldState,
+    metrics: &MetricsAccumulator,
+    agents: &[SimAgent],
+    total_attempted: u64,
+    successful_commands: u64,
+    inactive_slots: u64,
+    events_processed: u64,
+    current_slot_ms: u64,
+) {
+    if let Some(collector) = collector.as_mut() {
+        collector.capture_due(
+            world,
+            &snapshot_metrics(
+                metrics,
+                agents,
+                total_attempted,
+                successful_commands,
+                inactive_slots,
+                events_processed,
+            ),
+            current_slot_ms,
+        );
     }
 }
 

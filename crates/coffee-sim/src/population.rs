@@ -40,6 +40,16 @@ impl PopulationMix {
         Self { social_player: 50, occasional_visitor: 50, ..Default::default() }
     }
 
+    pub fn all_profiles_mixed() -> Self {
+        Self {
+            wanderer: 20,
+            investigator: 20,
+            homebody: 20,
+            social_player: 20,
+            occasional_visitor: 20,
+        }
+    }
+
     /// Single-profile population (all agents share one behavioural profile).
     pub fn monolithic(profile: Profile) -> Self {
         let mut mix = Self::default();
