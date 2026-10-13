@@ -13,10 +13,12 @@ use super::{quiet, Transition, WorldState};
 
 pub(crate) const SEEN_WELCOME: &str = "seen-welcome";
 pub(crate) const HINT_INSPECT: &str = "hint-inspect";
+pub(crate) const HINT_HOME_CLAIM: &str = "hint-home-claim";
 
 const ARRIVAL_LINE: &str =
     "You arrived in the Undernet. Type help, or welcome for the longer note.";
 const INSPECT_HINT: &str = "Noticed keeps that. `help inspect` if you want the longer note.";
+const HOME_CLAIM_HINT: &str = "The ground here could become a home, if you wanted one. `home claim` would mark this place as yours — optional, and not a cabin.";
 
 impl WorldState {
     /// Remember that this operator has been offered the arrival note.
@@ -72,6 +74,35 @@ impl WorldState {
         transition
             .ops
             .push(PersistOp::Flag { operator_id: player, flag: HINT_INSPECT.to_string() });
+        transition.ops.push(message);
+        transition.outcome.events.push(event);
+    }
+
+    /// One private line the first time a homeless operator arrives on claim-eligible Squalor ground.
+    pub(crate) fn attach_home_claim_hint(
+        &mut self,
+        session_id: SessionId,
+        place_key: &str,
+        transition: &mut Transition,
+    ) {
+        let Ok(player) = self.player(session_id) else {
+            return;
+        };
+        if !self.home_claim_eligible(player, place_key) {
+            return;
+        }
+        let fresh = self
+            .operators
+            .get_mut(&player)
+            .is_some_and(|op| op.flags.insert(HINT_HOME_CLAIM.to_string()));
+        if !fresh {
+            return;
+        }
+        let (event, message) =
+            self.emit(Channel::System, Audience::Player(player), None, HOME_CLAIM_HINT);
+        transition
+            .ops
+            .push(PersistOp::Flag { operator_id: player, flag: HINT_HOME_CLAIM.to_string() });
         transition.ops.push(message);
         transition.outcome.events.push(event);
     }

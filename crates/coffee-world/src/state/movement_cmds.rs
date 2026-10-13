@@ -76,9 +76,10 @@ impl WorldState {
             None,
             format!("You step into {}.", target.to_label),
         );
+        let destination = target.to.clone();
         ops.push(PersistOp::Move {
             operator_id: player,
-            location_id: target.to,
+            location_id: destination.clone(),
             last_seen: self.now_ms,
         });
         ops.extend([leave_op, arrive_op, note_op]);
@@ -89,7 +90,9 @@ impl WorldState {
             ops.push(home_op);
             events.push(home_note);
         }
-        Ok(Transition { outcome: CommandOutcome { events, quit: false }, ops })
+        let mut transition = Transition { outcome: CommandOutcome { events, quit: false }, ops };
+        self.attach_home_claim_hint(session_id, &destination, &mut transition);
+        Ok(transition)
     }
 
     pub(crate) fn ensure_cabin_access_for_move(

@@ -26,7 +26,7 @@ A new operator who is still in the Coffee Shop, carrying only the loyalty chip a
 
 `look` clears that page. `welcome` shows it again. The same account does not get the page on every reconnect. One line in that operator's own feed says help is available. Other operators do not see the line.
 
-`seen-welcome` and `hint-inspect` remember those two notes. They grant nothing: no travel, no item, and no journal row. The first successful `inspect` adds one private line about the noticed panel, and does not repeat it.
+`seen-welcome`, `hint-inspect`, and `hint-home-claim` remember those onboarding notes. They grant nothing: no travel, no item, and no journal row. The first successful `inspect` adds one private line about the noticed panel, and does not repeat it. The first time a homeless operator arrives on ground where `home claim` would succeed, one private line mentions that option; it does not repeat, and it does not appear on ineligible tiles or when you already have a home.
 
 `help` with no arguments lists topics: `around`, `people`, `explore`, `commands`, and `stuck`. `help <command>` still explains that command, including why someone might use it. `help chat` is the chat command. `help move` is `go`, because `move` is already an alias.
 
