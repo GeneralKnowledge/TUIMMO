@@ -221,6 +221,12 @@ impl WorldState {
         )
     }
 
+    /// Whether this operator could successfully `home claim` while standing here.
+    pub(crate) fn home_claim_eligible(&self, player: PlayerId, place_key: &str) -> bool {
+        self.homes.active_for(player).is_none()
+            && self.validate_home_destination(player, place_key).is_ok()
+    }
+
     fn validate_home_destination(
         &self,
         player: PlayerId,
@@ -442,6 +448,7 @@ mod tests {
         ExplorationTraits, Habitation, ESTABLISHED_TIME_MS, FORGOTTEN_MS, MIN_AWAY_MS,
         RECENTLY_ABANDONED_MS, SETTLING_TIME_MS,
     };
+    use crate::state::guide::HINT_HOME_CLAIM;
     use crate::state::starter_operator;
     use crate::subway::{ash_entrance_pos, ASH_STATION};
     use terminus_core::{Game, Permissions, SessionIdentity};
@@ -847,6 +854,54 @@ mod tests {
         );
         assert!(scene.contains("Dust Shelf") || scene.contains("once called"));
         assert!(!scene.contains("field journal"), "{scene}");
+    }
+
+    #[test]
+    fn home_claim_hint_on_first_eligible_arrival_only() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let place = walkable_near_gate(&mut world, ada_id);
+        let elsewhere = second_walkable(&mut world, ada_id);
+        assert!(world.home_claim_eligible(ada_id, &place));
+        stand_at(&mut world, ada_id, &elsewhere);
+        world.apply(ada, "east").unwrap();
+        let feed_text = feed(&world, ada);
+        assert!(
+            feed_text.contains("could become a home"),
+            "expected discoverability hint, got: {feed_text}"
+        );
+        assert!(world.operator(ada_id).unwrap().flags.contains(HINT_HOME_CLAIM));
+        assert!(world.homes.active_for(ada_id).is_none());
+
+        world.apply(ada, "west").unwrap();
+        world.apply(ada, "east").unwrap();
+        assert_eq!(feed(&world, ada).matches("could become a home").count(), 1);
+
+        world.apply(ada, "home claim").unwrap();
+        assert!(feed(&world, ada).contains("You make a home"));
+        assert_eq!(world.homes.active_for(ada_id).unwrap().place_key, place);
+    }
+
+    #[test]
+    fn home_claim_hint_absent_when_ineligible_or_home_exists() {
+        let (mut world, ada, _, ada_id, _) = pair();
+        let survey = walkable_near_gate(&mut world, ada_id);
+        let _ = world.ensure_region(
+            gate_position().identity,
+            Some(ada_id),
+            gate_position().local_x,
+            gate_position().local_y,
+        );
+        stand_at(&mut world, ada_id, &survey);
+        world.apply(ada, "east").unwrap();
+        assert!(!feed(&world, ada).contains("could become a home"));
+
+        stand_at(&mut world, ada_id, &survey);
+        world.apply(ada, "home claim").unwrap();
+        let elsewhere = second_walkable(&mut world, ada_id);
+        stand_at(&mut world, ada_id, &elsewhere);
+        world.apply(ada, "east").unwrap();
+        assert!(!feed(&world, ada).contains("could become a home"));
+        assert!(!world.operator(ada_id).unwrap().flags.contains(HINT_HOME_CLAIM));
     }
 
     #[test]
