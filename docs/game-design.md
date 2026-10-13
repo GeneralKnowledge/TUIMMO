@@ -144,7 +144,7 @@ When two or more operators have recorded the same discovery id (`content_key`), 
 
 The generator lays out terrain; operators create history when they materialize a birth cell, record discoveries, leave signs, or post theories.
 
-- **First charting:** When you `inspect ground` in the Squalor, you may see who first opened that birth cell (`entered` rows). Ordinary movement does not announce this. Unvisited birth cells have no charting line — the world does not pretend someone explored ground that no operator has reached.
+- **First charting:** When you `inspect ground` in the Squalor, you may see once per birth cell who first opened it (`entered` rows). A dismissed hint stays dismissed after reconnect. Ordinary movement does not announce charting. Unvisited birth cells have no charting line — the world does not pretend someone explored ground that no operator has reached.
 - **Field corroboration:** Authored `inspect` targets can show how many operators recorded the same discovery id in a private journal (see above).
 - **Public theories:** `inspect` at a relevant discovery may note how many public entries exist on that subject and point to `theory list <subject>`. Signs and trail posts stay separate: they carry messages, not interpretations.
 

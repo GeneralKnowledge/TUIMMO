@@ -15,6 +15,8 @@ use crate::config::{
     DEFAULT_TRACE_LIMIT, MAX_AGENT_COUNT, MAX_SNAPSHOT_COUNT,
 };
 use crate::execute::{execute_line, ActionResult};
+use crate::feed_memory::absorb_command_outcome;
+use crate::interaction::{player_index_map, InteractionTracker};
 use crate::navigation::build_context;
 use crate::population::{assign_profiles, PopulationMix};
 use crate::profile::{choose_action, ActionChoice, Profile};
@@ -221,6 +223,7 @@ impl SimulationRunner {
         let mut trace =
             if self.config.record_action_trace { Some(ActionTrace::default()) } else { None };
         let mut inactive_by_index = vec![0u64; self.config.agent_count as usize];
+        let mut interaction = InteractionTracker::default();
 
         let mut events_processed = 0u64;
         let mut observation_events_processed = 0u64;
@@ -362,6 +365,12 @@ impl SimulationRunner {
             }
 
             if result.is_success() {
+                absorb_command_outcome(
+                    &world,
+                    agent.session_id,
+                    &choice.command,
+                    &mut agent.memory,
+                );
                 if is_inspect {
                     metrics.successful_inspections += 1;
                     agent.memory.successful_inspections += 1;
@@ -404,6 +413,40 @@ impl SimulationRunner {
                         .ok()
                         .and_then(|c| c.region_key);
                     agent.memory.record_location(&loc, region.as_deref());
+                }
+                if let Ok(loc) = world.location_id_for_sim(agent.session_id) {
+                    if choice.command.starts_with("sign ")
+                        && !choice.command.contains("read")
+                        && !choice.command.contains("remove")
+                    {
+                        interaction.record_trace_created(
+                            agent.index,
+                            &loc,
+                            "sign",
+                            None,
+                            event.time_ms,
+                        );
+                    }
+                    if choice.command.starts_with("theory post") {
+                        if let Some((topic, _)) = world.simulation_latest_theory_by(agent.player_id)
+                        {
+                            interaction.record_trace_created(
+                                agent.index,
+                                &loc,
+                                "theory",
+                                Some(topic),
+                                event.time_ms,
+                            );
+                        }
+                    }
+                    interaction.note_encounters(agent.index, &agent.memory, &loc, event.time_ms);
+                    interaction.record_meaningful_action(
+                        agent.index,
+                        &agent.display_name,
+                        &choice.command,
+                        &loc,
+                        event.time_ms,
+                    );
                 }
             }
 
@@ -452,6 +495,9 @@ impl SimulationRunner {
 
         let snapshot_sampling =
             snapshot_collector.as_ref().map(SnapshotCollector::sampling_summary);
+        let player_map = player_index_map(&agents);
+        let (interaction_metrics, story_transcript) =
+            interaction.finalize(&world, &agents, &player_map);
 
         Ok(assemble_report(ReportInputs {
             config: &self.config,
@@ -478,6 +524,8 @@ impl SimulationRunner {
             real_elapsed_ms: duration_to_ms(started.elapsed()),
             action_trace: trace,
             inactive_by_index,
+            interaction: interaction_metrics,
+            story_transcript,
         }))
     }
 }
@@ -581,6 +629,8 @@ struct ReportInputs<'a> {
     real_elapsed_ms: u64,
     action_trace: Option<ActionTrace>,
     inactive_by_index: Vec<u64>,
+    interaction: crate::interaction::InteractionMetrics,
+    story_transcript: crate::interaction::StoryTranscript,
 }
 
 fn assemble_report(input: ReportInputs<'_>) -> RunReport {
@@ -598,6 +648,8 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         real_elapsed_ms,
         action_trace,
         inactive_by_index,
+        interaction,
+        story_transcript,
     } = input;
     let mut successful = 0u64;
     let mut rejected = 0u64;
@@ -671,6 +723,8 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         action_trace,
         longitudinal_snapshots,
         snapshot_sampling,
+        interaction,
+        story_transcript,
     }
 }
 

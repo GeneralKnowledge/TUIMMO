@@ -65,6 +65,9 @@ struct Cli {
     #[arg(long, global = true, default_value_t = 0)]
     visitor_weight: u32,
 
+    #[arg(long, global = true, default_value_t = 0)]
+    follower_weight: u32,
+
     /// Record a bounded action trace in the JSON report.
     #[arg(long, global = true)]
     trace: bool,
@@ -129,6 +132,7 @@ enum PresetMix {
     Visitor,
     Social,
     Mixed,
+    Story,
 }
 
 impl PresetMix {
@@ -141,6 +145,7 @@ impl PresetMix {
             Self::Visitor => "visitor",
             Self::Social => "social",
             Self::Mixed => "mixed",
+            Self::Story => "story",
         }
     }
 
@@ -153,6 +158,7 @@ impl PresetMix {
             Self::Visitor => PopulationMix::monolithic(Profile::OccasionalVisitor),
             Self::Social => PopulationMix::social_and_visitors(),
             Self::Mixed => PopulationMix::all_profiles_mixed(),
+            Self::Story => PopulationMix::story_emergence(),
         }
     }
 }
@@ -303,6 +309,7 @@ fn base_config(cli: &Cli) -> RunConfig {
             wanderer: cli.wanderer_weight,
             investigator: cli.investigator_weight,
             homebody: cli.homebody_weight,
+            follower: cli.follower_weight,
             social_player: cli.social_weight,
             occasional_visitor: cli.visitor_weight,
         },

@@ -940,6 +940,33 @@ fn second_operator_sees_first_charting_on_inspect_ground_not_every_step() {
     let inspect = feed_text(&world, bob);
     assert!(inspect.contains("first charted"));
     assert!(inspect.contains("ada"));
+    world.apply(bob, "inspect ground").unwrap();
+    let finding = world.view(bob).unwrap().finding.unwrap_or_default();
+    assert!(!finding.contains("first charted"));
+}
+
+#[test]
+fn different_birth_cells_get_independent_charting_hints() {
+    let (mut world, ada, bob, _, _) = pair();
+    for session in [ada, bob] {
+        world.apply(session, "go up").unwrap();
+        world.apply(session, "outskirts").unwrap();
+    }
+    for _ in 0..8 {
+        world.apply(ada, "west").unwrap();
+    }
+    world.apply(ada, "west").unwrap();
+    world.apply(ada, "west").unwrap();
+    for _ in 0..8 {
+        world.apply(bob, "west").unwrap();
+    }
+    world.apply(bob, "west").unwrap();
+    world.apply(bob, "inspect ground").unwrap();
+    assert!(feed_text(&world, bob).contains("first charted"));
+    world.apply(bob, "west").unwrap();
+    world.apply(bob, "inspect ground").unwrap();
+    let second = feed_text(&world, bob);
+    assert!(second.contains("first charted"));
 }
 
 #[test]

@@ -8,6 +8,8 @@ pub mod compare;
 pub mod config;
 pub mod execute;
 pub mod experiment;
+pub mod feed_memory;
+pub mod interaction;
 pub mod memory;
 pub mod multi_seed;
 pub mod navigation;
@@ -27,6 +29,7 @@ pub use experiment::{
     run_population_scale_experiment, PopulationAllocation, PopulationScaleReport,
     PopulationScaleRequest, MAX_SCALE_EXPERIMENT_RUNS,
 };
+pub use interaction::{InteractionMetrics, StoryLine, StoryTranscript};
 pub use multi_seed::{
     run_multi_seed_experiment, ConditionAggregate, ConditionMeanComparison, ConditionResult,
     ExperimentCondition, MultiSeedExperimentReport, MultiSeedExperimentRequest, ReplicateMetrics,

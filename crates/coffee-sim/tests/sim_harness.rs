@@ -251,6 +251,7 @@ fn profile_totals_reconcile_with_global_execution() {
         wanderer: 40,
         investigator: 30,
         homebody: 20,
+        follower: 0,
         social_player: 5,
         occasional_visitor: 5,
     };
