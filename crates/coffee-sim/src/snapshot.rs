@@ -6,7 +6,20 @@ use serde::{Deserialize, Serialize};
 use crate::agent::SimAgent;
 use crate::config::{SnapshotConfig, MAX_SNAPSHOT_COUNT};
 use crate::runner::MetricsAccumulator;
+use crate::scheduler::EventScheduler;
 use crate::SimulationError;
+
+/// Why this row exists in the snapshot history.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ObservationKind {
+    /// Run start (`virtual_start_ms`), before any gameplay scheduler event.
+    Initial,
+    /// Scheduled grid boundary reached via an observation event.
+    Interval,
+    /// Final processed gameplay state when capacity allows and it is not already recorded.
+    Terminal,
+}
 
 /// One observation taken at a virtual-time boundary during a run.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -15,8 +28,9 @@ pub struct LongitudinalSnapshot {
     pub observation_ms: u64,
     /// Milliseconds since configured run start.
     pub elapsed_virtual_ms: u64,
-    /// Authoritative world clock at observation time.
+    /// Authoritative world clock at that observation.
     pub world_clock_ms: u64,
+    pub kind: ObservationKind,
     pub cumulative: CumulativeObservation,
     pub world_state: WorldStateObservation,
     pub occupancy: OccupancyObservation,
@@ -66,6 +80,17 @@ pub struct OccupancyObservation {
     pub deep_squalor_agent_share: Option<f64>,
 }
 
+/// Metadata for interval grid completeness (present when snapshot sampling is enabled).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnapshotSamplingSummary {
+    pub interval_ms: u64,
+    pub max_snapshots: u32,
+    /// Grid boundaries that would fall inside the horizon but were not scheduled due to `max_snapshots`.
+    pub grid_boundaries_skipped_capacity: u64,
+    /// Whether a distinct terminal row was appended after gameplay finished.
+    pub terminal_included: bool,
+}
+
 impl From<SimulationOccupancySummary> for OccupancyObservation {
     fn from(summary: SimulationOccupancySummary) -> Self {
         Self {
@@ -87,7 +112,9 @@ pub(crate) struct SnapshotCollector {
     max_snapshots: u32,
     start_ms: u64,
     agent_count: u32,
-    next_observation_ms: u64,
+    interval_observation_ms: Vec<u64>,
+    grid_boundaries_skipped: u64,
+    terminal_included: bool,
     pub(crate) snapshots: Vec<LongitudinalSnapshot>,
 }
 
@@ -95,6 +122,7 @@ impl SnapshotCollector {
     pub(crate) fn new(
         config: &SnapshotConfig,
         virtual_start_ms: u64,
+        horizon_ms: u64,
         agent_count: u32,
     ) -> Result<Option<Self>, SimulationError> {
         let Some(interval_ms) = config.interval_ms else {
@@ -109,62 +137,134 @@ impl SnapshotCollector {
         if config.max_snapshots > MAX_SNAPSHOT_COUNT {
             return Err(SimulationError::TooManySnapshots { max: MAX_SNAPSHOT_COUNT });
         }
+
+        let (interval_observation_ms, grid_boundaries_skipped) = plan_interval_observations(
+            virtual_start_ms,
+            horizon_ms,
+            interval_ms,
+            config.max_snapshots,
+        );
+
         Ok(Some(Self {
             interval_ms,
             max_snapshots: config.max_snapshots,
             start_ms: virtual_start_ms,
             agent_count,
-            next_observation_ms: virtual_start_ms,
+            interval_observation_ms,
+            grid_boundaries_skipped,
+            terminal_included: false,
             snapshots: Vec::new(),
         }))
     }
 
-    pub(crate) fn capture_initial(&mut self, world: &WorldState, metrics: &MetricsSnapshotInput) {
-        self.capture_due(world, metrics, self.start_ms);
-    }
-
-    pub(crate) fn capture_due(
-        &mut self,
-        world: &WorldState,
-        metrics: &MetricsSnapshotInput,
-        current_slot_ms: u64,
-    ) {
-        while self.snapshots.len() < self.max_snapshots as usize
-            && current_slot_ms >= self.next_observation_ms
-        {
-            let observation_ms = self.next_observation_ms;
-            self.snapshots.push(build_snapshot(
-                observation_ms,
-                self.start_ms,
-                world,
-                metrics,
-                self.agent_count,
-            ));
-            self.next_observation_ms = self.next_observation_ms.saturating_add(self.interval_ms);
+    pub(crate) fn enqueue_interval_observations(&self, scheduler: &mut EventScheduler) {
+        for &time_ms in &self.interval_observation_ms {
+            scheduler.schedule_observation(time_ms);
         }
     }
 
-    /// Final observation at the last processed scheduler slot when capacity allows.
-    pub(crate) fn capture_terminal(
-        &mut self,
-        world: &WorldState,
-        metrics: &MetricsSnapshotInput,
-        last_event_slot_ms: u64,
-    ) {
+    pub(crate) fn sampling_summary(&self) -> SnapshotSamplingSummary {
+        SnapshotSamplingSummary {
+            interval_ms: self.interval_ms,
+            max_snapshots: self.max_snapshots,
+            grid_boundaries_skipped_capacity: self.grid_boundaries_skipped,
+            terminal_included: self.terminal_included,
+        }
+    }
+
+    pub(crate) fn capture_initial(&mut self, world: &WorldState, metrics: &MetricsSnapshotInput) {
         if self.snapshots.len() >= self.max_snapshots as usize {
             return;
         }
-        if self.snapshots.last().is_some_and(|snap| snap.observation_ms == last_event_slot_ms) {
-            return;
-        }
         self.snapshots.push(build_snapshot(
-            last_event_slot_ms,
             self.start_ms,
+            self.start_ms,
+            ObservationKind::Initial,
             world,
             metrics,
             self.agent_count,
         ));
     }
+
+    pub(crate) fn capture_interval(
+        &mut self,
+        boundary_ms: u64,
+        world: &WorldState,
+        metrics: &MetricsSnapshotInput,
+    ) {
+        if self.snapshots.len() >= self.max_snapshots as usize {
+            return;
+        }
+        self.snapshots.push(build_snapshot(
+            boundary_ms,
+            self.start_ms,
+            ObservationKind::Interval,
+            world,
+            metrics,
+            self.agent_count,
+        ));
+    }
+
+    /// Final observation at the last processed gameplay slot when capacity allows.
+    pub(crate) fn capture_terminal(
+        &mut self,
+        world: &WorldState,
+        metrics: &MetricsSnapshotInput,
+        last_gameplay_slot_ms: u64,
+    ) {
+        if self.snapshots.len() >= self.max_snapshots as usize {
+            return;
+        }
+        if self.snapshots.last().is_some_and(|snap| snap.observation_ms == last_gameplay_slot_ms) {
+            return;
+        }
+        self.snapshots.push(build_snapshot(
+            last_gameplay_slot_ms,
+            self.start_ms,
+            ObservationKind::Terminal,
+            world,
+            metrics,
+            self.agent_count,
+        ));
+        self.terminal_included = true;
+    }
+}
+
+/// Returns scheduled interval boundary times and how many in-horizon grid points were skipped for capacity.
+fn plan_interval_observations(
+    start_ms: u64,
+    horizon_ms: u64,
+    interval_ms: u64,
+    max_snapshots: u32,
+) -> (Vec<u64>, u64) {
+    let all_boundaries = all_interval_boundaries(start_ms, horizon_ms, interval_ms);
+    let remaining_after_initial = max_snapshots.saturating_sub(1);
+    if remaining_after_initial == 0 {
+        return (Vec::new(), all_boundaries.len() as u64);
+    }
+    let reserve_terminal = 1.min(remaining_after_initial);
+    let interval_slots = remaining_after_initial.saturating_sub(reserve_terminal);
+    let scheduled_count = interval_slots.min(all_boundaries.len() as u32) as usize;
+    let skipped = all_boundaries.len().saturating_sub(scheduled_count) as u64;
+    (all_boundaries.into_iter().take(scheduled_count).collect(), skipped)
+}
+
+fn all_interval_boundaries(start_ms: u64, horizon_ms: u64, interval_ms: u64) -> Vec<u64> {
+    let mut boundaries = Vec::new();
+    let Some(mut next) = start_ms.checked_add(interval_ms) else {
+        return boundaries;
+    };
+    loop {
+        if next > horizon_ms {
+            break;
+        }
+        boundaries.push(next);
+        next = match next.checked_add(interval_ms) {
+            Some(value) => value,
+            None => break,
+        };
+    }
+    boundaries
 }
 
 pub(crate) struct MetricsSnapshotInput<'a> {
@@ -179,6 +279,7 @@ pub(crate) struct MetricsSnapshotInput<'a> {
 fn build_snapshot(
     observation_ms: u64,
     start_ms: u64,
+    kind: ObservationKind,
     world: &WorldState,
     input: &MetricsSnapshotInput<'_>,
     agent_count: u32,
@@ -201,6 +302,7 @@ fn build_snapshot(
         observation_ms,
         elapsed_virtual_ms: observation_ms.saturating_sub(start_ms),
         world_clock_ms: world.simulation_now_ms(),
+        kind,
         cumulative: CumulativeObservation {
             attempted_commands: input.total_attempted,
             successful_commands: input.successful_commands,
@@ -232,4 +334,29 @@ fn share(count: u32, total: u32) -> Option<f64> {
     } else {
         Some(f64::from(count) / f64::from(total))
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn interval_planning_reserves_terminal_slot_and_counts_skips() {
+        let start = 1_000u64;
+        let horizon = start + 10 * MS_FOR_TEST;
+        let interval = MS_FOR_TEST;
+        let (scheduled, skipped) = plan_interval_observations(start, horizon, interval, 3);
+        assert_eq!(scheduled.len(), 1);
+        assert_eq!(scheduled[0], start + interval);
+        assert_eq!(skipped, 9);
+    }
+
+    #[test]
+    fn boundary_enumeration_stops_on_overflow() {
+        let start = u64::MAX - 1;
+        let boundaries = all_interval_boundaries(start, u64::MAX, 4);
+        assert!(boundaries.is_empty());
+    }
+
+    const MS_FOR_TEST: u64 = 1000;
 }

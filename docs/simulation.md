@@ -172,7 +172,8 @@ which disables the wall clock.
 
 ### Event ordering
 
-Min-heap: `time_ms`, then `agent_index`, then `sequence`.
+Min-heap: `time_ms`, then event kind (observations before agent actions when snapshots are
+enabled), then `agent_index`, then `sequence`.
 
 ## Termination and report timing
 
@@ -232,18 +233,55 @@ Same counters aggregated per profile name (`wanderer`, `investigator`, …), inc
 When the denominator is zero, the rate is JSON `null` (text compare prints `(undefined)`).
 This avoids treating “no opportunities” as a zero success rate.
 
-## Longitudinal snapshots (Phase 2.2)
+## Longitudinal snapshots (Phase 2.2 / 2.2.1)
 
 Enable with `--snapshot-interval-ms` > 0. JSON reports include `longitudinal_snapshots`
-(omitted when disabled). Sampling is **read-only** and does not change command outcomes.
+and `snapshot_sampling` (both omitted when disabled). Sampling is **read-only**: observation
+events advance the world clock only, never execute commands, consume gameplay RNG, or change
+which agent actions occur.
+
+### When a snapshot is taken
+
+1. **Initial** — Immediately after bootstrap at `virtual_start_ms`, before any gameplay
+   scheduler event (`kind: initial`).
+2. **Interval grid** — At each scheduled boundary `start + n × interval` that fits inside
+   the configured horizon. Boundaries are enqueued as **observation events** on the same
+   min-heap as gameplay. The runner processes an observation only when virtual time actually
+   reaches that boundary; it never copies later world state into an earlier timestamp.
+3. **Terminal** — After gameplay finishes, if storage capacity remains and the last processed
+   gameplay slot is not already recorded, one row at that slot (`kind: terminal`).
+
+If `max_snapshots` is too small to store every in-horizon grid point, extra grid boundaries
+are **skipped** (not fabricated). The count appears in
+`snapshot_sampling.grid_boundaries_skipped_capacity`.
+
+Capacity accounting: one slot for the initial row, up to one reserved slot for a possible
+terminal row, remaining slots for interval grid observations. The store never exceeds
+`max_snapshots`.
+
+### Event ordering (gameplay vs observation)
+
+Heap order: ascending `time_ms`, then **observation before agent action**, then ascending
+`agent_index`, then `sequence`.
+
+At equal virtual time, the observation runs first (world clock advanced, counters and
+placement recorded), then gameplay events for that timestamp. Observation events do not
+increment `timing.events_processed` or `timing.inactive_slots`; they increment
+`timing.observation_events_processed` instead.
+
+When no agent is scheduled exactly on a grid boundary, the observation event still runs at
+that boundary (clock advance only).
+
+### Snapshot fields
 
 | Field | Meaning |
 |-------|---------|
-| `observation_ms` | Virtual timestamp of the observation boundary (interval grid or final processed event slot) |
+| `observation_ms` | Virtual time this row represents (grid boundary, start, or last gameplay slot for terminal) |
 | `elapsed_virtual_ms` | `observation_ms - configured_start` |
-| `world_clock_ms` | Authoritative world clock after events processed up to this observation |
-| `cumulative.*` | Event counters **since run start** through this observation (attempts, move-based uniques, social/journal tallies, etc.) |
-| `world_state.*` | **Current** world counts at observation time (active homes, materialized regions, occupied locations) |
+| `world_clock_ms` | Authoritative world clock after processing through this observation (matches `observation_ms` once the clock has caught up) |
+| `kind` | `initial`, `interval`, or `terminal` |
+| `cumulative.*` | Gameplay counters **since run start** through this observation (not including later gameplay at the same timestamp) |
+| `world_state.*` | **Current** world counts at this observation |
 | `occupancy.*` | **Current** agent placement aggregates from [`simulation_occupancy_summary`](../crates/coffee-world/src/sim.rs) |
 
 **Distinctions:**
@@ -254,7 +292,10 @@ Enable with `--snapshot-interval-ms` > 0. JSON reports include `longitudinal_sna
 - **Occupied locations** — distinct place keys with ≥1 agent now (`world_state.unique_locations_occupied` / `occupancy.occupied_location_count`).
 - **Hub vs Squalor (occupancy)** — Hub building = `coffee-shop`, `roof-array`, `roof-array` gateway room; wilderness bands use engine `UrbanContext` density (`near_hub`, `fringe`, `deep_squalor`).
 
-A **terminal snapshot** at the last processed scheduler slot is appended when capacity allows, so the final cumulative row matches the run report.
+`snapshot_sampling.terminal_included` is `true` only when a distinct terminal row was appended.
+When the last stored row is already an interval or initial observation at the final gameplay
+slot, no terminal row is added. Cumulative metrics on a terminal row match the run report;
+interval rows at earlier times may legitimately show lower totals.
 
 `config.allocated_profile_counts` records actual profile allocation after largest-remainder rounding.
 
