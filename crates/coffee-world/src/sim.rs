@@ -48,6 +48,17 @@ impl WorldState {
         self.now_ms = self.now_ms.saturating_add(delta_ms);
     }
 
+    /// Align virtual time after registration setup so scheduled play starts at the configured epoch.
+    ///
+    /// `connect_player` / `apply` each advance the test clock by 1 ms; call this once all
+    /// synthetic agents are connected and before scheduling their first actions.
+    pub fn align_simulation_clock(&mut self, now_ms: u64) {
+        if self.use_system_clock {
+            return;
+        }
+        self.now_ms = now_ms;
+    }
+
     /// Snapshot of persisted geography and home outcomes for reporting.
     pub fn outcome_snapshot(&self) -> WorldOutcomeSnapshot {
         let unique_locations_occupied = self

@@ -87,3 +87,10 @@ impl Default for SchedulerConfig {
         Self { action_interval_ms: 60 * 60 * 1000, idle_extra_ms: 6 * 60 * 60 * 1000 }
     }
 }
+
+impl SchedulerConfig {
+    pub fn next_event_ms(&self, after_slot_ms: u64, idle: bool) -> u64 {
+        let extra = if idle { self.idle_extra_ms } else { 0 };
+        after_slot_ms.saturating_add(self.action_interval_ms).saturating_add(extra)
+    }
+}
