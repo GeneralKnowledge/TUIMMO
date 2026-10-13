@@ -109,6 +109,8 @@ pub struct WorldReport {
     pub regions_materialized: usize,
     /// Discovery rows recorded (visits, notes, etc.).
     pub discoveries_recorded: usize,
+    /// Field journal keys with at least two distinct recorders at end of run.
+    pub corroborated_field_keys: usize,
     pub inspect_attempts: u64,
     pub successful_inspections: u64,
     pub exploration_move_attempts: u64,
@@ -254,6 +256,10 @@ impl RunReport {
             format!("  Regions materialized: {}", self.world.regions_materialized),
             format!("  Discoveries recorded: {}", self.world.discoveries_recorded),
             format!(
+                "  Corroborated field keys (≥2 recorders): {}",
+                self.world.corroborated_field_keys
+            ),
+            format!(
                 "  Inspect: {} attempted / {} successful",
                 self.world.inspect_attempts, self.world.successful_inspections
             ),
@@ -323,6 +329,7 @@ pub fn world_report_from_snapshot(
         unique_locations_occupied: snapshot.unique_locations_occupied,
         regions_materialized: snapshot.region_count,
         discoveries_recorded: snapshot.discovery_count,
+        corroborated_field_keys: snapshot.corroborated_field_keys,
         inspect_attempts: metrics.inspect_attempts,
         successful_inspections: metrics.successful_inspections,
         exploration_move_attempts: metrics.exploration_move_attempts,

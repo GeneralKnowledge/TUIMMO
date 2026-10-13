@@ -9,10 +9,10 @@ use terminus_core::{
 use uuid::Uuid;
 
 use crate::geography::{
-    delisted_floor, delisted_panel_waiting, delisted_terminal_waiting, format_entry,
-    format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch, story_finding,
-    survey_closure, survey_finding, AuthoredFinding, JournalLine, UrbanContext, WildernessPos,
-    FIELD_KIND, SURVEY_MARK_FLAG, SURVEY_MARK_ID,
+    corroboration_record_line, delisted_floor, delisted_panel_waiting, delisted_terminal_waiting,
+    format_entry, format_overview, format_recent, is_survey_tile, landmark_sight, roof_scratch,
+    story_finding, survey_closure, survey_finding, AuthoredFinding, JournalLine, UrbanContext,
+    WildernessPos, FIELD_KIND, SURVEY_MARK_FLAG, SURVEY_MARK_ID,
 };
 use crate::model::PersistOp;
 use crate::state::{Transition, WorldState};
@@ -148,12 +148,14 @@ impl WorldState {
             title: Some(placed.finding.title),
             place_key: Some(placed.place_key),
         });
-        let (event, op) = self.emit(
-            Channel::System,
-            Audience::Player(player),
-            None,
-            format!("Recorded in your journal as {content_key}. `journal read {content_key}`."),
-        );
+        let recorder_count = self.geography.field_note_recorder_count(&content_key);
+        let mut message =
+            format!("Recorded in your journal as {content_key}. `journal read {content_key}`.");
+        if let Some(line) = corroboration_record_line(recorder_count) {
+            message.push('\n');
+            message.push_str(&line);
+        }
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, message);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })
     }
@@ -872,5 +874,73 @@ mod tests {
         assert!(!keys.iter().any(|key| key == DELISTED_FLOOR_ID));
         // Gate coordinates remain the authored seam.
         assert_eq!((GATE_LOCAL_X, GATE_LOCAL_Y), (8, 8));
+    }
+
+    fn notable_landmark() -> (WildernessPos, LandmarkKind) {
+        let region = generate_region(gate_identity()).unwrap();
+        for local_y in 0..16u8 {
+            for local_x in 0..16u8 {
+                let Some(kind) = region.tile(local_x, local_y).unwrap().landmark else {
+                    continue;
+                };
+                let pos = WildernessPos { identity: gate_identity(), local_x, local_y };
+                if landmark_sight(pos, kind).finding.is_some() {
+                    return (pos, kind);
+                }
+            }
+        }
+        panic!("expected a notable landmark");
+    }
+
+    #[test]
+    fn field_discovery_corroboration_on_inspect_and_record() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        let (notable_pos, notable_kind) = notable_landmark();
+        let key = landmark_sight(notable_pos, notable_kind).finding.unwrap().content_key;
+        let inspect_cmd = format!("inspect {}", notable_kind.keyword());
+
+        world.operators.get_mut(&ada_id).unwrap().location_id = notable_pos.key();
+        world.apply(ada, &inspect_cmd).unwrap();
+        assert!(!feed(&world, ada).contains("operators have kept a private field note"));
+
+        world.apply(ada, "journal record").unwrap();
+        assert!(!feed(&world, ada).contains("not the only one"));
+
+        world.operators.get_mut(&bob_id).unwrap().location_id = notable_pos.key();
+        world.apply(bob, "journal record").unwrap();
+        assert!(feed(&world, bob).contains("not the only one"));
+        assert!(feed(&world, bob).contains("2 operators"));
+
+        world.apply(bob, &inspect_cmd).unwrap();
+        assert!(feed(&world, bob).contains("2 operators have kept a private field note"));
+
+        world.apply(ada, &inspect_cmd).unwrap();
+        assert!(feed(&world, ada).contains("2 operators have kept a private field note"));
+
+        world.apply(bob, &format!("journal read {key}")).unwrap();
+        assert!(overlay(&world, bob).contains(&key));
+        let err = world.apply(bob, "journal read survey-scratch").unwrap_err();
+        assert!(err.to_string().contains("No journal entry matches"));
+        world.apply(ada, &format!("journal read {key}")).unwrap();
+        assert!(overlay(&world, ada).contains(&key));
+    }
+
+    #[test]
+    fn survey_mark_corroboration_without_leaking_journals() {
+        let (mut world, ada, bob, ada_id, bob_id) = pair();
+        for session in [ada, bob] {
+            world.apply(session, "go up").unwrap();
+            world.apply(session, "outskirts").unwrap();
+            world.apply(session, "west").unwrap();
+        }
+        world.apply(ada, "inspect mark").unwrap();
+        world.apply(ada, "journal record").unwrap();
+        world.apply(bob, "inspect stone").unwrap();
+        assert!(!feed(&world, bob).contains("operators have kept a private field note"));
+        world.apply(bob, "journal record").unwrap();
+        world.apply(bob, "inspect mark").unwrap();
+        assert!(feed(&world, bob).contains("2 operators have kept a private field note"));
+        assert_eq!(field_count(&world, ada_id), 1);
+        assert_eq!(field_count(&world, bob_id), 1);
     }
 }

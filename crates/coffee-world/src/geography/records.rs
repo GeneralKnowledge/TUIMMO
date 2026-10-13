@@ -1,6 +1,6 @@
 //! Persistent geography. These rows are the history the generator cannot rebuild.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use terminus_core::PlayerId;
 use uuid::Uuid;
@@ -220,5 +220,37 @@ impl GeographyState {
                 && item.actor_id == Some(actor)
                 && item.content_key.as_deref() == Some(content_key)
         })
+    }
+
+    /// Distinct operators who recorded a private field note for this discovery key.
+    pub fn field_note_recorder_count(&self, content_key: &str) -> usize {
+        let mut actors = HashSet::new();
+        for item in &self.discoveries {
+            if item.kind != FIELD_KIND || item.content_key.as_deref() != Some(content_key) {
+                continue;
+            }
+            if let Some(actor) = item.actor_id {
+                actors.insert(actor);
+            }
+        }
+        actors.len()
+    }
+
+    /// Content keys with at least two independent field recorders (simulation reporting).
+    pub fn corroborated_field_key_count(&self) -> usize {
+        let mut per_key: HashMap<String, HashSet<PlayerId>> = HashMap::new();
+        for item in &self.discoveries {
+            if item.kind != FIELD_KIND {
+                continue;
+            }
+            let Some(key) = item.content_key.as_deref() else {
+                continue;
+            };
+            let Some(actor) = item.actor_id else {
+                continue;
+            };
+            per_key.entry(key.to_string()).or_default().insert(actor);
+        }
+        per_key.values().filter(|actors| actors.len() >= 2).count()
     }
 }

@@ -111,6 +111,6 @@ No combat, economy, guild ranks, crafting, quests, or generated NPCs. Shared the
 
 ## Next milestones
 
-1. Shared build rights / workshops inside settlements
-2. Public-key authentication alongside passwords
-3. Closed registration with an invite flow
+1. Surface who first charted a birth cell (existing `entered` rows) without spamming every border crossing
+2. Broaden shared theories beyond `delisted-floor`, or tie theory posts to place context
+3. Public-key authentication alongside passwords

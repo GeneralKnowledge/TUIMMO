@@ -26,12 +26,13 @@ pub use density::{
     REMOTE_ACCEPTANCE_ORIGIN_Y,
 };
 pub use field::{
-    closure_inspect_text, delisted_floor, delisted_panel_waiting, delisted_terminal_waiting,
-    describe_place, format_entry, format_overview, format_recent, is_survey_tile, landmark_sight,
-    panel_after_log, roof_scratch, stacks_after_log, survey_aliases, survey_closure,
-    survey_finding, survey_look_line, survey_position, survey_sight, torn_page_text,
-    AuthoredFinding, JournalLine, Sight, DELISTED_FLOOR_ID, SURVEY_CLOSURE_ID, SURVEY_LOCAL_X,
-    SURVEY_LOCAL_Y, SURVEY_MARK_FLAG, SURVEY_MARK_ID, SURVEY_SCRATCH_ID,
+    closure_inspect_text, corroboration_inspect_line, corroboration_record_line, delisted_floor,
+    delisted_panel_waiting, delisted_terminal_waiting, describe_place, format_entry,
+    format_overview, format_recent, is_survey_tile, landmark_sight, panel_after_log, roof_scratch,
+    stacks_after_log, survey_aliases, survey_closure, survey_finding, survey_look_line,
+    survey_position, survey_sight, torn_page_text, AuthoredFinding, JournalLine, Sight,
+    DELISTED_FLOOR_ID, SURVEY_CLOSURE_ID, SURVEY_LOCAL_X, SURVEY_LOCAL_Y, SURVEY_MARK_FLAG,
+    SURVEY_MARK_ID, SURVEY_SCRATCH_ID,
 };
 pub use generate::{
     derive_region_seed, epoch_spec, fingerprint, format_seed, frontier_epoch, frontier_identity,
