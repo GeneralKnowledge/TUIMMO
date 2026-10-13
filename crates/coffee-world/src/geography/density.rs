@@ -222,8 +222,9 @@ prices water cheaper than bread."
             }
             Self::Timetable => match district {
                 DistrictKind::Civic => {
-                    "Faded timetable. Ash Plaza and Ward West are listed as if the line still \
-ran on the surface. The clock face is blank."
+                    "Faded timetable. Ash Plaza and Ward West are listed as paired Line 8 stops — \
+the same pairing stencilled at Ash Plaza Station, though the wall map was peeled away whole. \
+The clock face is blank; no departure times remain."
                         .into()
                 }
                 _ => "Faded timetable. Local shuttle loops and a night freight window. None of \
@@ -271,13 +272,16 @@ impl StorySite {
     pub const fn look_line(self) -> &'static str {
         match self {
             Self::Directory => {
-                "A lobby directory lists Ward Clinic on level two — stamped CLOSED. `inspect directory`."
+                "A lobby directory lists Ward Clinic on level two — stamped CLOSED, but a handwritten \
+strip still points toward the entrance for records. `inspect directory`."
             }
             Self::Clinic => {
-                "Shuttered clinic doors face the lane. A notice is taped over the handle. `inspect clinic`."
+                "Shuttered clinic doors face the lane. A notice is taped over the handle; the tape \
+looks newer than the closure order. `inspect clinic`."
             }
             Self::Corridor => {
-                "A service corridor mouth sits half-bricked. Tools still lean in the dust. `inspect corridor`."
+                "A service corridor mouth sits half-bricked. Dust on the near side is scuffed, as if \
+the passage stayed in use after the seal began. `inspect corridor`."
             }
         }
     }
@@ -285,18 +289,23 @@ impl StorySite {
     pub fn inspect_text(self) -> String {
         match self {
             Self::Directory => {
-                "Ward Clinic directory. Level 2 — CLOSED. A handwritten addendum points northwest: \
-\"records held at the clinic entrance until the corridor job finishes.\""
+                "Ward Clinic directory. Level 2 — CLOSED in heavy ink. A later handwritten strip \
+points northwest: \"records held at the clinic entrance until the corridor job finishes.\" \
+The two messages do not agree on whether the building is still in use."
                     .into()
             }
             Self::Clinic => {
-                "Closed clinic. The taped notice reads: service corridor east of this door remains \
-unsafe — do not enter until the seal is complete. The tape is years dry."
+                "Closed clinic. The taped notice repeats the closure number from the lobby directory \
+and warns that the service corridor east of this door stays unsafe until the seal is complete. \
+The tape looks newer than the notice beneath it — as if someone re-posted the warning after \
+the corridor kept seeing traffic."
                     .into()
             }
             Self::Corridor => {
                 "Service corridor. Bricks stacked for a seal that was never finished. A work order \
-clipped to the scaffold names Ward Clinic and stops mid-sentence."
+clipped to the scaffold names Ward Clinic and stops mid-sentence: \"…resume access once records \
+are—\" Scuff marks in the dust lead through the gap. Who kept using the passage, and why the \
+seal stalled, is not written on the scaffold."
                     .into()
             }
         }
@@ -321,16 +330,16 @@ clipped to the scaffold names Ward Clinic and stops mid-sentence."
     pub const fn finding_note(self) -> &'static str {
         match self {
             Self::Directory => {
-                "A lobby directory near the Hub lists Ward Clinic as closed and points records \
-to the clinic entrance."
+                "A lobby directory near the Hub lists Ward Clinic as closed while a handwritten \
+note still sends clerks to the entrance for records."
             }
             Self::Clinic => {
-                "The shuttered Ward Clinic warns that a service corridor to the east was left \
-unsafe until a seal was completed."
+                "The shuttered Ward Clinic re-posted a corridor warning on fresh tape, as if the \
+east passage had stayed in use after the official closure."
             }
             Self::Corridor => {
-                "East of the closed clinic, a half-bricked service corridor still holds tools \
-and a work order that never finished the seal."
+                "East of the closed clinic, a half-bricked service corridor shows scuffed dust and \
+a truncated work order — evidence the seal was abandoned, not completed."
             }
         }
     }
@@ -360,58 +369,183 @@ impl UrbanContext {
         format!("{}, {}", self.district.short(), self.block.name())
     }
 
-    pub fn ordinary_prose(self, terrain: Terrain) -> &'static str {
+    pub fn ordinary_prose(self, terrain: Terrain, abs_x: i64, abs_y: i64) -> &'static str {
         match (self.district, self.block, terrain, self.band) {
             (_, _, Terrain::Water, _) => "A flooded cut. There is no footing.",
             (_, _, Terrain::Rock, _) => "A sealed or collapsed structure. There is no footing.",
             (DistrictKind::Residential, BlockPattern::Courtyard, Terrain::Forest, _) => {
-                "Apartment towers face a shared courtyard. Walkways sag between the landings."
+                prose_variant(
+                    &[
+                        "Apartment towers face a shared courtyard. Walkways sag between the landings.",
+                        "Forest presses the courtyard rim. Balconies disappear into leaf shadow.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0001,
+                )
             }
             (DistrictKind::Residential, BlockPattern::Courtyard, _, DensityBand::NearHub) => {
-                "Residential courtyard. Entrances still carry unit numbers; the fountain is dry."
+                prose_variant(
+                    &[
+                        "Residential courtyard. Entrances still carry unit numbers; the fountain is dry.",
+                        "Residential courtyard. Laundry lines hang empty between the landings.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0002,
+                )
             }
             (DistrictKind::Residential, BlockPattern::Courtyard, _, _) => {
-                "Residential courtyard. The towers lean inward over cracked paving."
+                prose_variant(
+                    &[
+                        "Residential courtyard. The towers lean inward over cracked paving.",
+                        "Residential courtyard. Weeds push through tiles where children would have played.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0003,
+                )
             }
             (DistrictKind::Residential, BlockPattern::ServiceYard, _, _) => {
-                "Service yard behind the towers. Pipe runs and loading bays, long unused."
+                prose_variant(
+                    &[
+                        "Service yard behind the towers. Pipe runs and loading bays, long unused.",
+                        "Service yard. Roll-up doors dent inward; oil stains mark old delivery lanes.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0004,
+                )
             }
             (DistrictKind::Residential, _, Terrain::Forest, DensityBand::Deep) => {
-                "Endless residential stacks. One lane looks like the last, and the next."
+                prose_variant(
+                    &[
+                        "Endless residential stacks. One lane looks like the last, and the next.",
+                        "Deep residential forest. Stairwell numbers repeat; the block plan does not.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0005,
+                )
             }
-            (DistrictKind::Residential, _, _, _) => {
-                "Residential frontage. Stairwells and mail slots wait without names."
-            }
+            (DistrictKind::Residential, _, _, _) => prose_variant(
+                &[
+                    "Residential frontage. Stairwells and mail slots wait without names.",
+                    "Residential street. Balcony rails rust; curtains hang in fixed poses.",
+                    "Residential block. Intercom panels buzz once, then fall silent.",
+                ],
+                abs_x,
+                abs_y,
+                0xB005_0006,
+            ),
             (DistrictKind::Commercial, BlockPattern::ShopRow, _, DensityBand::NearHub) => {
-                "Shop row on a pedestrian street. Shutters down, signs still selling yesterday."
+                prose_variant(
+                    &[
+                        "Shop row on a pedestrian street. Shutters down, signs still selling yesterday.",
+                        "Shop row near the Hub. Display lights flicker on a dead circuit.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0007,
+                )
             }
             (DistrictKind::Commercial, BlockPattern::ShopRow, _, _) => {
-                "Shop row. Glass gone from the fronts; the awnings hang in strips."
+                prose_variant(
+                    &[
+                        "Shop row. Glass gone from the fronts; the awnings hang in strips.",
+                        "Shop row. Price tags cling to empty rails inside the windows.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0008,
+                )
             }
             (DistrictKind::Commercial, BlockPattern::Plaza, _, _) => {
-                "Commercial plaza. Empty stalls and a dry fountain mark the crossing."
+                prose_variant(
+                    &[
+                        "Commercial plaza. Empty stalls and a dry fountain mark the crossing.",
+                        "Commercial plaza. Kiosk frames stand without panels; cables dangle.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_0009,
+                )
             }
             (DistrictKind::Commercial, _, Terrain::Scrub, _) => {
-                "Stripped shopfronts and cable. Someone claimed the easy metal years ago."
+                prose_variant(
+                    &[
+                        "Stripped shopfronts and cable. Someone claimed the easy metal years ago.",
+                        "Scrub between shop shells. Rebar shows where facades were cut away.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_000A,
+                )
             }
-            (DistrictKind::Commercial, _, _, _) => {
-                "Commercial lane. Delivery doors and empty display windows."
-            }
+            (DistrictKind::Commercial, _, _, _) => prose_variant(
+                &[
+                    "Commercial lane. Delivery doors and empty display windows.",
+                    "Commercial lane. Loading ramps end at nothing; paint outlines old bays.",
+                    "Commercial frontage. Neon tubes hang dark over shuttered glass.",
+                ],
+                abs_x,
+                abs_y,
+                0xB005_000B,
+            ),
             (DistrictKind::Civic, BlockPattern::Plaza, _, DensityBand::NearHub) => {
-                "Civic plaza. The paving still suggests a crowd that will not arrive."
+                prose_variant(
+                    &[
+                        "Civic plaza. The paving still suggests a crowd that will not arrive.",
+                        "Civic plaza near the Hub. Bollards stand; no traffic respects them.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_000C,
+                )
             }
             (DistrictKind::Civic, BlockPattern::Plaza, _, _) => {
-                "Open plaza between civic shells. Wind crosses it without slowing."
+                prose_variant(
+                    &[
+                        "Open plaza between civic shells. Wind crosses it without slowing.",
+                        "Civic plaza. Flagpoles rattle; the flags are gone.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_000D,
+                )
             }
             (DistrictKind::Civic, BlockPattern::ServiceYard, _, _) => {
-                "Utility apron behind a civic hall. Maintenance hatches and a dead generator pad."
+                prose_variant(
+                    &[
+                        "Utility apron behind a civic hall. Maintenance hatches and a dead generator pad.",
+                        "Civic service yard. Cable trays end at blank walls.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_000E,
+                )
             }
             (DistrictKind::Civic, _, _, DensityBand::NearHub) => {
-                "Civic frontage. Signage is clearer here; routes still almost make sense."
+                prose_variant(
+                    &[
+                        "Civic frontage. Signage is clearer here; routes still almost make sense.",
+                        "Civic frontage near the Hub. Wayfinding arrows disagree with the street.",
+                    ],
+                    abs_x,
+                    abs_y,
+                    0xB005_000F,
+                )
             }
-            (DistrictKind::Civic, _, _, _) => {
-                "Civic block. Blank offices and a public stair that climbs to nowhere useful."
-            }
+            (DistrictKind::Civic, _, _, _) => prose_variant(
+                &[
+                    "Civic block. Blank offices and a public stair that climbs to nowhere useful.",
+                    "Civic block. Lobby directories list floors that no longer answer.",
+                    "Civic shell. Marble dust and a reception desk with no chair.",
+                ],
+                abs_x,
+                abs_y,
+                0xB005_0010,
+            ),
         }
     }
 
@@ -432,6 +566,16 @@ impl UrbanContext {
     pub fn familiarity(self) -> String {
         format!("{}, {}, {}", self.district.name(), self.block.name(), self.band.label())
     }
+}
+
+fn prose_variant(
+    variants: &'static [&'static str],
+    abs_x: i64,
+    abs_y: i64,
+    salt: u64,
+) -> &'static str {
+    let idx = mix_coords(abs_x, abs_y, salt) as usize % variants.len();
+    variants[idx]
 }
 
 fn mix_coords(abs_x: i64, abs_y: i64, salt: u64) -> u64 {
@@ -684,6 +828,65 @@ mod tests {
     }
 
     #[test]
+    fn ordinary_prose_varies_by_coordinate_in_a_sample() {
+        use crate::geography::generate::{generate_region, Terrain};
+        use std::collections::BTreeSet;
+        let mut lines = BTreeSet::new();
+        for ox in 0..3 {
+            for oy in 0..3 {
+                let identity = RegionIdentity {
+                    world: crate::geography::identity::WorldId::Undernet,
+                    epoch_id: 1,
+                    origin_x: ox,
+                    origin_y: oy,
+                    generation_version: GENERATION_V1,
+                };
+                let generated = generate_region(identity).unwrap();
+                for lx in 0..16u8 {
+                    for ly in 0..16u8 {
+                        let p = pos(ox, oy, lx, ly);
+                        let (ax, ay) = p.absolute();
+                        let ctx = UrbanContext::at(p);
+                        if ctx.story.is_some() || ctx.trace.is_some() {
+                            continue;
+                        }
+                        let terrain =
+                            generated.tile(lx, ly).map(|t| t.terrain).unwrap_or(Terrain::Rock);
+                        if !terrain.traversable() {
+                            continue;
+                        }
+                        let text = ctx.ordinary_prose(terrain, ax, ay);
+                        lines.insert(text.to_string());
+                    }
+                }
+            }
+        }
+        assert!(
+            lines.len() > 18,
+            "expected coordinate-hashed prose diversity, got {} distinct lines",
+            lines.len()
+        );
+        let a = UrbanContext::at(pos(0, 0, 4, 4)).ordinary_prose(
+            crate::geography::generate::Terrain::Grass,
+            4,
+            4,
+        );
+        let b = UrbanContext::at(pos(0, 0, 4, 4)).ordinary_prose(
+            crate::geography::generate::Terrain::Grass,
+            4,
+            4,
+        );
+        assert_eq!(a, b, "same tile must stay stable on revisit");
+    }
+
+    #[test]
+    fn civic_timetable_inspect_references_line_8_and_missing_map() {
+        let text = TraceKind::Timetable.inspect_text(DensityBand::NearHub, DistrictKind::Civic);
+        assert!(text.contains("Line 8") || text.contains("Ash Plaza"), "{text}");
+        assert!(text.contains("peeled") || text.contains("wall map"), "{text}");
+    }
+
+    #[test]
     fn ordinary_tiles_are_the_majority_in_a_sample() {
         let mut ordinary = 0u32;
         let mut textured = 0u32;
@@ -714,6 +917,21 @@ mod tests {
         assert!(
             texture_pct > 0.10 && texture_pct < 0.35,
             "ordinary {ordinary_pct:.2} textured {texture_pct:.2}"
+        );
+    }
+
+    #[test]
+    fn ward_clinic_inspect_texts_support_the_closure_paradox() {
+        let directory = story_sight(StorySite::Directory).text;
+        let clinic = story_sight(StorySite::Clinic).text;
+        let corridor = story_sight(StorySite::Corridor).text;
+        assert!(directory.contains("CLOSED") && directory.contains("corridor job"), "{directory}");
+        assert!(clinic.contains("corridor") && clinic.contains("tape"), "{clinic}");
+        let corridor_lower = corridor.to_ascii_lowercase();
+        assert!(corridor_lower.contains("scuff") && corridor_lower.contains("seal"), "{corridor}");
+        assert!(
+            corridor_lower.contains("not written"),
+            "corridor should leave uncertainty explicit: {corridor}"
         );
     }
 

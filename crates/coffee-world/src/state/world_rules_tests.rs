@@ -448,6 +448,57 @@ fn ignore_filters_chat_and_blocks_whisper() {
 }
 
 #[test]
+fn public_sign_discovered_by_another_operator_without_private_leaks() {
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
+    world.apply(ada, "go up").unwrap();
+    world.apply(ada, "journal record").unwrap();
+    world.apply(ada, "outskirts").unwrap();
+    let identity = crate::geography::gate_identity();
+    world
+        .apply_terrain_mod(identity, 8, 9, crate::geography::Terrain::Grass, "camp", ada_id)
+        .unwrap();
+    world.apply(ada, "north").unwrap();
+    world.apply(ada, "sign Relay gap worth a look").unwrap();
+    world.apply(ada, "waypoint add camp-watch").unwrap();
+    world.apply(ada, "waypoint note camp-watch Ada-only ridge tally").unwrap();
+    let place = world.location_key(ada).unwrap();
+    world.detach(ada).unwrap();
+
+    to_buildable_tile(&mut world, bob, bob_id);
+    assert_eq!(world.location_key(bob).unwrap(), place);
+    let view = world.view(bob).unwrap();
+    assert!(
+        view.description.contains("Relay gap worth a look"),
+        "expected sign prose in look, got: {}",
+        view.description
+    );
+    assert!(view.description.contains("ada"));
+    assert!(view.objects.iter().any(|obj| obj.keyword == "sign"));
+    assert!(!view.description.contains("Ada-only ridge tally"));
+    assert!(!view.description.contains("one step west of the gate"));
+
+    world.apply(bob, "inspect sign").unwrap();
+    let bob_feed = feed_text(&world, bob);
+    assert!(bob_feed.contains("Relay gap worth a look"), "{bob_feed}");
+    assert!(!bob_feed.contains("Ada-only ridge tally"), "{bob_feed}");
+
+    let leaked = world.apply(bob, "journal read survey-scratch").unwrap_err();
+    assert!(leaked.to_string().contains("No journal entry matches"), "{leaked}");
+    world.apply(bob, "waypoint list").unwrap();
+    let wps = world.view(bob).unwrap().overlay.unwrap_or_default();
+    assert!(!wps.contains("Ada-only ridge tally"), "{wps}");
+    assert!(!wps.contains("camp-watch"), "{wps}");
+}
+
+#[test]
+fn inspect_sign_requires_a_public_sign() {
+    let (mut world, ada, _, ada_id, _) = pair();
+    to_buildable_tile(&mut world, ada, ada_id);
+    let err = world.apply(ada, "inspect sign").unwrap_err();
+    assert!(err.to_string().contains("nothing called"), "{err}");
+}
+
+#[test]
 fn cabin_build_enter_visit_and_private_access() {
     let (mut world, ada, bob, ada_id, _) = pair();
     to_buildable_tile(&mut world, ada, ada_id);

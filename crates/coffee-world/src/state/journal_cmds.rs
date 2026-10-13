@@ -847,7 +847,19 @@ mod tests {
         world.apply(ada, "inspect corridor").unwrap();
         let corridor = world.view(ada).unwrap().finding.unwrap_or_default();
         assert!(corridor.contains("work order") || corridor.contains("seal"), "{corridor}");
+        let corridor_lower = corridor.to_ascii_lowercase();
+        assert!(
+            corridor_lower.contains("scuff") || corridor_lower.contains("not written"),
+            "{corridor}"
+        );
         world.apply(ada, "journal record").unwrap();
+
+        // Revisiting does not rewrite the evidence.
+        world.apply(ada, "west").unwrap();
+        world.apply(ada, "east").unwrap();
+        world.apply(ada, "inspect corridor").unwrap();
+        let again = world.view(ada).unwrap().finding.unwrap_or_default();
+        assert!(again.to_ascii_lowercase().contains("scuff"), "{again}");
 
         let keys: Vec<_> = world
             .geography

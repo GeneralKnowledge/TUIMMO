@@ -1455,3 +1455,64 @@ async fn remote_world_acceptance_persists_without_intervening_regions() {
     // Neighbour still unvisited after restart.
     assert!(again.geography.region(neighbour.coord_key()).is_none());
 }
+
+#[tokio::test]
+async fn public_sign_survives_reopen_for_a_late_discoverer() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("coffee.sqlite");
+    let store = Store::open(&path).await.unwrap();
+    store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+    let ada_id = PlayerId::new();
+    let bob_id = PlayerId::new();
+    let ada = crate::state::starter_operator(ada_id, Uuid::new_v4(), "ada", "ada");
+    let bob = crate::state::starter_operator(bob_id, Uuid::new_v4(), "bob", "bob");
+    store.create_account(ada.account_id, "ada", "hash", &ada, 1).await.unwrap();
+    store.create_account(bob.account_id, "bob", "hash", &bob, 2).await.unwrap();
+    let loaded = store.load().await.unwrap();
+    let mut world = WorldState::for_tests();
+    world.install_loaded(loaded.operators, loaded.log);
+    world.install_geography(loaded.geography);
+    world.install_social(loaded.social);
+    world.install_settlements(loaded.settlements);
+    let ada_ident = SessionIdentity::new(ada_id, "ada", Permissions::player());
+    let ada_session = ada_ident.session_id;
+    let mut ops = world.connect_player(ada_ident).unwrap().0.ops;
+    for line in ["go up", "outskirts"] {
+        ops.extend(world.apply(ada_session, line).unwrap().ops);
+    }
+    world.apply_terrain_mod(gate_identity(), 8, 9, Terrain::Grass, "camp", ada_id).unwrap();
+    ops.extend(world.apply(ada_session, "north").unwrap().ops);
+    ops.extend(world.apply(ada_session, "sign Found a quiet cut-through").unwrap().ops);
+    let sign_place = world.location_key(ada_session).unwrap();
+    store.commit(&ops).await.unwrap();
+    drop(store);
+
+    let store = Store::open(&path).await.unwrap();
+    store.seed(&crate::seed_locations(), &crate::seed_exits()).await.unwrap();
+    let loaded = store.load().await.unwrap();
+    let sign = loaded.geography.structures.iter().find(|row| row.kind == "sign").expect("sign row");
+    assert_eq!(sign.name, "Found a quiet cut-through");
+    assert_eq!(sign.owner_id, Some(ada_id));
+
+    let mut world = WorldState::for_tests();
+    world.install_loaded(loaded.operators, loaded.log);
+    world.install_geography(loaded.geography);
+    world.install_social(loaded.social);
+    world.install_settlements(loaded.settlements);
+    let bob_ident = SessionIdentity::new(bob_id, "bob", Permissions::player());
+    let bob_session = bob_ident.session_id;
+    world.connect_player(bob_ident).unwrap();
+    world.operators.get_mut(&bob_id).unwrap().location_id = sign_place.clone();
+    let view = world.view(bob_session).unwrap();
+    assert!(view.description.contains("Found a quiet cut-through"), "{}", view.description);
+    world.apply(bob_session, "inspect sign").unwrap();
+    let feed = world
+        .view(bob_session)
+        .unwrap()
+        .feed
+        .iter()
+        .map(|line| line.text.clone())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(feed.contains("Found a quiet cut-through"), "{feed}");
+}

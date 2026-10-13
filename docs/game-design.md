@@ -103,7 +103,7 @@ A personal home is a designation on an existing Squalor place key. It is not a c
 - Enterable structures have an interior place (`i:<id>`) linked by validated `world_connections`. Cabin visitor access defaults to `public`; workshops default to `private`. Owners may set `public` / `private` / `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
 - Settlement sharing is separate from visitor access. `home share private|shared|communal` controls whether linked settlement members may enter. Joining a settlement never opens a private structure by itself.
 - Demolition removes connections and moves anyone inside to the exterior door tile. Reconnecting inside a demolished cabin relocates you safely.
-- Signs are short (≤80 chars). Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
+- Signs are short (≤80 chars). Trail posts name a stretch of ground. Both persist in the wilderness and appear in any visitor's `look` prose (with the author's display name). `inspect sign` or `inspect trail` reads the public artifact on your tile; private journals and waypoints are never copied into signs or trail posts. Noticeboard posts are ≤160 chars, rate-limited, capped per board, and expire after seven days. Authors may remove their own posts.
 
 ### Settlements
 
@@ -193,6 +193,31 @@ Player-facing text reveals the path one step at a time. The ending is not in `he
 3. At the Old Relay, `inspect dish` mentions a scuff. Before the flag, that is all, and `journal record` refuses. After the flag, the dish matches the fiber: the relay crew swung the dish toward the gate, closed the survey, and never filed it because the archive was already sealed. `journal record` keeps `survey-closure`.
 
 The stone is an authored overlay in presentation. It is not a terrain edit and not a new landmark in `generate_region`. Version 1's fingerprint stays `0x8812_F1DB_241C_39A1`.
+
+## Ward Clinic closure
+
+This chain is optional and solo. It uses three authored tiles near the Hub in birth region `(0, 0)`. It does not grant items, change terrain, or open doors. Player-authored signs and trail posts are separate; they never replace these environmental lines.
+
+There is no quest marker. `journal record` is optional at each inspectable site.
+
+1. From the city gate, walk the open tiles toward tile `(6, 10)` — one route is west, north, west, north from the survey side of the gate (direct north from the gate hits floodwater). `look` shows a lobby directory stamped CLOSED while a handwritten strip still sends clerks to the entrance for records. `inspect directory`.
+2. The clinic entrance is at `(5, 12)` — north, north, west from the directory. `inspect clinic` shows a re-posted corridor warning on fresh tape.
+3. The service corridor mouth is one step east at `(6, 12)`. `inspect corridor` shows an unfinished seal, scuffed dust, and a truncated work order. Who kept using the passage, and why the seal stalled, stays unresolved.
+
+The prose is a pure overlay in `geography/density.rs`. It does not change the version-1 fingerprint or place keys.
+
+## Line 8 (municipal subway)
+
+This chain is optional and solo. It uses the Ash Plaza and Ward West surface entrances, the two static stations, and civic-band timetable traces in the Squalor. One subway hop between stations covers eight surface tiles west. It does not grant items or change the archive door.
+
+There is no quest marker. `journal record` is optional where inspect text offers it.
+
+1. From the Hub gate, walk west six open tiles to the Ash Plaza entrance (`go metro` from the landing). `look` on the landing mentions the peeled Line 8 map stencil.
+2. `inspect diagram` at Ash Plaza Station — the route map was removed whole; stencil reads ASH PLAZA — LINE 8 WEST.
+3. `west` to Ward West Station. `inspect pillar` — WARD WEST vs struck-through SECTOR 14-W; `inspect platform` — edge paint maintained after the towers emptied; who kept the line alive stays unresolved.
+4. On the surface, civic tiles may show a faded timetable (`inspect timetable`) listing Ash Plaza and Ward West as paired Line 8 stops — corroboration, not a required step.
+
+Player-authored signs are separate. Ordinary Squalor look lines vary by coordinate within each district/block (deterministic, not random per visit).
 
 ## The delisted floor
 
