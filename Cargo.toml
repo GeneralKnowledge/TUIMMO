@@ -7,6 +7,7 @@ members = [
     "crates/terminus-ssh",
     "crates/coffee-world",
     "crates/coffee-server",
+    "crates/coffee-sim",
     "examples/minimal-game",
     "tests",
 ]

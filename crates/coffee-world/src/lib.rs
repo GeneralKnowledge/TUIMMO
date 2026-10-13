@@ -15,6 +15,7 @@ pub mod invite;
 pub mod mail;
 pub mod model;
 pub mod settlement;
+pub mod sim;
 pub mod social;
 pub mod state;
 pub mod store;
@@ -48,6 +49,7 @@ pub use invite::{
 };
 pub use model::{Item, Operator, PersistOp, STARTER_LOCATION};
 pub use settlement::SettlementState;
+pub use sim::{WorldOutcomeSnapshot, WORLD_GENERATION_VERSION};
 pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
 pub use store::{AccountInvitePolicy, AccountRow, LoadedWorld, NewAccount, Store, StoreError};
