@@ -25,6 +25,10 @@ pub struct WorldOutcomeSnapshot {
     pub unique_locations_occupied: usize,
     /// Field journal content keys with at least two distinct recorders.
     pub corroborated_field_keys: usize,
+    /// Distinct theory subjects with at least one entry.
+    pub theory_subjects: usize,
+    /// Total shared theory rows.
+    pub theory_entries: usize,
 }
 
 /// Aggregate agent placement for simulation reporting (no per-location keys exposed).
@@ -98,6 +102,14 @@ impl WorldState {
             active_home_count: self.homes.homes.iter().filter(|h| h.is_active()).count(),
             unique_locations_occupied,
             corroborated_field_keys: self.geography.corroborated_field_key_count(),
+            theory_subjects: {
+                let mut topics = std::collections::BTreeSet::new();
+                for entry in &self.theories.entries {
+                    topics.insert(entry.topic.as_str());
+                }
+                topics.len()
+            },
+            theory_entries: self.theories.entries.len(),
         }
     }
 

@@ -908,3 +908,63 @@ fn structure_access_precedence_owner_grant_share() {
     assert!(world.settlement_share_allows(bob_id, &cabin));
     assert!(world.settlement_share_allows(ada_id, &cabin));
 }
+
+#[test]
+fn first_charter_inspect_ground_does_not_fabricate_prior_explorers() {
+    let (mut world, ada, _, _, _) = pair();
+    world.apply(ada, "go up").unwrap();
+    world.apply(ada, "outskirts").unwrap();
+    world.apply(ada, "inspect ground").unwrap();
+    let inspect = feed_text(&world, ada);
+    assert!(!inspect.contains("first charted"));
+}
+
+#[test]
+fn second_operator_sees_first_charting_on_inspect_ground_not_every_step() {
+    let (mut world, ada, bob, _, _) = pair();
+    for session in [ada, bob] {
+        world.apply(session, "go up").unwrap();
+        world.apply(session, "outskirts").unwrap();
+    }
+    for _ in 0..8 {
+        world.apply(ada, "west").unwrap();
+    }
+    world.apply(ada, "west").unwrap();
+    for _ in 0..8 {
+        world.apply(bob, "west").unwrap();
+    }
+    let move_feed = feed_text(&world, bob);
+    assert!(!move_feed.contains("first charted"));
+    world.apply(bob, "west").unwrap();
+    world.apply(bob, "inspect ground").unwrap();
+    let inspect = feed_text(&world, bob);
+    assert!(inspect.contains("first charted"));
+    assert!(inspect.contains("ada"));
+}
+
+#[test]
+fn inspect_surfaces_public_theories_without_leaking_private_journal() {
+    use crate::theories::POST_INTERVAL_MS;
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
+    for session in [ada, bob] {
+        world.apply(session, "go up").unwrap();
+        world.apply(session, "outskirts").unwrap();
+        world.apply(session, "west").unwrap();
+    }
+    world.apply(ada, "journal record").unwrap();
+    world.now_ms = world.now_ms.saturating_add(POST_INTERVAL_MS);
+    world
+        .apply(ada, "theory post theory survey-mark The mark was meant for the relay crew.")
+        .unwrap();
+    world.apply(bob, "inspect mark").unwrap();
+    let inspect = feed_text(&world, bob);
+    assert!(inspect.contains("public"));
+    assert!(inspect.contains("survey-mark"));
+    assert!(inspect.contains("theory list survey-mark"));
+    assert!(world.geography.field_notes_for(bob_id).is_empty());
+    let err = world.apply(bob, "journal read survey-mark").unwrap_err();
+    assert!(err.to_string().contains("No journal entry matches"));
+    assert_eq!(world.geography.field_notes_for(ada_id).len(), 1);
+    world.apply(bob, "theory read 1").unwrap();
+    assert!(world.view(bob).unwrap().overlay.unwrap_or_default().contains("relay crew"));
+}

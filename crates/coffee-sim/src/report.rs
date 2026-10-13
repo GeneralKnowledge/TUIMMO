@@ -111,6 +111,8 @@ pub struct WorldReport {
     pub discoveries_recorded: usize,
     /// Field journal keys with at least two distinct recorders at end of run.
     pub corroborated_field_keys: usize,
+    pub theory_subjects: usize,
+    pub theory_entries: usize,
     pub inspect_attempts: u64,
     pub successful_inspections: u64,
     pub exploration_move_attempts: u64,
@@ -259,6 +261,8 @@ impl RunReport {
                 "  Corroborated field keys (≥2 recorders): {}",
                 self.world.corroborated_field_keys
             ),
+            format!("  Theory subjects: {}", self.world.theory_subjects),
+            format!("  Theory entries: {}", self.world.theory_entries),
             format!(
                 "  Inspect: {} attempted / {} successful",
                 self.world.inspect_attempts, self.world.successful_inspections
@@ -330,6 +334,8 @@ pub fn world_report_from_snapshot(
         regions_materialized: snapshot.region_count,
         discoveries_recorded: snapshot.discovery_count,
         corroborated_field_keys: snapshot.corroborated_field_keys,
+        theory_subjects: snapshot.theory_subjects,
+        theory_entries: snapshot.theory_entries,
         inspect_attempts: metrics.inspect_attempts,
         successful_inspections: metrics.successful_inspections,
         exploration_move_attempts: metrics.exploration_move_attempts,

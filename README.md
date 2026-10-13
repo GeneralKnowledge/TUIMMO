@@ -100,7 +100,8 @@ Docs:
 - Ten linked Hub locations, including a sealed Black Archive, plus a two-station subway vertical slice (one hop ≈ eight surface tiles)
 - Generated Squalor beyond the Roof Array: abandoned urban districts, deterministic regions, cardinal movement, and a way back with `city`
 - Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
-- Shared theories (`theory list`, `read`, `post observation`, `post theory`, `remove`) about the delisted floor. They persist, they are not copied from the private journal, and they do not unlock anything
+- Shared theories (`theory list`, `list <subject>`, `read`, `post observation|theory`, `remove`) tied to discovery ids or place keys (including the delisted floor). They persist, they are not copied from the private journal, and they do not unlock anything
+- Discoverable world history on `inspect ground` (first charting of a birth cell) and at authored features (field corroboration counts, public theory hints)
 - Personal waypoints (`waypoint add`, `list`, `show`, `note`, `remove`) for places an operator has stood, with private notes and return hints
 - SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, waypoints, private mail, shared theories, and a bounded message log
 - Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices
@@ -111,6 +112,6 @@ No combat, economy, guild ranks, crafting, quests, or generated NPCs. Shared the
 
 ## Next milestones
 
-1. Surface who first charted a birth cell (existing `entered` rows) without spamming every border crossing
-2. Broaden shared theories beyond `delisted-floor`, or tie theory posts to place context
+1. Optional one-time charting hint per operator (avoid repeating the same `inspect ground` line)
+2. Simulator agents that inspect authored features, post theories, and revisit places with prior traces
 3. Public-key authentication alongside passwords

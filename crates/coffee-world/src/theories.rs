@@ -1,18 +1,16 @@
-//! Shared theories for one authored mystery.
+//! Shared public theories — player interpretations tied to a subject token.
 //!
 //! A row is a player statement. It is not a journal entry, a noticeboard post,
-//! or a verified fact. The only topic this slice accepts is `delisted-floor`,
-//! the same content key as the private field note. Another authored mystery
-//! would add a topic constant and a command that selects it. Players cannot
-//! invent topics, and this module does not score or resolve them.
+//! or a verified fact. The `topic` column holds a stable subject (usually the
+//! same string as a field-journal `content_key`, or a place key). This module
+//! does not score, resolve, or mark entries as correct.
 
 use std::collections::HashMap;
 
 use terminus_core::text::clean_line;
 use terminus_core::PlayerId;
 
-/// Journal content key for the delisted floor. Kept here so the command does
-/// not need a second name for the same mystery.
+/// Default subject when posting without an explicit token (backward compatible).
 pub const TOPIC: &str = "delisted-floor";
 /// Characters in one post. Longer text is refused, not trimmed.
 pub const BODY_MAX: usize = 120;
@@ -93,6 +91,21 @@ impl TheoryBoard {
 
     pub fn get(&self, topic: &str, id: u64) -> Option<&TheoryEntry> {
         self.entries.iter().find(|entry| entry.topic == topic && entry.id == id)
+    }
+
+    pub fn entry_by_id(&self, id: u64) -> Option<&TheoryEntry> {
+        self.entries.iter().find(|entry| entry.id == id)
+    }
+
+    /// Distinct subjects with entry counts, sorted by subject name.
+    pub fn topic_summaries(&self) -> Vec<(String, usize)> {
+        let mut counts: HashMap<String, usize> = HashMap::new();
+        for entry in &self.entries {
+            *counts.entry(entry.topic.clone()).or_default() += 1;
+        }
+        let mut rows: Vec<(String, usize)> = counts.into_iter().collect();
+        rows.sort_by(|left, right| left.0.cmp(&right.0));
+        rows
     }
 
     pub fn posted_too_soon(&self, author: PlayerId, now_ms: u64) -> bool {

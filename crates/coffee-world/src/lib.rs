@@ -10,6 +10,7 @@
 pub mod auth;
 pub mod catalog;
 pub mod geography;
+pub mod history;
 pub mod home;
 pub mod invite;
 pub mod mail;

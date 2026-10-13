@@ -230,7 +230,7 @@ fn explore_page() -> &'static str {
      home claim — designate this Squalor place as your only home. No building required.\n\
      home name <name> — give that home a public title.\n\
      inspect <thing> — read what is in front of you.\n\
-     theory list — shared notes about the delisted floor.\n\
+     theory list — public interpretations by subject (discovery id or place).\n\
      A theory does not unlock anything, and it is not the journal.\n\
      \n\
      welcome — the arrival note again."
