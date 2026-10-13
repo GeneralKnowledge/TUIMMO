@@ -40,8 +40,6 @@ pub struct MultiSeedExperimentReport {
     pub seeds_used: Vec<u64>,
     pub conditions: Vec<ConditionResult>,
     pub comparisons: Vec<ConditionMeanComparison>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub snapshot_series: Option<Vec<SnapshotSeriesPoint>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -63,6 +61,9 @@ pub struct ConditionResult {
     pub allocated_profile_counts: BTreeMap<String, u32>,
     pub replicates: Vec<ReplicateRecord>,
     pub aggregate: ConditionAggregate,
+    /// Longitudinal summaries for this condition only (one entry per aligned time/kind).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot_series: Option<Vec<SnapshotSeriesPoint>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -189,8 +190,8 @@ pub fn run_multi_seed_experiment(
         probe.validate()?;
     }
 
+    let snapshots_enabled = request.base.snapshots.interval_ms.is_some();
     let mut condition_results = Vec::with_capacity(request.conditions.len());
-    let mut all_reports_for_snapshots: Vec<Vec<RunReport>> = Vec::new();
 
     for condition in &request.conditions {
         let mut replicates = Vec::with_capacity(seeds.len());
@@ -228,7 +229,11 @@ pub fn run_multi_seed_experiment(
             .map(|r| r.config.allocated_profile_counts.clone())
             .unwrap_or_default();
         let aggregate = aggregate_condition(&replicates);
-        all_reports_for_snapshots.push(run_reports);
+        let snapshot_series = if snapshots_enabled {
+            Some(aggregate_snapshot_series_for_condition(&run_reports))
+        } else {
+            None
+        };
         condition_results.push(ConditionResult {
             label: condition.label.clone(),
             agent_count: condition.agent_count,
@@ -236,15 +241,11 @@ pub fn run_multi_seed_experiment(
             allocated_profile_counts: allocated,
             replicates,
             aggregate,
+            snapshot_series,
         });
     }
 
     let comparisons = compare_condition_means(&condition_results);
-    let snapshot_series = if request.base.snapshots.interval_ms.is_some() {
-        Some(aggregate_snapshot_series(&all_reports_for_snapshots))
-    } else {
-        None
-    };
 
     Ok(MultiSeedExperimentReport {
         experiment: ExperimentSettings {
@@ -260,7 +261,6 @@ pub fn run_multi_seed_experiment(
         seeds_used: seeds,
         conditions: condition_results,
         comparisons,
-        snapshot_series,
     })
 }
 
@@ -473,7 +473,8 @@ fn mean_delta_pair(
     (baseline, other, delta, relative)
 }
 
-fn aggregate_snapshot_series(all_conditions: &[Vec<RunReport>]) -> Vec<SnapshotSeriesPoint> {
+/// Aggregates snapshots across replicates of a **single** condition.
+fn aggregate_snapshot_series_for_condition(runs: &[RunReport]) -> Vec<SnapshotSeriesPoint> {
     struct Acc {
         observation_ms: u64,
         locs: Vec<f64>,
@@ -481,24 +482,21 @@ fn aggregate_snapshot_series(all_conditions: &[Vec<RunReport>]) -> Vec<SnapshotS
         occupied: Vec<f64>,
     }
     let mut points: BTreeMap<(u64, ObservationKind), Acc> = BTreeMap::new();
-    for runs in all_conditions {
-        for report in runs {
-            let Some(snaps) = report.longitudinal_snapshots.as_ref() else {
-                continue;
-            };
-            for snap in snaps {
-                let entry =
-                    points.entry((snap.elapsed_virtual_ms, snap.kind)).or_insert_with(|| Acc {
-                        observation_ms: snap.observation_ms,
-                        locs: Vec::new(),
-                        attempted: Vec::new(),
-                        occupied: Vec::new(),
-                    });
-                entry.observation_ms = snap.observation_ms;
-                entry.locs.push(snap.cumulative.unique_locations_visited_move_based as f64);
-                entry.attempted.push(snap.cumulative.attempted_commands as f64);
-                entry.occupied.push(snap.world_state.unique_locations_occupied as f64);
-            }
+    for report in runs {
+        let Some(snaps) = report.longitudinal_snapshots.as_ref() else {
+            continue;
+        };
+        for snap in snaps {
+            let entry = points.entry((snap.elapsed_virtual_ms, snap.kind)).or_insert_with(|| Acc {
+                observation_ms: snap.observation_ms,
+                locs: Vec::new(),
+                attempted: Vec::new(),
+                occupied: Vec::new(),
+            });
+            entry.observation_ms = snap.observation_ms;
+            entry.locs.push(snap.cumulative.unique_locations_visited_move_based as f64);
+            entry.attempted.push(snap.cumulative.attempted_commands as f64);
+            entry.occupied.push(snap.world_state.unique_locations_occupied as f64);
         }
     }
     points
