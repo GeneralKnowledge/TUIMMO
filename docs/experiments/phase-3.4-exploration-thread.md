@@ -5,7 +5,7 @@
 | | SHA |
 |---|-----|
 | **Starting commit** | `647be2157ae5dfca3942791315bb2d59aac77da5` |
-| **Resulting commit** | `4f8f51b` |
+| **Resulting commit** | `405b71d` |
 
 ## Baseline playthrough and weakness
 
