@@ -13,6 +13,7 @@ use coffee_sim::population::PopulationMix;
 use coffee_sim::runner::RunConfig;
 use coffee_sim::scheduler::SchedulerConfig;
 use coffee_sim::seeds::ReplicateSeedSchedule;
+use coffee_sim::Profile;
 use coffee_sim::SimulationRunner;
 
 #[derive(Parser)]
@@ -124,6 +125,8 @@ enum PresetMix {
     Exploration,
     Home,
     Uniform,
+    Homebody,
+    Visitor,
     Social,
     Mixed,
 }
@@ -134,6 +137,8 @@ impl PresetMix {
             Self::Exploration => "exploration",
             Self::Home => "home",
             Self::Uniform => "uniform",
+            Self::Homebody => "homebody",
+            Self::Visitor => "visitor",
             Self::Social => "social",
             Self::Mixed => "mixed",
         }
@@ -144,6 +149,8 @@ impl PresetMix {
             Self::Exploration => PopulationMix::exploration_heavy(),
             Self::Home => PopulationMix::home_oriented(),
             Self::Uniform => PopulationMix::uniform_wanderer(),
+            Self::Homebody => PopulationMix::monolithic(Profile::Homebody),
+            Self::Visitor => PopulationMix::monolithic(Profile::OccasionalVisitor),
             Self::Social => PopulationMix::social_and_visitors(),
             Self::Mixed => PopulationMix::all_profiles_mixed(),
         }
