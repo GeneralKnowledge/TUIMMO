@@ -180,9 +180,31 @@ enabled), then `agent_index`, then `sequence`.
 | Field | Meaning |
 |-------|---------|
 | `config.population` | Profile weights used for this run |
-| `timing.configured_horizon_ms` | `start + duration` |
+| `timing.configured_horizon_ms` | `start + duration` (scheduling window upper bound; not forced onto the world clock) |
+| `timing.last_event_slot_ms` | Last processed **gameplay** (agent action) scheduler slot |
+| `timing.last_scheduler_slot_ms` | Last processed scheduler event of any kind (gameplay or observation) |
+| `timing.effective_termination_slot_ms` | Gameplay-effective stop slot (same as `last_event_slot_ms` when gameplay ended the run) |
+| `timing.final_world_ms` | Authoritative world clock when the run loop exits (after the last gameplay command tick; **not** advanced by discarded post-termination observations) |
 | `timing.inactive_slots` | Scheduler events with no attempted command (offline / idle / missing context) |
 | `timing.stop_reason` | `queue_exhausted`, `horizon_reached`, or `action_limit` |
+
+### Effective termination (Phase 2.2.2)
+
+Observations measure the simulation; they must not keep it running.
+
+- **Action limit** — After the configured number of attempted commands is reached, the loop
+  stops immediately. Pending observation events (including grid boundaries after the last
+  gameplay slot) are **not** processed and do not advance `final_world_ms`.
+- **Queue exhausted** — When the last gameplay event has been processed and no agent actions
+  remain in the heap, later grid observations are **not** processed (clock frozen at the last
+  command state).
+- **Horizon** — The next event with `time_ms > configured_horizon_ms` is not processed;
+  `stop_reason` becomes `horizon_reached`. Observations at or below the horizon still follow
+  the observation-before-gameplay ordering rule.
+
+Gameplay RNG, scheduling, and command outcomes are identical with snapshots enabled or disabled.
+Only observation-specific fields (`longitudinal_snapshots`, `snapshot_sampling`,
+`timing.observation_events_processed`, and usually `timing.last_scheduler_slot_ms`) differ.
 
 ## Metrics
 
@@ -293,9 +315,19 @@ that boundary (clock advance only).
 - **Hub vs Squalor (occupancy)** — Hub building = `coffee-shop`, `roof-array`, `roof-array` gateway room; wilderness bands use engine `UrbanContext` density (`near_hub`, `fringe`, `deep_squalor`).
 
 `snapshot_sampling.terminal_included` is `true` only when a distinct terminal row was appended.
-When the last stored row is already an interval or initial observation at the final gameplay
-slot, no terminal row is added. Cumulative metrics on a terminal row match the run report;
-interval rows at earlier times may legitimately show lower totals.
+`snapshot_sampling.terminal_status` is one of:
+
+| Status | Meaning |
+|--------|---------|
+| `included` | Terminal row stored |
+| `duplicate_last_observation` | Final gameplay slot already captured (interval/initial) |
+| `omitted_capacity` | `max_snapshots` exhausted |
+| `no_gameplay_events` | No agent actions ran |
+
+Terminal rows use `observation_ms = effective_termination_slot_ms` and `world_clock_ms =
+timing.final_world_ms` (the clock after the last command, typically one tick after the slot).
+Cumulative metrics on a terminal row match the run report when included; interval rows at
+earlier times may legitimately show lower totals.
 
 `config.allocated_profile_counts` records actual profile allocation after largest-remainder rounding.
 

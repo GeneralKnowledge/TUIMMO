@@ -69,9 +69,15 @@ pub struct SimulationTiming {
     pub configured_start_ms: u64,
     /// Inclusive upper bound of the scheduling window (`start + duration`).
     pub configured_horizon_ms: u64,
-    /// Scheduler slot time of the last processed event, if any.
+    /// Scheduler slot time of the last processed **gameplay** (agent action) event, if any.
     pub last_event_slot_ms: Option<u64>,
-    /// Authoritative world clock after the last processed command.
+    /// Slot time of the last processed scheduler event of any kind (gameplay or observation).
+    #[serde(default)]
+    pub last_scheduler_slot_ms: Option<u64>,
+    /// Gameplay-effective stop slot (`last_event_slot_ms` when gameplay ended the run).
+    #[serde(default)]
+    pub effective_termination_slot_ms: Option<u64>,
+    /// Authoritative world clock after the run loop (not advanced by post-termination observations).
     pub final_world_ms: u64,
     pub events_processed: u64,
     /// Observation-only scheduler events (longitudinal sampling); not included in `events_processed`.

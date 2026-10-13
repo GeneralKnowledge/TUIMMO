@@ -80,6 +80,23 @@ pub struct OccupancyObservation {
     pub deep_squalor_agent_share: Option<f64>,
 }
 
+/// Why no terminal row appears (when snapshots are enabled).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalSnapshotStatus {
+    #[default]
+    /// Gameplay ran but terminal handling has not completed (internal only).
+    Pending,
+    /// A distinct terminal row was stored.
+    Included,
+    /// Final gameplay slot already has an interval or initial row at the same `observation_ms`.
+    DuplicateLastObservation,
+    /// `max_snapshots` exhausted before a terminal row could be stored.
+    OmittedCapacity,
+    /// No gameplay scheduler events were processed.
+    NoGameplayEvents,
+}
+
 /// Metadata for interval grid completeness (present when snapshot sampling is enabled).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SnapshotSamplingSummary {
@@ -89,6 +106,7 @@ pub struct SnapshotSamplingSummary {
     pub grid_boundaries_skipped_capacity: u64,
     /// Whether a distinct terminal row was appended after gameplay finished.
     pub terminal_included: bool,
+    pub terminal_status: TerminalSnapshotStatus,
 }
 
 impl From<SimulationOccupancySummary> for OccupancyObservation {
@@ -115,6 +133,7 @@ pub(crate) struct SnapshotCollector {
     interval_observation_ms: Vec<u64>,
     grid_boundaries_skipped: u64,
     terminal_included: bool,
+    terminal_status: TerminalSnapshotStatus,
     pub(crate) snapshots: Vec<LongitudinalSnapshot>,
 }
 
@@ -153,6 +172,7 @@ impl SnapshotCollector {
             interval_observation_ms,
             grid_boundaries_skipped,
             terminal_included: false,
+            terminal_status: TerminalSnapshotStatus::Pending,
             snapshots: Vec::new(),
         }))
     }
@@ -164,12 +184,28 @@ impl SnapshotCollector {
     }
 
     pub(crate) fn sampling_summary(&self) -> SnapshotSamplingSummary {
+        let terminal_status = match self.terminal_status {
+            TerminalSnapshotStatus::Pending => TerminalSnapshotStatus::NoGameplayEvents,
+            other => other,
+        };
         SnapshotSamplingSummary {
             interval_ms: self.interval_ms,
             max_snapshots: self.max_snapshots,
             grid_boundaries_skipped_capacity: self.grid_boundaries_skipped,
             terminal_included: self.terminal_included,
+            terminal_status,
         }
+    }
+
+    pub(crate) fn finalize_terminal_status(&mut self, had_gameplay_events: bool) {
+        if self.terminal_status != TerminalSnapshotStatus::Pending {
+            return;
+        }
+        self.terminal_status = if had_gameplay_events {
+            TerminalSnapshotStatus::DuplicateLastObservation
+        } else {
+            TerminalSnapshotStatus::NoGameplayEvents
+        };
     }
 
     pub(crate) fn capture_initial(&mut self, world: &WorldState, metrics: &MetricsSnapshotInput) {
@@ -213,9 +249,11 @@ impl SnapshotCollector {
         last_gameplay_slot_ms: u64,
     ) {
         if self.snapshots.len() >= self.max_snapshots as usize {
+            self.terminal_status = TerminalSnapshotStatus::OmittedCapacity;
             return;
         }
         if self.snapshots.last().is_some_and(|snap| snap.observation_ms == last_gameplay_slot_ms) {
+            self.terminal_status = TerminalSnapshotStatus::DuplicateLastObservation;
             return;
         }
         self.snapshots.push(build_snapshot(
@@ -227,6 +265,7 @@ impl SnapshotCollector {
             self.agent_count,
         ));
         self.terminal_included = true;
+        self.terminal_status = TerminalSnapshotStatus::Included;
     }
 }
 

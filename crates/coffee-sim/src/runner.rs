@@ -214,6 +214,7 @@ impl SimulationRunner {
         let mut observation_events_processed = 0u64;
         let mut inactive_slots = 0u64;
         let mut last_event_slot_ms = None::<u64>;
+        let mut last_scheduler_slot_ms = None::<u64>;
         let mut stop_reason = StopReason::QueueExhausted;
 
         while let Some(event) = scheduler.pop_next() {
@@ -222,8 +223,22 @@ impl SimulationRunner {
                 break;
             }
 
+            if action_limit_reached(&self.config, total_attempted) {
+                stop_reason = StopReason::ActionLimit;
+                break;
+            }
+
             if event.kind == ScheduledEventKind::Observation {
+                if should_skip_post_gameplay_observation(
+                    event.time_ms,
+                    last_event_slot_ms,
+                    &scheduler,
+                ) {
+                    stop_reason = StopReason::QueueExhausted;
+                    break;
+                }
                 advance_world_time(&mut world, event.time_ms);
+                last_scheduler_slot_ms = Some(event.time_ms);
                 if let Some(collector) = snapshot_collector.as_mut() {
                     collector.capture_interval(
                         event.time_ms,
@@ -242,16 +257,10 @@ impl SimulationRunner {
                 continue;
             }
 
-            if let Some(max) = self.config.max_actions {
-                if total_attempted >= max {
-                    stop_reason = StopReason::ActionLimit;
-                    break;
-                }
-            }
-
             let agent = &mut agents[event.agent_index as usize];
 
             advance_world_time(&mut world, event.time_ms);
+            last_scheduler_slot_ms = Some(event.time_ms);
             let world_ms_before = world.simulation_now_ms();
 
             let choice = match build_context(&world, agent) {
@@ -397,10 +406,15 @@ impl SimulationRunner {
                 agent.index,
                 choice,
             );
+
+            if action_limit_reached(&self.config, total_attempted) {
+                stop_reason = StopReason::ActionLimit;
+                break;
+            }
         }
 
-        if let Some(slot) = last_event_slot_ms {
-            if let Some(collector) = snapshot_collector.as_mut() {
+        if let Some(collector) = snapshot_collector.as_mut() {
+            if let Some(slot) = last_event_slot_ms {
                 collector.capture_terminal(
                     &world,
                     &snapshot_metrics(
@@ -413,8 +427,12 @@ impl SimulationRunner {
                     ),
                     slot,
                 );
+            } else {
+                collector.finalize_terminal_status(false);
             }
         }
+
+        let effective_termination_slot_ms = last_event_slot_ms;
 
         let snapshot = world.outcome_snapshot();
         let final_world_ms = world.simulation_now_ms();
@@ -437,6 +455,8 @@ impl SimulationRunner {
                 configured_start_ms: self.schedule.virtual_start_ms,
                 configured_horizon_ms: horizon_ms,
                 last_event_slot_ms,
+                last_scheduler_slot_ms,
+                effective_termination_slot_ms,
                 final_world_ms,
                 events_processed,
                 observation_events_processed,
@@ -490,6 +510,22 @@ impl MetricsAccumulator {
             self.repeat_visits += agent.memory.repeat_visits;
         }
     }
+}
+
+fn action_limit_reached(config: &RunConfig, total_attempted: u64) -> bool {
+    config.max_actions.is_some_and(|max| total_attempted >= max)
+}
+
+/// Observations after the last gameplay slot must not run once no agent actions remain.
+fn should_skip_post_gameplay_observation(
+    observation_time_ms: u64,
+    last_gameplay_slot_ms: Option<u64>,
+    scheduler: &EventScheduler,
+) -> bool {
+    let Some(last_gp) = last_gameplay_slot_ms else {
+        return false;
+    };
+    observation_time_ms > last_gp && !scheduler.has_pending_agent_action()
 }
 
 fn advance_world_time(world: &mut WorldState, target_ms: u64) {

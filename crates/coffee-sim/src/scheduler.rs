@@ -106,6 +106,10 @@ impl EventScheduler {
     pub fn is_empty(&self) -> bool {
         self.heap.is_empty()
     }
+
+    pub fn has_pending_agent_action(&self) -> bool {
+        self.heap.iter().any(|MinEvent(event)| event.kind == ScheduledEventKind::AgentAction)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
