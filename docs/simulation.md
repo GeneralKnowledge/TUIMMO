@@ -109,6 +109,43 @@ cargo run -p coffee-sim -- scale \
 
 `scale` reuses global `--*-weight` flags for the mix (defaults remain wanderer-only unless changed). Each size runs in a **separate** world with the same seed and horizon.
 
+Multi-seed experiment (conditions × replicate seeds, aggregate statistics):
+
+```bash
+cargo run -p coffee-sim -- experiment \
+  --sizes 10,25 \
+  --replicates 5 \
+  --base-seed 1000 \
+  --days 7 \
+  --max-actions 80 \
+  --wanderer-weight 60 --investigator-weight 30 --social-weight 10 \
+  --json > experiment_explore.json
+```
+
+Explicit seeds (overrides `--replicates` / `--base-seed`):
+
+```bash
+cargo run -p coffee-sim -- experiment \
+  --sizes 10 \
+  --seeds 100,101,102 \
+  --days 5 \
+  --max-actions 60 \
+  --json
+```
+
+Compare profile mixes at the same sizes (each size × mix becomes one **condition**):
+
+```bash
+cargo run -p coffee-sim -- experiment \
+  --sizes 10,25 \
+  --mixes exploration,home \
+  --replicates 8 \
+  --base-seed 2000 \
+  --days 14 \
+  --max-actions 120 \
+  --json
+```
+
 Reproducing a run: record `--seed`, `--players`, profile weights (or compare presets),
 `--days`, `--action-interval-ms`, `--start-ms`, `--max-actions`, `--trace`, and snapshot settings.
 Equivalent settings produce equivalent gameplay outcomes and virtual event histories.
@@ -421,10 +458,76 @@ Compare `attempted_commands_per_agent` and `inactive_slot_share` before interpre
 totals. A lower unique-location count may reflect fewer attempts or more offline time, not
 weaker wander preference.
 
-### 7. Sensitivity runs
+### 7. Sensitivity runs (multi-seed experiments)
 
-Repeat with 2–3 seeds (e.g. `77`, `88`, `99`). Treat multi-seed spread as **sensitivity**,
-not proof of real-player behaviour.
+Use `experiment` with `--replicates` or explicit `--seeds`. The same seed schedule is reused
+for every condition (population size / mix), so cross-condition comparisons are easier to
+interpret. Changing population size changes agent allocation and interactions even when the
+replicate seed matches — that is expected simulator behaviour, not a configuration bug.
+
+Treat spread across replicates as **descriptive variability** under this behavioural model,
+not evidence about real human players. A handful of replicates helps debugging; stable
+estimates usually need more (within workload limits).
+
+## Multi-seed experiments (Phase 2.3)
+
+Hierarchy:
+
+| Level | Meaning |
+|-------|---------|
+| **Experiment** | Shared horizon, scheduler, action limit, snapshot settings |
+| **Condition** | One `(agent_count, profile mix)` pair |
+| **Replicate** | One independent `RunConfig` with a recorded seed |
+| **Aggregate** | Mean / SD / min / max / median (and rate summaries) across replicates |
+
+### Seed schedules
+
+- **`explicit`** — JSON `seed_schedule.mode = "explicit"` with exact `seeds` list.
+- **`from_base`** — Seeds derived by [`replicate_seed`](../crates/coffee-sim/src/seeds.rs)
+  (`base_seed`, replicate index). Documented constant stride; no wall-clock or execution-order
+  dependence.
+
+Every replicate row records the **actual seed used**. Re-running with identical JSON/API
+settings yields identical aggregates. Duplicate explicit seeds are allowed (identical
+replicates).
+
+### Workload limits
+
+| Constant | Default cap |
+|----------|-------------|
+| Conditions | 12 |
+| Replicates per condition | 32 |
+| Total runs (`conditions × replicates`) | 96 |
+
+Invalid workloads are rejected **before** any simulation runs.
+
+### Aggregates and undefined values
+
+- Numeric metrics: **sample** standard deviation (Bessel `n-1`) when `n ≥ 2`; `null` when
+  undefined.
+- **Rates:** per-run rates summarized in `distribution`; **pooled** numerators/denominators
+  reported separately as `pooled_rate` (not interchangeable with the mean of per-run rates).
+- Undefined rates (zero denominator on a run) are excluded from rate distributions
+  (`n_undefined` counted). Genuine zero numerators remain valid measurements.
+- Missing snapshot rows are not fabricated; time-series points include `replicate_count`
+  for how many runs contributed at each `(elapsed_virtual_ms, kind)`.
+
+### Terminology (timing vs snapshots)
+
+See Phase 2.2.2 termination section for `effective_termination_slot_ms` and terminal snapshot
+rules. Multi-seed snapshot series treat **terminal** observations separately from **interval**
+grid rows (aligned by elapsed virtual time, not array index).
+
+### Recommended protocol
+
+1. Fix virtual horizon and `--max-actions`.
+2. Choose several population sizes (and optional `--mixes`).
+3. Use the same replicate seed schedule for all conditions (`--base-seed` or `--seeds`).
+4. Compare absolute totals and per-agent metrics plus aggregate SD / IQR.
+5. Enable snapshots only when longitudinal summaries are needed (gameplay unchanged).
+6. Repeat with a second mix to see whether patterns depend on the behavioural model.
+
+Library entry point: [`run_multi_seed_experiment`](../crates/coffee-sim/src/multi_seed.rs).
 
 ### 8. Avoid single-run conclusions
 
@@ -440,6 +543,7 @@ cargo test -p coffee-sim
 - `sim_harness.rs` — scheduling, reproducibility, metric reconciliation, engine path smoke tests
 - `profile_validation.rs` — profile separation, mixed populations, compare isolation, derived rates
 - `longitudinal_validation.rs` — snapshot ordering, terminal reconciliation, scale experiments, long horizons
+- `multi_seed_experiment.rs` — seed schedules, aggregates, workload limits, snapshot series alignment
 
 ## Not implemented
 

@@ -147,6 +147,18 @@ pub enum SimulationError {
     EmptyScaleExperiment,
     #[error("population scale experiment supports at most {max} player counts")]
     TooManyScaleRuns { max: usize },
+    #[error("multi-seed experiment requires at least one condition")]
+    EmptyExperimentConditions,
+    #[error("seed schedule must specify at least one replicate seed")]
+    EmptySeedSchedule,
+    #[error("multi-seed experiment supports at most {max} conditions")]
+    TooManyExperimentConditions { max: usize },
+    #[error("multi-seed experiment supports at most {max} replicates per condition")]
+    TooManyExperimentReplicates { max: usize },
+    #[error("multi-seed experiment workload {requested} runs exceeds limit {max}")]
+    TooManyExperimentRuns { requested: usize, max: usize },
+    #[error("multi-seed experiment workload overflow")]
+    ExperimentWorkloadOverflow,
     #[error("{0}")]
     Engine(String),
 }
