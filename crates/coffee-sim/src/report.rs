@@ -7,6 +7,7 @@ use coffee_world::WorldOutcomeSnapshot;
 use serde::{Deserialize, Serialize};
 
 use crate::config::SnapshotConfig;
+use crate::interaction::{InteractionMetrics, StoryTranscript};
 use crate::population::PopulationMix;
 use crate::profile::Profile;
 use crate::scheduler::SchedulerConfig;
@@ -37,6 +38,10 @@ pub struct RunReport {
     pub longitudinal_snapshots: Option<Vec<LongitudinalSnapshot>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_sampling: Option<SnapshotSamplingSummary>,
+    #[serde(default)]
+    pub interaction: InteractionMetrics,
+    #[serde(default)]
+    pub story_transcript: StoryTranscript,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -208,10 +213,11 @@ impl RunReport {
             "Run configuration".into(),
             format!("  Agents: {}", self.config.agent_count),
             format!(
-                "  Population mix (weights): wanderer {} / investigator {} / homebody {} / social {} / visitor {}",
+                "  Population mix (weights): wanderer {} / investigator {} / homebody {} / follower {} / social {} / visitor {}",
                 self.config.population.wanderer,
                 self.config.population.investigator,
                 self.config.population.homebody,
+                self.config.population.follower,
                 self.config.population.social_player,
                 self.config.population.occasional_visitor,
             ),
@@ -279,7 +285,43 @@ impl RunReport {
             ),
             format!("  Repeat visits (sim memory): {}", self.world.repeat_visits),
             format!("  Home returns (sim memory): {}", self.world.home_returns),
+            String::new(),
+            "Cross-operator interaction (gameplay-derived)".into(),
+            format!(
+                "  Public traces created: {}",
+                self.interaction.public_traces_created
+            ),
+            format!(
+                "  Traces encountered by a later operator: {}",
+                self.interaction.traces_encountered_by_later_operators
+            ),
+            format!(
+                "  Distinct operators who encountered another's trace: {}",
+                self.interaction.distinct_encountering_operators
+            ),
+            format!(
+                "  Theory subjects with ≥2 authors: {}",
+                self.interaction.theory_subjects_multi_author
+            ),
+            format!(
+                "  Connected sequences (encounter → response): {}",
+                self.interaction.connected_sequences
+            ),
+            format!(
+                "  Trace encounter rate: {}",
+                self.interaction
+                    .trace_encounter_rate
+                    .map(|r| format!("{r:.3}"))
+                    .unwrap_or_else(|| "n/a (no traces)".into())
+            ),
         ];
+        if !self.story_transcript.lines.is_empty() {
+            lines.push(String::new());
+            lines.push("Representative story sequence".into());
+            for beat in &self.story_transcript.lines {
+                lines.push(format!("  t={} {} — {}", beat.slot_ms, beat.agent, beat.summary));
+            }
+        }
         if !self.per_profile.is_empty() {
             lines.push(String::new());
             lines.push("Per profile".into());

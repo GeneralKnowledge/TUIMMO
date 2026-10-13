@@ -152,6 +152,28 @@ impl WorldState {
             home.habitation(self.now_ms, traits)
         })
     }
+
+    /// Latest theory row authored by `player`, if any (offline reporting only).
+    pub fn simulation_latest_theory_by(&self, player: PlayerId) -> Option<(String, u64)> {
+        self.theories
+            .entries
+            .iter()
+            .rev()
+            .find(|entry| entry.author_id == player)
+            .map(|entry| (entry.topic.clone(), entry.id))
+    }
+
+    /// Distinct authors per theory subject (offline reporting only).
+    pub fn simulation_theory_authors_by_topic(
+        &self,
+    ) -> std::collections::BTreeMap<String, std::collections::HashSet<PlayerId>> {
+        let mut map: std::collections::BTreeMap<String, std::collections::HashSet<PlayerId>> =
+            std::collections::BTreeMap::new();
+        for entry in &self.theories.entries {
+            map.entry(entry.topic.clone()).or_default().insert(entry.author_id);
+        }
+        map
+    }
 }
 
 fn classify_sim_location(location: &str) -> SimLocationZone {

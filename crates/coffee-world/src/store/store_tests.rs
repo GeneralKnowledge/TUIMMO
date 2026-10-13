@@ -1085,6 +1085,11 @@ async fn charting_and_theories_survive_reopen() {
         )
         .await
         .unwrap();
+    for _ in 0..8 {
+        store.commit(&world.apply(bob_session, "west").unwrap().ops).await.unwrap();
+    }
+    store.commit(&world.apply(bob_session, "west").unwrap().ops).await.unwrap();
+    store.commit(&world.apply(bob_session, "inspect ground").unwrap().ops).await.unwrap();
 
     drop(store);
     let store = Store::open(&path).await.unwrap();
@@ -1092,6 +1097,12 @@ async fn charting_and_theories_survive_reopen() {
     assert_eq!(loaded.theories.entries.len(), 1);
     assert_eq!(loaded.theories.entries[0].topic, "survey-mark");
 
+    let bob_loc = loaded
+        .operators
+        .iter()
+        .find(|op| op.id == bob_id)
+        .map(|op| op.location_id.clone())
+        .expect("bob");
     let mut again = WorldState::for_tests();
     again.install_loaded(loaded.operators, loaded.log);
     again.install_geography(loaded.geography);
@@ -1099,17 +1110,11 @@ async fn charting_and_theories_survive_reopen() {
     let bob_ident = SessionIdentity::new(bob_id, "Robert", Permissions::player());
     let bob_session = bob_ident.session_id;
     again.connect_player(bob_ident).unwrap();
-    for _ in 0..8 {
-        again.apply(bob_session, "west").unwrap();
-    }
-    again.apply(bob_session, "west").unwrap();
+    again.operators.get_mut(&bob_id).unwrap().location_id = bob_loc;
     again.apply(bob_session, "inspect ground").unwrap();
-    assert!(again
-        .view(bob_session)
-        .unwrap()
-        .feed
-        .iter()
-        .any(|line| line.text.contains("first charted")));
+    let finding = again.view(bob_session).unwrap().finding.unwrap_or_default();
+    assert!(!finding.contains("first charted"));
+    assert!(again.operator(bob_id).unwrap().flags.iter().any(|f| f.starts_with("chart-hint:")));
     again.apply(bob_session, "theory read 1").unwrap();
     assert!(again.view(bob_session).unwrap().overlay.unwrap_or_default().contains("Relay crew"));
 }

@@ -13,6 +13,7 @@ use crate::geography::{
     DELISTED_FLOOR_ID, MARKER_KIND, SHARE_PRIVATE, SIGN_KIND, SURVEY_CLOSURE_ID, SURVEY_MARK_FLAG,
     SURVEY_MARK_ID, SURVEY_SCRATCH_ID, TRAIL_KIND,
 };
+use crate::history::chart_hint_flag;
 use crate::model::{Item, PersistOp};
 use crate::state::{Transition, WorldState};
 use crate::subway::{self, MetroEntrance};
@@ -172,12 +173,13 @@ impl WorldState {
     }
 
     fn append_wilderness_history(
-        &self,
+        &mut self,
         player: PlayerId,
         pos: WildernessPos,
         mut text: String,
         target: &str,
         content_key: Option<&str>,
+        ops: &mut Vec<PersistOp>,
     ) -> String {
         let authored = content_key.is_some()
             || target == "ground"
@@ -187,10 +189,7 @@ impl WorldState {
             return text;
         }
         if target == "ground" {
-            if let Some(line) = self.charting_inspect_line(player, pos) {
-                text.push('\n');
-                text.push_str(&line);
-            }
+            self.append_charting_once(player, pos, &mut text, ops);
         }
         let subject =
             content_key.map(str::to_string).or_else(|| self.theory_subject_at_location(player));
@@ -201,6 +200,30 @@ impl WorldState {
             }
         }
         text
+    }
+
+    /// One-time charting attribution per birth cell (operator flag + PersistOp::Flag).
+    fn append_charting_once(
+        &mut self,
+        player: PlayerId,
+        pos: WildernessPos,
+        text: &mut String,
+        ops: &mut Vec<PersistOp>,
+    ) {
+        let flag = chart_hint_flag(&pos.identity);
+        if self.operators.get(&player).is_some_and(|op| op.flags.contains(&flag)) {
+            return;
+        }
+        let Some(line) = self.charting_inspect_line(player, pos) else {
+            return;
+        };
+        text.push('\n');
+        text.push_str(&line);
+        if let Some(op) = self.operators.get_mut(&player) {
+            if op.flags.insert(flag.clone()) {
+                ops.push(PersistOp::Flag { operator_id: player, flag });
+            }
+        }
     }
 
     pub(crate) fn cmd_mark(
@@ -359,7 +382,14 @@ impl WorldState {
         let tile_for_key = self.effective_at(pos).ok();
         let content_key = wild_inspect_content_key(pos, target, tile_for_key.as_ref(), &urban);
         text = self.with_corroboration(text, content_key.as_deref());
-        text = self.append_wilderness_history(player, pos, text, target, content_key.as_deref());
+        text = self.append_wilderness_history(
+            player,
+            pos,
+            text,
+            target,
+            content_key.as_deref(),
+            &mut ops,
+        );
         let (event, op) = self.inspect_note(session_id, player, text);
         ops.push(op);
         Ok(Transition { outcome: CommandOutcome { events: vec![event], quit: false }, ops })

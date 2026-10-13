@@ -97,9 +97,9 @@ After server restart, SQLite reload preserves `entered`, theories, and the same 
 
 ## Remaining limitations
 
-- Charting line can repeat on every `inspect ground` (no per-operator `chart-hint:` flag wired yet).
+- ~~Charting line can repeat on every `inspect ground`~~ **Resolved in Phase 4.2** (`chart-hint:` flag + `PersistOp::Flag`).
 - Theory inference from location does not cover every wilderness landmark without an authored `content_key`.
-- Sim agents do not yet optimize for history/theory metrics.
+- Sim agents do not yet optimize for history/theory metrics (Phase 4.2 adds profiles/metrics; encounter rates still seed-dependent).
 
 ## Recommended next milestone
 

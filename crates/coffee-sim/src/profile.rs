@@ -13,15 +13,17 @@ pub enum Profile {
     Wanderer,
     Investigator,
     Homebody,
+    Follower,
     SocialPlayer,
     OccasionalVisitor,
 }
 
 impl Profile {
-    pub const ALL: [Profile; 5] = [
+    pub const ALL: [Profile; 6] = [
         Profile::Wanderer,
         Profile::Investigator,
         Profile::Homebody,
+        Profile::Follower,
         Profile::SocialPlayer,
         Profile::OccasionalVisitor,
     ];
@@ -31,6 +33,7 @@ impl Profile {
             Self::Wanderer => "wanderer",
             Self::Investigator => "investigator",
             Self::Homebody => "homebody",
+            Self::Follower => "follower",
             Self::SocialPlayer => "social_player",
             Self::OccasionalVisitor => "occasional_visitor",
         }
@@ -103,6 +106,12 @@ fn wilderness_choices(
             if unseen_here {
                 choices.push(WeightedCommand { command: "inspect ground".into(), weight: 25 });
             }
+            if rng.random_ratio(1, 14) {
+                choices.push(WeightedCommand {
+                    command: "sign A path worth checking.".into(),
+                    weight: 8,
+                });
+            }
             if memory.knows_location(&ctx.location) && rng.random_ratio(1, 5) {
                 choices.push(WeightedCommand { command: "look".into(), weight: 15 });
             }
@@ -112,11 +121,42 @@ fn wilderness_choices(
         }
         Profile::Investigator => {
             if unseen_here {
-                choices.push(WeightedCommand { command: "inspect ground".into(), weight: 50 });
+                choices.push(WeightedCommand { command: "inspect ground".into(), weight: 40 });
+                choices.push(WeightedCommand { command: "inspect mark".into(), weight: 15 });
             }
-            choices.push(WeightedCommand { command: "journal record".into(), weight: 20 });
+            choices.push(WeightedCommand { command: "journal record".into(), weight: 25 });
+            if memory.inspected_here(&ctx.location) && rng.random_ratio(1, 6) {
+                choices.push(WeightedCommand {
+                    command:
+                        "theory post observation survey-mark The mark still aligns with the gate."
+                            .into(),
+                    weight: 12,
+                });
+            }
             push_cardinals(&mut choices, ctx, memory, 15);
             choices.push(WeightedCommand { command: "look".into(), weight: 15 });
+        }
+        Profile::Follower => {
+            if memory.public_trace_locations.contains(&ctx.location) {
+                choices.push(WeightedCommand { command: "inspect sign".into(), weight: 30 });
+                choices.push(WeightedCommand { command: "look".into(), weight: 25 });
+            }
+            if let Some(subject) = memory.theory_subject_hints.iter().next() {
+                choices.push(WeightedCommand {
+                    command: format!("theory list {subject}"),
+                    weight: 35,
+                });
+                if rng.random_ratio(1, 4) {
+                    choices.push(WeightedCommand {
+                        command: format!(
+                            "theory post theory {subject} A different reading than the first post."
+                        ),
+                        weight: 20,
+                    });
+                }
+            }
+            push_cardinals(&mut choices, ctx, memory, 20);
+            choices.push(WeightedCommand { command: "inspect ground".into(), weight: 15 });
         }
         Profile::Homebody => {
             if ctx.home_place_key.is_none() {

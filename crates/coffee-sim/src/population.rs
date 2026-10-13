@@ -12,6 +12,7 @@ pub struct PopulationMix {
     pub wanderer: u32,
     pub investigator: u32,
     pub homebody: u32,
+    pub follower: u32,
     pub social_player: u32,
     pub occasional_visitor: u32,
 }
@@ -45,9 +46,15 @@ impl PopulationMix {
             wanderer: 20,
             investigator: 20,
             homebody: 20,
-            social_player: 20,
-            occasional_visitor: 20,
+            follower: 20,
+            social_player: 10,
+            occasional_visitor: 10,
         }
+    }
+
+    /// Weights tuned for cross-operator traces and theories in offline runs.
+    pub fn story_emergence() -> Self {
+        Self { wanderer: 25, investigator: 25, homebody: 15, follower: 35, ..Default::default() }
     }
 
     /// Single-profile population (all agents share one behavioural profile).
@@ -57,6 +64,7 @@ impl PopulationMix {
             Profile::Wanderer => mix.wanderer = 100,
             Profile::Investigator => mix.investigator = 100,
             Profile::Homebody => mix.homebody = 100,
+            Profile::Follower => mix.follower = 100,
             Profile::SocialPlayer => mix.social_player = 100,
             Profile::OccasionalVisitor => mix.occasional_visitor = 100,
         }
@@ -67,6 +75,7 @@ impl PopulationMix {
         let sum = self.wanderer
             + self.investigator
             + self.homebody
+            + self.follower
             + self.social_player
             + self.occasional_visitor;
         if sum == 0 {
@@ -83,15 +92,16 @@ impl PopulationMix {
         if agent_count == 0 {
             return Err(SimulationError::NoAgents);
         }
-        let entries: [(Profile, u32); 5] = [
+        let entries: [(Profile, u32); 6] = [
             (Profile::Wanderer, self.wanderer),
             (Profile::Investigator, self.investigator),
             (Profile::Homebody, self.homebody),
+            (Profile::Follower, self.follower),
             (Profile::SocialPlayer, self.social_player),
             (Profile::OccasionalVisitor, self.occasional_visitor),
         ];
         let sum: u32 = entries.iter().map(|(_, w)| w).sum();
-        let mut counts = [0u32; 5];
+        let mut counts = [0u32; 6];
         let mut assigned = 0u32;
         let mut remainders = Vec::new();
         for (idx, (_, weight)) in entries.iter().enumerate() {

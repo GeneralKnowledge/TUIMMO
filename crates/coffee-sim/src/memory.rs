@@ -1,6 +1,6 @@
 //! Simulator-only memory (not authoritative game state).
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Per-agent behavioural memory for action selection and metrics.
 #[derive(Clone, Debug, Default)]
@@ -14,6 +14,12 @@ pub struct AgentMemory {
     pub social_successes: u64,
     pub successful_inspections: u64,
     pub home_returns: u64,
+    /// Theory subjects seen via inspect hints or theory read (player-visible only).
+    pub theory_subject_hints: BTreeSet<String>,
+    pub public_trace_locations: BTreeSet<String>,
+    /// location → trace kinds encountered at that tile
+    trace_kinds_by_location: BTreeMap<String, BTreeSet<String>>,
+    pub revisited_after_trace: BTreeSet<String>,
     last_locations: VecDeque<String>,
     last_move_from: Option<String>,
     last_exit: Option<String>,
@@ -21,6 +27,11 @@ pub struct AgentMemory {
 
 impl AgentMemory {
     pub fn record_location(&mut self, location: &str, region_key: Option<&str>) {
+        if self.public_trace_locations.contains(location)
+            && self.visited_locations.contains(location)
+        {
+            self.revisited_after_trace.insert(location.to_string());
+        }
         if self.visited_locations.insert(location.to_string()) {
             if let Some(key) = region_key {
                 self.region_keys_visited.insert(key.to_string());
@@ -53,5 +64,28 @@ impl AgentMemory {
 
     pub fn inspected_here(&self, location: &str) -> bool {
         self.inspected_locations.contains(location)
+    }
+
+    pub fn record_theory_subject_hint(&mut self, subject: &str) {
+        self.theory_subject_hints.insert(subject.to_string());
+    }
+
+    pub fn record_theory_read(&mut self, subject: &str) {
+        self.theory_subject_hints.insert(subject.to_string());
+    }
+
+    pub fn record_public_trace_at(&mut self, location: &str, kind: &str) {
+        self.public_trace_locations.insert(location.to_string());
+        self.trace_kinds_by_location
+            .entry(location.to_string())
+            .or_default()
+            .insert(kind.to_string());
+    }
+
+    pub fn public_traces_at(&self, location: &str) -> Vec<String> {
+        self.trace_kinds_by_location
+            .get(location)
+            .map(|set| set.iter().cloned().collect())
+            .unwrap_or_default()
     }
 }
