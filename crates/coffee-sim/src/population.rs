@@ -35,6 +35,24 @@ impl PopulationMix {
         }
     }
 
+    /// Mix used in calibration docs: co-located social play plus sparse visitor sessions.
+    pub fn social_and_visitors() -> Self {
+        Self { social_player: 50, occasional_visitor: 50, ..Default::default() }
+    }
+
+    /// Single-profile population (all agents share one behavioural profile).
+    pub fn monolithic(profile: Profile) -> Self {
+        let mut mix = Self::default();
+        match profile {
+            Profile::Wanderer => mix.wanderer = 100,
+            Profile::Investigator => mix.investigator = 100,
+            Profile::Homebody => mix.homebody = 100,
+            Profile::SocialPlayer => mix.social_player = 100,
+            Profile::OccasionalVisitor => mix.occasional_visitor = 100,
+        }
+        mix
+    }
+
     pub fn validate(&self) -> Result<(), SimulationError> {
         let sum = self.wanderer
             + self.investigator
