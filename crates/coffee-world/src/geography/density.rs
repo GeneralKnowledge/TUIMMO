@@ -271,13 +271,16 @@ impl StorySite {
     pub const fn look_line(self) -> &'static str {
         match self {
             Self::Directory => {
-                "A lobby directory lists Ward Clinic on level two — stamped CLOSED. `inspect directory`."
+                "A lobby directory lists Ward Clinic on level two — stamped CLOSED, but a handwritten \
+strip still points toward the entrance for records. `inspect directory`."
             }
             Self::Clinic => {
-                "Shuttered clinic doors face the lane. A notice is taped over the handle. `inspect clinic`."
+                "Shuttered clinic doors face the lane. A notice is taped over the handle; the tape \
+looks newer than the closure order. `inspect clinic`."
             }
             Self::Corridor => {
-                "A service corridor mouth sits half-bricked. Tools still lean in the dust. `inspect corridor`."
+                "A service corridor mouth sits half-bricked. Dust on the near side is scuffed, as if \
+the passage stayed in use after the seal began. `inspect corridor`."
             }
         }
     }
@@ -285,18 +288,23 @@ impl StorySite {
     pub fn inspect_text(self) -> String {
         match self {
             Self::Directory => {
-                "Ward Clinic directory. Level 2 — CLOSED. A handwritten addendum points northwest: \
-\"records held at the clinic entrance until the corridor job finishes.\""
+                "Ward Clinic directory. Level 2 — CLOSED in heavy ink. A later handwritten strip \
+points northwest: \"records held at the clinic entrance until the corridor job finishes.\" \
+The two messages do not agree on whether the building is still in use."
                     .into()
             }
             Self::Clinic => {
-                "Closed clinic. The taped notice reads: service corridor east of this door remains \
-unsafe — do not enter until the seal is complete. The tape is years dry."
+                "Closed clinic. The taped notice repeats the closure number from the lobby directory \
+and warns that the service corridor east of this door stays unsafe until the seal is complete. \
+The tape looks newer than the notice beneath it — as if someone re-posted the warning after \
+the corridor kept seeing traffic."
                     .into()
             }
             Self::Corridor => {
                 "Service corridor. Bricks stacked for a seal that was never finished. A work order \
-clipped to the scaffold names Ward Clinic and stops mid-sentence."
+clipped to the scaffold names Ward Clinic and stops mid-sentence: \"…resume access once records \
+are—\" Scuff marks in the dust lead through the gap. Who kept using the passage, and why the \
+seal stalled, is not written on the scaffold."
                     .into()
             }
         }
@@ -321,16 +329,16 @@ clipped to the scaffold names Ward Clinic and stops mid-sentence."
     pub const fn finding_note(self) -> &'static str {
         match self {
             Self::Directory => {
-                "A lobby directory near the Hub lists Ward Clinic as closed and points records \
-to the clinic entrance."
+                "A lobby directory near the Hub lists Ward Clinic as closed while a handwritten \
+note still sends clerks to the entrance for records."
             }
             Self::Clinic => {
-                "The shuttered Ward Clinic warns that a service corridor to the east was left \
-unsafe until a seal was completed."
+                "The shuttered Ward Clinic re-posted a corridor warning on fresh tape, as if the \
+east passage had stayed in use after the official closure."
             }
             Self::Corridor => {
-                "East of the closed clinic, a half-bricked service corridor still holds tools \
-and a work order that never finished the seal."
+                "East of the closed clinic, a half-bricked service corridor shows scuffed dust and \
+a truncated work order — evidence the seal was abandoned, not completed."
             }
         }
     }
@@ -714,6 +722,21 @@ mod tests {
         assert!(
             texture_pct > 0.10 && texture_pct < 0.35,
             "ordinary {ordinary_pct:.2} textured {texture_pct:.2}"
+        );
+    }
+
+    #[test]
+    fn ward_clinic_inspect_texts_support_the_closure_paradox() {
+        let directory = story_sight(StorySite::Directory).text;
+        let clinic = story_sight(StorySite::Clinic).text;
+        let corridor = story_sight(StorySite::Corridor).text;
+        assert!(directory.contains("CLOSED") && directory.contains("corridor job"), "{directory}");
+        assert!(clinic.contains("corridor") && clinic.contains("tape"), "{clinic}");
+        let corridor_lower = corridor.to_ascii_lowercase();
+        assert!(corridor_lower.contains("scuff") && corridor_lower.contains("seal"), "{corridor}");
+        assert!(
+            corridor_lower.contains("not written"),
+            "corridor should leave uncertainty explicit: {corridor}"
         );
     }
 
