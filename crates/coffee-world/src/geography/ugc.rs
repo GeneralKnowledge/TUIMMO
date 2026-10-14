@@ -4,9 +4,7 @@ use terminus_core::PlayerId;
 
 use super::density::{density_band, DensityBand};
 use super::identity::{WildernessPos, GATE_LOCAL_X, GATE_LOCAL_Y};
-use super::records::{
-    Structure, CHALK_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND,
-};
+use super::records::{Structure, CHALK_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND};
 
 /// Chebyshev distance from the Hub gate (same scale as starter-walk and density bands).
 pub const NEAR_HUB_MAX_CHEB: i64 = 20;
@@ -112,17 +110,14 @@ pub fn filter_traces_for_tile<'a>(
     let mut active: Vec<&Structure> = structures
         .into_iter()
         .filter(|item| {
-            matches!(
-                item.kind.as_str(),
-                SIGN_KIND | TRAIL_KIND | MARKER_KIND | CHALK_KIND
-            ) && structure_is_active(item, now_ms)
+            matches!(item.kind.as_str(), SIGN_KIND | TRAIL_KIND | MARKER_KIND | CHALK_KIND)
+                && structure_is_active(item, now_ms)
         })
         .collect();
     active.sort_by(|a, b| {
         let pa = trace_priority(&a.kind, a.owner_id, viewer);
         let pb = trace_priority(&b.kind, b.owner_id, viewer);
-        pa.cmp(&pb)
-            .then_with(|| b.created_at.cmp(&a.created_at))
+        pa.cmp(&pb).then_with(|| b.created_at.cmp(&a.created_at))
     });
     let hidden = active.len().saturating_sub(MAX_TRACE_LINES_ON_LOOK) as u32;
     active.truncate(MAX_TRACE_LINES_ON_LOOK);
@@ -161,8 +156,8 @@ pub fn band_label(pos: WildernessPos) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::identity::gate_position;
+    use super::*;
     use uuid::Uuid;
 
     #[test]

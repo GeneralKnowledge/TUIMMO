@@ -9,11 +9,11 @@ use coffee_sim::coverage_experiment::{format_coverage_report, run_density_experi
 use coffee_sim::discovery_metrics::{
     format_discovery_benchmark, run_discovery_benchmark, DISCOVERY_BENCHMARK_SEEDS,
 };
-use coffee_sim::newcomer_burst::{format_newcomer_burst, run_newcomer_burst};
 use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleRequest};
 use coffee_sim::multi_seed::{
     run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
 };
+use coffee_sim::newcomer_burst::{format_newcomer_burst, run_newcomer_burst};
 use coffee_sim::population::PopulationMix;
 use coffee_sim::runner::RunConfig;
 use coffee_sim::scheduler::SchedulerConfig;
@@ -308,22 +308,20 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Some(Commands::NewcomerBurst { seed, agents }) => {
-            match run_newcomer_burst(seed, agents) {
-                Ok(report) => {
-                    if cli.json {
-                        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
-                    } else {
-                        println!("{}", format_newcomer_burst(&report));
-                    }
-                    ExitCode::SUCCESS
+        Some(Commands::NewcomerBurst { seed, agents }) => match run_newcomer_burst(seed, agents) {
+            Ok(report) => {
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                } else {
+                    println!("{}", format_newcomer_burst(&report));
                 }
-                Err(err) => {
-                    eprintln!("newcomer burst failed: {err}");
-                    ExitCode::from(1)
-                }
+                ExitCode::SUCCESS
             }
-        }
+            Err(err) => {
+                eprintln!("newcomer burst failed: {err}");
+                ExitCode::from(1)
+            }
+        },
         Some(Commands::DiscoveryBenchmark { seeds, agents }) => {
             let seeds = if seeds.is_empty() { DISCOVERY_BENCHMARK_SEEDS.to_vec() } else { seeds };
             match run_discovery_benchmark(&seeds, agents) {

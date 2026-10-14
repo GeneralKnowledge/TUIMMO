@@ -1,14 +1,12 @@
 //! Read-only survey aggregation and publish-to-board (archive channel).
 
-use terminus_core::{
-    Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId,
-};
+use terminus_core::{Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId};
 use uuid::Uuid;
 
 use crate::geography::WildernessPos;
-use crate::model::STARTER_LOCATION;
 use crate::history::chart_hint_flag;
 use crate::model::PersistOp;
+use crate::model::STARTER_LOCATION;
 use crate::social::{validate_notice_text, NOTICE_RETENTION_MS};
 use crate::state::{Transition, WorldState};
 
@@ -35,12 +33,7 @@ impl WorldState {
         let mut lines = vec!["Survey (private summary)".to_string()];
         let journal_count = self.geography.field_notes_for(player).len();
         lines.push(format!("Journal entries (you): {journal_count}"));
-        let clue_count = self
-            .threads
-            .seen
-            .iter()
-            .filter(|row| row.operator_id == player)
-            .count();
+        let clue_count = self.threads.seen.iter().filter(|row| row.operator_id == player).count();
         lines.push(format!("Thread clues noticed (you): {clue_count}"));
         if let Some(pos) = WildernessPos::parse(&location) {
             let flag = chart_hint_flag(&pos.identity);
@@ -60,22 +53,22 @@ impl WorldState {
         }
         lines.push(
             "Publish durable notes with `survey publish …` (Coffee Shop board). \
-Tile traces (chalk, signs) fade or stay local.".into(),
+Tile traces (chalk, signs) fade or stay local."
+                .into(),
         );
         let body = lines.join("\n");
-        let (event, op) = self.emit(
-            Channel::System,
-            Audience::Player(player),
-            None,
-            body,
-        );
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, body);
         Ok(Transition {
             outcome: CommandOutcome { events: vec![event], quit: false },
             ops: vec![op],
         })
     }
 
-    fn survey_publish(&mut self, session_id: SessionId, raw: &str) -> Result<Transition, GameError> {
+    fn survey_publish(
+        &mut self,
+        session_id: SessionId,
+        raw: &str,
+    ) -> Result<Transition, GameError> {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
         if location != STARTER_LOCATION {

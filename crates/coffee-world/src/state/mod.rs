@@ -30,21 +30,21 @@ mod building_cmds;
 mod chalk_cmds;
 pub(crate) mod commands;
 mod guide;
-mod listen_cmds;
 mod home_cmds;
 mod inspect_cmds;
 mod inventory_cmds;
 mod invite_cmds;
 mod journal_cmds;
+mod listen_cmds;
 mod mail_cmds;
 mod movement_cmds;
 mod presence_cmds;
 mod settlement_cmds;
-mod survey_cmds;
 mod snapshot;
 mod social_cmds;
 mod speech_cmds;
 mod subway_cmds;
+mod survey_cmds;
 mod theory_cmds;
 mod thread_inspect;
 mod waypoint_cmds;
@@ -387,10 +387,7 @@ impl WorldState {
         let parsed = match self.registry.parse(line) {
             Ok(parsed) => parsed,
             Err(ParseError::Empty) => {
-                return Ok(Transition {
-                    outcome: CommandOutcome::default(),
-                    ops: purge_ops,
-                });
+                return Ok(Transition { outcome: CommandOutcome::default(), ops: purge_ops });
             }
             Err(ParseError::Unknown(word)) if self.matches_exit(session_id, &word) => {
                 ParsedCommand {

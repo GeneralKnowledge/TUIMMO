@@ -1,8 +1,6 @@
 //! Ephemeral chalk marks and personal trace listing.
 
-use terminus_core::{
-    Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId,
-};
+use terminus_core::{Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId};
 use uuid::Uuid;
 
 use crate::geography::{
@@ -170,17 +168,14 @@ impl WorldState {
             .filter(|item| {
                 item.region_id == region.id
                     && item.owner_id == Some(player)
-                    && matches!(item.kind.as_str(), CHALK_KIND | crate::geography::SIGN_KIND | crate::geography::TRAIL_KIND)
+                    && matches!(
+                        item.kind.as_str(),
+                        CHALK_KIND | crate::geography::SIGN_KIND | crate::geography::TRAIL_KIND
+                    )
                     && structure_is_active(item, self.now_ms)
             })
             .map(|item| {
-                format!(
-                    "({}, {}) {} — \"{}\"",
-                    item.local_x,
-                    item.local_y,
-                    item.kind,
-                    item.name
-                )
+                format!("({}, {}) {} — \"{}\"", item.local_x, item.local_y, item.kind, item.name)
             })
             .collect();
         lines.sort();
@@ -189,12 +184,7 @@ impl WorldState {
         } else {
             format!("Your active traces here:\n{}", lines.join("\n"))
         };
-        let (event, op) = self.emit(
-            Channel::System,
-            Audience::Player(player),
-            None,
-            body,
-        );
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, body);
         Ok(Transition {
             outcome: CommandOutcome { events: vec![event], quit: false },
             ops: vec![op],
@@ -214,9 +204,6 @@ impl WorldState {
             return Vec::new();
         }
         self.geography.structures.retain(|item| !expired.contains(&item.id));
-        expired
-            .into_iter()
-            .map(|id| PersistOp::DeleteStructure { id })
-            .collect()
+        expired.into_iter().map(|id| PersistOp::DeleteStructure { id }).collect()
     }
 }

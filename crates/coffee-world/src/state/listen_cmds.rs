@@ -1,8 +1,6 @@
 //! Sensory bearings — no clue spoilers.
 
-use terminus_core::{
-    Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId,
-};
+use terminus_core::{Audience, Channel, CommandOutcome, GameError, ParsedCommand, SessionId};
 
 use crate::geography::{
     atmosphere_at, chebyshev_from_gate, frontier_epoch, structure_is_active, ugc_band_label,
@@ -51,14 +49,12 @@ impl WorldState {
         if let Some(hint) = self.nearest_trace_bearing(pos) {
             lines.push(hint);
         }
-        lines.push("Use look for what is in front of you. map is only a sketch when visibility is poor.".into());
-        let body = lines.join("\n");
-        let (event, op) = self.emit(
-            Channel::System,
-            Audience::Player(player),
-            None,
-            body,
+        lines.push(
+            "Use look for what is in front of you. map is only a sketch when visibility is poor."
+                .into(),
         );
+        let body = lines.join("\n");
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, body);
         Ok(Transition {
             outcome: CommandOutcome { events: vec![event], quit: false },
             ops: vec![op],
@@ -80,12 +76,7 @@ The Roof Array is up; the Squalor is beyond the fence."
 in the abandoned districts."
                 .to_string()
         };
-        let (event, op) = self.emit(
-            Channel::System,
-            Audience::Player(player),
-            None,
-            body,
-        );
+        let (event, op) = self.emit(Channel::System, Audience::Player(player), None, body);
         let _ = session_id;
         Ok(Transition {
             outcome: CommandOutcome { events: vec![event], quit: false },
@@ -137,7 +128,11 @@ fn bearing_word(from_x: i64, from_y: i64, to_x: i64, to_y: i64) -> &'static str 
     let dx = to_x - from_x;
     let dy = to_y - from_y;
     if dx.abs() >= dy.abs() {
-        if dx > 0 { "east" } else { "west" }
+        if dx > 0 {
+            "east"
+        } else {
+            "west"
+        }
     } else if dy > 0 {
         "north"
     } else {

@@ -150,11 +150,7 @@ pub struct TileLookOptions {
 
 impl Default for TileLookOptions {
     fn default() -> Self {
-        Self {
-            now_ms: 0,
-            atmosphere: Atmosphere::clear(),
-            hidden_trace_count: 0,
-        }
+        Self { now_ms: 0, atmosphere: Atmosphere::clear(), hidden_trace_count: 0 }
     }
 }
 
@@ -633,8 +629,7 @@ mod tests {
     #[test]
     fn gate_look_matches_the_only_open_step() {
         let generated = generate_region(gate_identity()).unwrap();
-        let scene =
-            describe_tile(
+        let scene = describe_tile(
             gate_position(),
             &generated,
             &GeographyState::default(),
@@ -740,14 +735,7 @@ mod tests {
                 discovered_at: 1,
             },
         );
-        let scene = describe_tile(
-            gate_position(),
-            &generated,
-            &geo,
-            &[],
-            &[],
-            &Default::default(),
-        );
+        let scene = describe_tile(gate_position(), &generated, &geo, &[], &[], &Default::default());
         assert!(scene.map.contains("birth (0, 0)"));
         assert!(scene.map.contains("atlas (40, -3)"));
         assert!(scene.map.contains('@'));

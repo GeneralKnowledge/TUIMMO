@@ -54,7 +54,12 @@ pub fn exit_clarity_note(atmo: Atmosphere) -> Option<&'static str> {
     }
 }
 
-pub fn fogged_map_symbol(base: char, here: WildernessPos, target: WildernessPos, atmo: Atmosphere) -> char {
+pub fn fogged_map_symbol(
+    base: char,
+    here: WildernessPos,
+    target: WildernessPos,
+    atmo: Atmosphere,
+) -> char {
     if !atmo.map_degraded {
         return base;
     }

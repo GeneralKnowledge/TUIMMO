@@ -9,12 +9,7 @@ use crate::state::{starter_operator, visible_feed, WorldState};
 fn near_hub_rejects_sign_allows_chalk() {
     let mut world = WorldState::for_tests();
     let id = terminus_core::PlayerId::new();
-    world.insert_operator(starter_operator(
-        id,
-        uuid::Uuid::new_v4(),
-        "ada",
-        "ada",
-    ));
+    world.insert_operator(starter_operator(id, uuid::Uuid::new_v4(), "ada", "ada"));
     let identity = SessionIdentity::new(id, "ada", Permissions::player());
     let session = identity.session_id;
     world.connect_player(identity).unwrap();

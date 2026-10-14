@@ -424,9 +424,8 @@ fn to_buildable_tile(world: &mut WorldState, session: SessionId, player: PlayerI
     world.apply(session, "go up").unwrap();
     world.apply(session, "outskirts").unwrap();
     walk_to_fringe(world, session);
-    let identity = WildernessPos::parse(&world.location_key(session).unwrap())
-        .expect("wild")
-        .identity;
+    let identity =
+        WildernessPos::parse(&world.location_key(session).unwrap()).expect("wild").identity;
     let pos = WildernessPos::parse(&world.location_key(session).unwrap()).unwrap();
     world
         .apply_terrain_mod(identity, pos.local_x, pos.local_y, Terrain::Grass, "camp", player)

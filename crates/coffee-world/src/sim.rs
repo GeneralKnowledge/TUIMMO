@@ -224,8 +224,8 @@ impl WorldState {
     /// Count wilderness structures by kind and distance from the gate (UGC policy smoke tests).
     pub fn simulation_ugc_structure_audit(&self) -> UgcStructureAudit {
         use crate::geography::{
-            chebyshev_from_gate, CHALK_KIND, MARKER_KIND, NEAR_HUB_MAX_CHEB, SIGN_KIND, TRAIL_KIND,
-            WildernessPos,
+            chebyshev_from_gate, WildernessPos, CHALK_KIND, MARKER_KIND, NEAR_HUB_MAX_CHEB,
+            SIGN_KIND, TRAIL_KIND,
         };
 
         let mut audit = UgcStructureAudit::default();

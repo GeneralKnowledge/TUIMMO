@@ -107,7 +107,14 @@ async fn wilderness_survives_reopen_and_reseed() {
     let pos = WildernessPos::parse(&world.location_key(session).unwrap()).unwrap();
     ops.push(
         world
-            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "trail", op_id)
+            .apply_terrain_mod(
+                pos.identity,
+                pos.local_x,
+                pos.local_y,
+                Terrain::Grass,
+                "trail",
+                op_id,
+            )
             .unwrap(),
     );
     ops.extend(world.apply(session, "chalk camp").unwrap().ops);
@@ -247,7 +254,14 @@ async fn social_cabin_and_notices_survive_reopen_and_reseed() {
     let pos = WildernessPos::parse(&world.location_key(ada_session).unwrap()).unwrap();
     ops.push(
         world
-            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "pad", ada_id)
+            .apply_terrain_mod(
+                pos.identity,
+                pos.local_x,
+                pos.local_y,
+                Terrain::Grass,
+                "pad",
+                ada_id,
+            )
             .unwrap(),
     );
     ops.extend(world.apply(ada_session, "build cabin Haven").unwrap().ops);
@@ -1599,7 +1613,14 @@ async fn public_sign_survives_reopen_for_a_late_discoverer() {
     let pos = WildernessPos::parse(&world.location_key(ada_session).unwrap()).unwrap();
     ops.push(
         world
-            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "camp", ada_id)
+            .apply_terrain_mod(
+                pos.identity,
+                pos.local_x,
+                pos.local_y,
+                Terrain::Grass,
+                "camp",
+                ada_id,
+            )
             .unwrap(),
     );
     ops.extend(world.apply(ada_session, "sign Found a quiet cut-through").unwrap().ops);
