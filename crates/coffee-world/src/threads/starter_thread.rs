@@ -12,7 +12,7 @@ use super::procedural::ProceduralRegion;
 use super::template_load::TemplateCatalog;
 use super::{ClueDef, ClueKind, ClueSite, SiteRule, ThreadDef, WildSiteFilter};
 
-const STARTER_MAX_CHEB_FROM_GATE: i64 = 20;
+pub(crate) const STARTER_MAX_CHEB_FROM_GATE: i64 = 20;
 const STARTER_CLUE_MIN: u32 = 2;
 const STARTER_CLUE_MAX: u32 = 4;
 

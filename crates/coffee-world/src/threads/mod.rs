@@ -16,6 +16,7 @@ mod procedural;
 mod sim_report;
 mod starter_thread;
 mod template_load;
+mod thread_audit;
 
 pub use clue_class::{is_coverage_flavor, is_thread_clue, look_object_label};
 pub use coverage::{coverage_anchors_for_region, COVERAGE_GRID_STEP, INSPECTABLE_MAX_GAP};
@@ -35,10 +36,16 @@ pub use placement::{
 pub use procedural::{generate_for_region, generate_for_region_with_params, ProceduralRegion};
 pub use sim_report::{
     simulation_action_discovery_reports, simulation_clue_discovery_reports,
-    simulation_long_thread_progress, simulation_thread_reports, ActionDiscoveryReport,
-    ClueDiscoveryReport, LongThreadProgressReport, OperatorActionDiscovery, ThreadSimReport,
+    simulation_discovery_run_summary, simulation_long_thread_progress, simulation_thread_reports,
+    ActionDiscoveryReport, ClueDiscoveryReport, DiscoveryRunSummary, LongThreadProgressReport,
+    OperatorActionDiscovery, ThreadSimReport,
 };
+pub use starter_thread::starter_thread_instance_id;
 pub use template_load::{load_default_templates, TemplateCatalog};
+pub use thread_audit::{
+    format_thread_coverage_audit, measure_thread_coverage_audit, AuthoredThreadAuditRow,
+    ThreadCoverageAuditReport,
+};
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -245,8 +252,9 @@ impl ClueCatalog {
 mod acceptance;
 
 #[cfg(test)]
-#[cfg(test)]
 mod clue_class_tests;
+#[cfg(test)]
+mod discovery_journey_tests;
 #[cfg(test)]
 mod long_procession_tests;
 

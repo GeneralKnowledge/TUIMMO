@@ -93,7 +93,11 @@ fn pick_absolute_tile(world_seed: u64, index: u32, chapter: u8) -> (i64, i64) {
     )
 }
 
-fn snap_walkable(identity: RegionIdentity, abs_x: i64, abs_y: i64) -> Option<WildernessPos> {
+pub(crate) fn snap_walkable(
+    identity: RegionIdentity,
+    abs_x: i64,
+    abs_y: i64,
+) -> Option<WildernessPos> {
     let Ok((ox, oy, lx, ly)) = origins_for_absolute(abs_x, abs_y) else {
         return None;
     };

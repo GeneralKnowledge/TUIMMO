@@ -86,6 +86,7 @@ Docs:
 - [Security](docs/security.md)
 - [Development](docs/development.md)
 - [Deployment](docs/deployment.md)
+- [Thread discovery experiment](docs/thread-discovery-experiment.md)
 
 ## What this version does
 
@@ -102,7 +103,7 @@ Docs:
 - Private field journal (`journal`, `journal recent`, `journal read`, `journal record`) for authored discoveries, including one optional outskirts survey that does not open the Black Archive
 - Shared theories (`theory list`, `list <subject>`, `read`, `post observation|theory`, `remove`) tied to discovery ids or place keys (including the delisted floor). They persist, they are not copied from the private journal, and they do not unlock anything
 - Discoverable world history on `inspect ground` (one-time first-charting hint per birth cell) and at authored features (field corroboration counts, public theory hints)
-- Offline population simulator (`coffee-sim`) with story-oriented profiles, cross-operator interaction metrics, and deterministic acceptance tests
+- Offline population simulator (`coffee-sim`) with story-oriented profiles, cross-operator interaction metrics, thread discovery benchmarks, and deterministic acceptance tests
 - Personal waypoints (`waypoint add`, `list`, `show`, `note`, `remove`) for places an operator has stood, with private notes and return hints
 - SQLite persistence for accounts, operators, social graph, settlements, positions, structures, connections, notices, waypoints, private mail, shared theories, and a bounded message log
 - Multiplayer coverage with protocol clients, including restart persistence for friends/cabins/settlements/notices

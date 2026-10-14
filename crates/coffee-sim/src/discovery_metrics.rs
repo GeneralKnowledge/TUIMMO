@@ -15,7 +15,10 @@
 //! which is **clues per simulated day**, not per hour. Long-run comparisons that divided by
 //! `days × 24` produced ~0.07/hour. Both describe the same sparse discovery; only the divisor differed.
 
-use coffee_world::{measure_placement_inventory, CoverageParams, PlacementInventoryReport};
+use coffee_world::{
+    measure_placement_inventory, measure_thread_coverage_audit, CoverageParams,
+    DiscoveryRunSummary, PlacementInventoryReport, ThreadCoverageAuditReport,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::population::PopulationMix;
@@ -39,10 +42,19 @@ pub struct ProfileDiscoveryAggregate {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SeedDiscoveryRunSummary {
+    pub seed: u64,
+    pub static_audit: ThreadCoverageAuditReport,
+    pub run_summary: DiscoveryRunSummary,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DiscoveryBenchmarkReport {
     pub metric_definitions: String,
     pub placement_inventory: PlacementInventoryReport,
+    pub static_audit: ThreadCoverageAuditReport,
     pub profiles: Vec<ProfileDiscoveryAggregate>,
+    pub per_seed_run_summaries: Vec<SeedDiscoveryRunSummary>,
 }
 
 pub fn run_discovery_benchmark(
@@ -51,6 +63,8 @@ pub fn run_discovery_benchmark(
 ) -> Result<DiscoveryBenchmarkReport, SimulationError> {
     let world_seed = seeds.first().copied().unwrap_or(42);
     let placement_inventory = measure_placement_inventory(world_seed, CoverageParams::default());
+    let static_audit = measure_thread_coverage_audit(world_seed);
+    let mut per_seed_run_summaries = Vec::new();
 
     let configs: [(Profile, PopulationMix, Option<u64>); 4] = [
         (Profile::Wanderer, PopulationMix::monolithic(Profile::Wanderer), Some(800)),
@@ -113,10 +127,30 @@ pub fn run_discovery_benchmark(
         });
     }
 
+    for &seed in seeds {
+        let config = RunConfig {
+            seed,
+            agent_count,
+            population: PopulationMix::monolithic(Profile::Curious),
+            virtual_days: 7.0,
+            max_actions: Some(800),
+            include_coverage_metrics: false,
+            ..RunConfig::default()
+        };
+        let report = run_with_config(config)?;
+        per_seed_run_summaries.push(SeedDiscoveryRunSummary {
+            seed,
+            static_audit: measure_thread_coverage_audit(world_seed),
+            run_summary: report.discovery_run_summary.expect("discovery summary"),
+        });
+    }
+
     Ok(DiscoveryBenchmarkReport {
         metric_definitions: METRIC_DEFINITIONS.to_string(),
         placement_inventory,
+        static_audit,
         profiles: profiles_out,
+        per_seed_run_summaries,
     })
 }
 

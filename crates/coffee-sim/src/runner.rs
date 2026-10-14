@@ -759,6 +759,7 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         } else {
             None
         },
+        discovery_run_summary: Some(world.simulation_discovery_run_summary()),
     }
 }
 

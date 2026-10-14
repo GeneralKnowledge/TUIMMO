@@ -192,6 +192,10 @@ impl WorldState {
         simulation_clue_discovery_reports(&self.threads, &names, sim_start_ms)
     }
 
+    pub fn simulation_discovery_run_summary(&self) -> crate::threads::DiscoveryRunSummary {
+        crate::threads::simulation_discovery_run_summary(&self.threads)
+    }
+
     pub fn simulation_action_discovery_reports(
         &self,
         actions_attempted: &std::collections::HashMap<PlayerId, u64>,

@@ -19,7 +19,7 @@ use coffee_sim::scheduler::SchedulerConfig;
 use coffee_sim::seeds::ReplicateSeedSchedule;
 use coffee_sim::Profile;
 use coffee_sim::SimulationRunner;
-use coffee_world::CoverageParams;
+use coffee_world::{format_thread_coverage_audit, measure_thread_coverage_audit, CoverageParams};
 
 #[derive(Parser)]
 #[command(
@@ -156,6 +156,11 @@ enum Commands {
         #[arg(long, default_value_t = 16)]
         agents: u32,
     },
+    /// Static thread coverage audit (authored + procedural placement, no simulated agents).
+    ThreadAudit {
+        #[arg(long, default_value_t = 42)]
+        world_seed: u64,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -284,6 +289,15 @@ fn main() -> ExitCode {
         Some(Commands::CoverageReport { seed, grid_step, max_gap }) => {
             let params = CoverageParams::new(grid_step, max_gap);
             println!("{}", format_coverage_report(seed, params));
+            ExitCode::SUCCESS
+        }
+        Some(Commands::ThreadAudit { world_seed }) => {
+            let report = measure_thread_coverage_audit(world_seed);
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+            } else {
+                println!("{}", format_thread_coverage_audit(&report));
+            }
             ExitCode::SUCCESS
         }
         Some(Commands::DiscoveryBenchmark { seeds, agents }) => {

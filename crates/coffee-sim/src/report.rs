@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use coffee_world::{
-    ActionDiscoveryReport, ClueDiscoveryReport, LongThreadProgressReport, PlacementInventoryReport,
-    ThreadCoverageReport, ThreadSimReport, WorldOutcomeSnapshot,
+    ActionDiscoveryReport, ClueDiscoveryReport, DiscoveryRunSummary, LongThreadProgressReport,
+    PlacementInventoryReport, ThreadCoverageReport, ThreadSimReport, WorldOutcomeSnapshot,
 };
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +57,8 @@ pub struct RunReport {
     pub action_discovery: Option<ActionDiscoveryReport>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement_inventory: Option<PlacementInventoryReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discovery_run_summary: Option<DiscoveryRunSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
