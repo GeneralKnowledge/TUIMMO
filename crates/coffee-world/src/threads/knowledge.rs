@@ -13,6 +13,7 @@ pub enum Knowledge {
     SeenClue(String),
     CorroboratedTheory { subject: String, min: u32 },
     UsedSubway,
+    AnyOfClues { n: u32, clue_ids: Vec<String> },
     All(Vec<Knowledge>),
 }
 
@@ -30,6 +31,9 @@ impl Knowledge {
                 Self::All(items.iter().map(Self::from_requirement).collect())
             }
             KnowledgeRequirement::UsedSubway => Self::UsedSubway,
+            KnowledgeRequirement::AnyOfClues { n, clue_ids } => {
+                Self::AnyOfClues { n: *n, clue_ids: clue_ids.clone() }
+            }
         }
     }
 
@@ -41,6 +45,7 @@ impl Knowledge {
             Self::SeenTag { distinct_sites, .. } => 50 + *distinct_sites,
             Self::CorroboratedTheory { min, .. } => 40 + *min,
             Self::UsedSubway => 55,
+            Self::AnyOfClues { n, .. } => 42 + *n,
         }
     }
 }
@@ -60,6 +65,7 @@ impl<'a> KnowledgeContext<'a> {
         seen_clue_rows: &[(PlayerId, String, ClueSite)],
         theory_authors: &BTreeMap<String, HashSet<PlayerId>>,
         used_subway: bool,
+        clue_tags: impl Fn(&str) -> Option<Vec<String>>,
     ) -> Self {
         let mut seen_clues = HashSet::new();
         let mut seen_sites_by_tag: HashMap<String, HashSet<ClueSite>> = HashMap::new();
@@ -68,9 +74,11 @@ impl<'a> KnowledgeContext<'a> {
                 continue;
             }
             seen_clues.insert(clue_id.clone());
-            if let Some(clue) = catalog.clue(clue_id) {
-                for tag in &clue.tags {
-                    seen_sites_by_tag.entry(tag.clone()).or_default().insert(site.clone());
+            if let Some(tags) =
+                clue_tags(clue_id).or_else(|| catalog.clue(clue_id).map(|clue| clue.tags.clone()))
+            {
+                for tag in tags {
+                    seen_sites_by_tag.entry(tag).or_default().insert(site.clone());
                 }
             }
         }
@@ -95,6 +103,9 @@ impl<'a> KnowledgeContext<'a> {
                 .get(subject)
                 .is_some_and(|authors| authors.len() >= *min as usize),
             Knowledge::UsedSubway => self.used_subway,
+            Knowledge::AnyOfClues { n, clue_ids } => {
+                clue_ids.iter().filter(|id| self.seen_clues.contains(*id)).count() >= *n as usize
+            }
             Knowledge::All(items) => items.iter().all(|item| self.satisfies(item)),
         }
     }
