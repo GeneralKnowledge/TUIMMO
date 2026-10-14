@@ -62,6 +62,7 @@ pub struct LoadedWorld {
     pub homes: HomeState,
     pub mailbox: Mailbox,
     pub theories: TheoryBoard,
+    pub clue_seen: Vec<crate::threads::ClueSeen>,
     pub invites: InviteBook,
 }
 
@@ -130,6 +131,7 @@ impl Store {
         let homes = self.load_homes().await?;
         let mailbox = self.load_mail().await?;
         let theories = self.load_theories().await?;
+        let clue_seen = self.load_clue_seen().await?;
         let invites = self.load_invites().await?;
         Ok(LoadedWorld {
             operators,
@@ -141,6 +143,7 @@ impl Store {
             homes,
             mailbox,
             theories,
+            clue_seen,
             invites,
         })
     }

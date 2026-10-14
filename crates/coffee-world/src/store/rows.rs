@@ -392,6 +392,13 @@ pub(crate) struct DiscoverySql {
 }
 
 #[derive(sqlx::FromRow)]
+pub(crate) struct ClueSeenSql {
+    pub(crate) operator_id: String,
+    pub(crate) clue_id: String,
+    pub(crate) first_seen_at: i64,
+}
+
+#[derive(sqlx::FromRow)]
 pub(crate) struct LinkSql {
     pub(crate) id: String,
     pub(crate) from_place: String,

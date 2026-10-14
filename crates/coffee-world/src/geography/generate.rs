@@ -210,7 +210,27 @@ impl GeneratedRegion {
 
 /// TUIMMO mix v1, the SplitMix64 finalizer used as a pure function.
 /// Do not replace this with `std` hashing.
-fn mix(mut z: u64) -> u64 {
+/// Hash for thread clue placement (world seed, ids, birth region).
+pub fn thread_placement_hash(
+    world_seed: u64,
+    thread_id: &str,
+    clue_id: &str,
+    origin_x: i32,
+    origin_y: i32,
+) -> u64 {
+    let mut h = world_seed;
+    for byte in thread_id.as_bytes() {
+        h = mix(h ^ u64::from(*byte).wrapping_mul(0x9E37_79B9_7F4A_7C15));
+    }
+    for byte in clue_id.as_bytes() {
+        h = mix(h ^ u64::from(*byte).wrapping_mul(0xBF58_476D_1CE4_E5B9));
+    }
+    h = mix(h ^ u64::from(origin_x.cast_unsigned()));
+    h = mix(h ^ u64::from(origin_y.cast_unsigned()).wrapping_mul(0x94D0_49BB_1331_11EB));
+    mix(h)
+}
+
+pub(crate) fn mix(mut z: u64) -> u64 {
     z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
     z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);

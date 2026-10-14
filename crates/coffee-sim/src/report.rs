@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use coffee_world::WorldOutcomeSnapshot;
+use coffee_world::{ThreadSimReport, WorldOutcomeSnapshot};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SnapshotConfig;
@@ -42,6 +42,8 @@ pub struct RunReport {
     pub interaction: InteractionMetrics,
     #[serde(default)]
     pub story_transcript: StoryTranscript,
+    #[serde(default)]
+    pub thread_reports: Vec<ThreadSimReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -335,6 +337,23 @@ impl RunReport {
                     stats.journal_records,
                     stats.social_successes,
                 ));
+            }
+        }
+        if !self.thread_reports.is_empty() {
+            lines.push(String::new());
+            lines.push("Thread clues (simulated)".into());
+            for report in &self.thread_reports {
+                lines.push(format!(
+                    "  {} — final clue '{}' reached by {} operator(s)",
+                    report.thread_id, report.final_clue_id, report.operators_reaching_final_clue
+                ));
+                for (operator, hours) in &report.clues_by_operator_hour {
+                    for (hour, count) in hours {
+                        lines.push(format!(
+                            "    {operator} hour {hour}: {count} clue(s) first seen"
+                        ));
+                    }
+                }
             }
         }
         if !self.per_agent.is_empty() {

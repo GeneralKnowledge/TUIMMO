@@ -22,6 +22,7 @@ pub mod state;
 pub mod store;
 pub mod subway;
 pub mod theories;
+pub mod threads;
 pub mod undernet;
 pub mod waypoint;
 
@@ -54,3 +55,4 @@ pub use sim::{SimulationOccupancySummary, WorldOutcomeSnapshot, WORLD_GENERATION
 pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
 pub use store::{AccountInvitePolicy, AccountRow, LoadedWorld, NewAccount, Store, StoreError};
+pub use threads::ThreadSimReport;

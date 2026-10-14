@@ -1,0 +1,137 @@
+# Hidden clue threads — loaded at startup; add threads here without code changes.
+
+[[threads]]
+id = "the-tally"
+tags = ["notch-count"]
+
+[[threads.clues]]
+id = "tally-shutter-graffiti"
+kind = "graffiti"
+surface_text = "Three notches scratched into the shutter, deep and even."
+tags = ["notch-count"]
+journal_title = "Shutter notches"
+
+[threads.clues.site]
+wild = { band = "fringe", district = "commercial" }
+
+[[threads.clues.reveals]]
+text = "The counts go down as you go in. Each place is one short of the last."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "notch-count"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "tally-ledger-margin"
+kind = "record"
+surface_text = "In the margin, a column of small strokes. The last entry is smudged."
+tags = ["notch-count"]
+journal_title = "Ledger strokes"
+
+[threads.clues.site]
+wild = { band = "near_hub", district = "commercial" }
+
+[[threads.clues.reveals]]
+text = "The counts go down as you go in. Each place is one short of the last."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "notch-count"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "tally-delisted-placard"
+kind = "sign"
+surface_text = "Someone has scored the placard by hand: two strokes."
+tags = ["notch-count"]
+journal_title = "Scored placard"
+
+[threads.clues.site]
+static = "abandoned-exchange"
+
+[[threads.clues.reveals]]
+text = "The counts go down as you go in. Each place is one short of the last."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "notch-count"
+distinct_sites = 3
+
+[[threads.clues.reveals]]
+text = "The count ends here, at one. Below it, a fresh scratch, as if someone kept going."
+
+[threads.clues.reveals.requires]
+all = [
+  { seen_tag = { tag = "notch-count", distinct_sites = 3 } },
+  { seen_clue = "subway-stair-clue" },
+]
+
+[[threads]]
+id = "warm-doors"
+tags = ["chalk-circle"]
+
+[[threads.clues]]
+id = "warm-chalk-doorframe"
+kind = "graffiti"
+surface_text = "A chalk circle, redrawn many times. The frame beneath is worn smooth."
+tags = ["chalk-circle"]
+journal_title = "Chalk doorframe"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "The circles mark doors that someone still tends. Not all of them are in use."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "chalk-circle"
+distinct_sites = 2
+
+[[threads.clues]]
+id = "warm-stairwell-cup"
+kind = "object"
+surface_text = "A tin cup with a thumb-sized dent. It is warm, though nothing here should be."
+tags = ["chalk-circle"]
+journal_title = "Warm tin cup"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "The circles mark doors that someone still tends. Not all of them are in use."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "chalk-circle"
+distinct_sites = 2
+
+[[threads.clues]]
+id = "warm-roof-note"
+kind = "sign"
+surface_text = "A hand-lettered note: 'Left the heat on for whoever.'"
+tags = ["chalk-circle"]
+journal_title = "Roof note"
+
+[threads.clues.site]
+static = "roof-array"
+
+[[threads.clues.reveals]]
+text = "The circles mark doors that someone still tends. Not all of them are in use."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "chalk-circle"
+distinct_sites = 2
+
+[[threads.clues.reveals]]
+text = "Others have noticed the same pattern. The most recent mark is newer than the dust around it."
+
+[threads.clues.reveals.requires.corroborated_theory]
+subject = "warm-doors"
+min = 2
+
+[[threads.clues]]
+id = "subway-stair-clue"
+kind = "graffiti"
+surface_text = "Under the peeled map stencil, a small chalk circle has been redrawn on the concrete."
+tags = ["chalk-circle"]
+journal_title = "Stair chalk circle"
+
+[threads.clues.site]
+metro_entrance = "ash"

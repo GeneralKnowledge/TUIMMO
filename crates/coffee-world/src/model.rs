@@ -315,6 +315,12 @@ pub enum PersistOp {
         last_departed_at: Option<u64>,
         last_returned_at: Option<u64>,
     },
+    /// First time an operator inspects a thread clue at its site.
+    ClueSeen {
+        operator_id: PlayerId,
+        clue_id: String,
+        first_seen_at: u64,
+    },
 }
 
 pub const STARTER_LOCATION: &str = "coffee-shop";

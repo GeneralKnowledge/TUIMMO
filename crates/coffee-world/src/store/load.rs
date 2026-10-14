@@ -271,6 +271,23 @@ impl Store {
         Ok(Mailbox::from_stored(messages, u64_col(next_id)?))
     }
 
+    pub(crate) async fn load_clue_seen(&self) -> Result<Vec<crate::threads::ClueSeen>, StoreError> {
+        let rows = sqlx::query_as::<_, ClueSeenSql>(
+            "SELECT operator_id, clue_id, first_seen_at FROM clue_seen",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let mut seen = Vec::with_capacity(rows.len());
+        for row in rows {
+            seen.push(crate::threads::ClueSeen {
+                operator_id: PlayerId::from_str(&row.operator_id).map_err(|_| StoreError::Data)?,
+                clue_id: row.clue_id,
+                first_seen_at: u64_col(row.first_seen_at)?,
+            });
+        }
+        Ok(seen)
+    }
+
     pub(crate) async fn load_theories(&self) -> Result<TheoryBoard, StoreError> {
         let rows = sqlx::query_as::<_, TheorySql>(
             "SELECT id, topic, author_id, kind, body, created_at FROM shared_theories",

@@ -12,6 +12,7 @@ use crate::geography::{DensityBand, UrbanContext, WildernessPos, OUTSKIRTS_FROM,
 use crate::home::Habitation;
 use crate::model::STARTER_LOCATION;
 use crate::state::WorldState;
+use crate::threads::{simulation_thread_reports, ThreadSimReport};
 
 /// Stable world-generation label recorded in simulation reports.
 pub const WORLD_GENERATION_VERSION: u16 = GENERATION_V1;
@@ -164,6 +165,12 @@ impl WorldState {
     }
 
     /// Distinct authors per theory subject (offline reporting only).
+    pub fn simulation_thread_reports(&self, sim_start_ms: u64) -> Vec<ThreadSimReport> {
+        let names: std::collections::HashMap<PlayerId, String> =
+            self.operators.values().map(|op| (op.id, op.name.clone())).collect();
+        simulation_thread_reports(&self.threads, &names, sim_start_ms)
+    }
+
     pub fn simulation_theory_authors_by_topic(
         &self,
     ) -> std::collections::BTreeMap<String, std::collections::HashSet<PlayerId>> {

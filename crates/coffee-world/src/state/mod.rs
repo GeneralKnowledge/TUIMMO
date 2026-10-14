@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use self::commands::{coffee_commands, coffee_registry, find_command, CommandAccess};
 use self::movement_cmds::is_squalor_keyword;
+use crate::geography::frontier_epoch;
 use crate::geography::{
     derive_region_seed, effective_tile, format_seed, is_reserved_word, Cardinal, Discovery,
     GenerateError, GeneratedRegion, GeographyState, MaterializedRegion, RegionCache,
@@ -21,6 +22,7 @@ use crate::geography::{
 use crate::home::HomeState;
 use crate::model::{Item, Operator, PersistOp, FEED_CAP, LOG_CAP, STARTER_LOCATION};
 use crate::subway::{self};
+use crate::threads::{load_default_threads, ThreadState};
 use crate::undernet::{self, ExitDef};
 use crate::waypoint::Waypoint;
 
@@ -41,6 +43,7 @@ mod social_cmds;
 mod speech_cmds;
 mod subway_cmds;
 mod theory_cmds;
+mod thread_inspect;
 mod waypoint_cmds;
 
 /// Result of a state transition, including the rows that must be committed.
@@ -74,6 +77,7 @@ pub struct WorldState {
     pub(crate) homes: HomeState,
     pub(crate) mailbox: crate::mail::Mailbox,
     pub(crate) theories: crate::theories::TheoryBoard,
+    pub(crate) threads: ThreadState,
     pub(crate) invites: crate::invite::InviteBook,
     pub(crate) region_cache: RefCell<RegionCache>,
     pub(crate) use_system_clock: bool,
@@ -101,6 +105,7 @@ impl WorldState {
             homes: HomeState::default(),
             mailbox: crate::mail::Mailbox::default(),
             theories: crate::theories::TheoryBoard::default(),
+            threads: ThreadState::new(load_default_threads(), frontier_epoch().world_seed),
             invites: crate::invite::InviteBook::default(),
             region_cache: RefCell::new(RegionCache::new(64)),
             use_system_clock: true,
@@ -127,6 +132,7 @@ impl WorldState {
             homes,
             mailbox,
             theories,
+            clue_seen,
             invites,
         } = loaded;
         self.install_loaded(operators, log);
@@ -137,7 +143,18 @@ impl WorldState {
         self.install_homes(homes);
         self.install_mail(mailbox);
         self.install_theories(theories);
+        self.install_clue_seen(clue_seen);
         self.install_invites(invites);
+    }
+
+    pub(crate) fn install_clue_seen(&mut self, seen: Vec<crate::threads::ClueSeen>) {
+        let catalog = load_default_threads();
+        self.threads = ThreadState::new(catalog, frontier_epoch().world_seed);
+        self.threads.seen = seen;
+    }
+
+    pub(crate) fn restore_threads(&mut self, threads: ThreadState) {
+        self.threads = threads;
     }
 
     pub(crate) fn install_loaded(&mut self, operators: Vec<Operator>, log: Vec<LogEntry>) {

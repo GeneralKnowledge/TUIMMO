@@ -678,6 +678,18 @@ impl Store {
                     .execute(&mut *tx)
                     .await?;
                 }
+                PersistOp::ClueSeen { operator_id, clue_id, first_seen_at } => {
+                    sqlx::query(
+                        "INSERT INTO clue_seen (operator_id, clue_id, first_seen_at)
+                         VALUES (?1, ?2, ?3)
+                         ON CONFLICT (operator_id, clue_id) DO NOTHING",
+                    )
+                    .bind(operator_id.to_string())
+                    .bind(clue_id)
+                    .bind(*first_seen_at as i64)
+                    .execute(&mut *tx)
+                    .await?;
+                }
             }
         }
         sqlx::query(
