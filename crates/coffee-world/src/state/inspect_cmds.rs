@@ -77,8 +77,8 @@ impl WorldState {
                         clue_id.as_deref(),
                         &mut ops,
                     );
-                } else if let Some(subject) = thread_subject {
-                    if let Some(line) = self.theories_summary_line(&subject) {
+                } else if let Some(ref subject) = thread_subject {
+                    if let Some(line) = self.theories_summary_line(subject) {
                         text.push('\n');
                         text.push_str(&line);
                     }
