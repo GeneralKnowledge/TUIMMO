@@ -277,7 +277,8 @@ pub fn materialize_long_procession_for_region(
     Ok(())
 }
 
-type RegionPairClues = (Vec<(String, ClueDef, WildernessPos)>, Vec<(String, ClueDef, WildernessPos)>);
+type RegionPairClues =
+    (Vec<(String, ClueDef, WildernessPos)>, Vec<(String, ClueDef, WildernessPos)>);
 
 /// Clues placed when generating `a` then `b` vs `b` then `a` for regions containing shared tiles.
 #[allow(dead_code)]
