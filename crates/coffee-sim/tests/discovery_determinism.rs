@@ -20,8 +20,7 @@ fn discovery_benchmark_report_is_stable_for_fixed_seeds() {
 
 #[test]
 fn standard_discovery_seeds_benchmark_runs() {
-    let report =
-        run_discovery_benchmark(DISCOVERY_BENCHMARK_SEEDS.as_ref(), 4).expect("benchmark");
+    let report = run_discovery_benchmark(DISCOVERY_BENCHMARK_SEEDS.as_ref(), 4).expect("benchmark");
     assert!(!report.static_audit.authored_threads.is_empty());
     assert_eq!(report.per_seed_run_summaries.len(), DISCOVERY_BENCHMARK_SEEDS.len());
 }
