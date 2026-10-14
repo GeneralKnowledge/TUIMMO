@@ -7,6 +7,29 @@ use crate::state::WorldState;
 use crate::undernet;
 use terminus_core::{Game, Permissions, SessionIdentity};
 
+fn fringe_walk_for_tests(
+    world: &mut WorldState,
+    session: terminus_core::SessionId,
+) -> Vec<PersistOp> {
+    use crate::geography::permanent_traces_allowed;
+    let mut ops = Vec::new();
+    for _ in 0..96 {
+        let key = world.location_key(session).expect("location");
+        let pos = WildernessPos::parse(&key).expect("wild");
+        if permanent_traces_allowed(pos)
+            && world.effective_at(pos).is_ok_and(|tile| tile.traversable())
+        {
+            return ops;
+        }
+        if let Ok(step) = world.apply(session, "west") {
+            ops.extend(step.ops);
+        } else if let Ok(step) = world.apply(session, "north") {
+            ops.extend(step.ops);
+        }
+    }
+    panic!("fringe tile not reached in store test");
+}
+
 #[tokio::test]
 async fn account_and_move_survive_reopen() {
     let dir = tempfile::tempdir().unwrap();
@@ -80,11 +103,14 @@ async fn wilderness_survives_reopen_and_reseed() {
         ops.extend(world.apply(session, line).unwrap().ops);
     }
     let region_identity = gate_identity();
+    ops.extend(world.apply(session, "west").unwrap().ops);
+    let pos = WildernessPos::parse(&world.location_key(session).unwrap()).unwrap();
     ops.push(
-        world.apply_terrain_mod(region_identity, 8, 9, Terrain::Grass, "trail", op_id).unwrap(),
+        world
+            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "trail", op_id)
+            .unwrap(),
     );
-    ops.extend(world.apply(session, "north").unwrap().ops);
-    ops.extend(world.apply(session, "mark camp").unwrap().ops);
+    ops.extend(world.apply(session, "chalk camp").unwrap().ops);
     ops.push(world.relocate_region(region_identity, 12, -2).unwrap());
     let future_id = Uuid::new_v4();
     ops.push(PersistOp::MaterializeRegion {
@@ -114,11 +140,12 @@ async fn wilderness_survives_reopen_and_reseed() {
     assert_eq!(loaded.operators[0].username, "ada");
     assert_eq!(loaded.operators[0].items[0].keyword, "chip");
     assert!(
-        loaded.operators[0].location_id.ends_with(":8:9"),
+        loaded.operators[0].location_id.starts_with("w:"),
         "{}",
         loaded.operators[0].location_id
     );
     assert_eq!(loaded.geography.structures.len(), 1);
+    assert_eq!(loaded.geography.structures[0].kind, "chalk");
     assert_eq!(loaded.geography.structures[0].name, "camp");
     assert_eq!(loaded.geography.structures[0].owner_id, Some(op_id));
     assert_eq!(loaded.geography.terrain_mods.len(), 1);
@@ -145,8 +172,12 @@ async fn wilderness_survives_reopen_and_reseed() {
     let back_session = back.session_id;
     again.connect_player(back).unwrap();
     let view = again.view(back_session).unwrap();
-    assert!(view.objects.iter().any(|object| object.keyword == "camp"));
-    assert!(view.description.contains("changed"), "{}", view.description);
+    assert!(view.objects.iter().any(|object| object.keyword == "chalk"));
+    assert!(
+        view.description.contains("changed") || view.description.contains("Chalk"),
+        "{}",
+        view.description
+    );
     assert!(view.status.iter().any(|line| line.contains("atlas (12, -2)")));
 
     let structures: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM world_structures")
@@ -212,9 +243,13 @@ async fn social_cabin_and_notices_survive_reopen_and_reseed() {
     for line in ["go up", "outskirts"] {
         ops.extend(world.apply(ada_session, line).unwrap().ops);
     }
-    let identity = gate_identity();
-    ops.push(world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "pad", ada_id).unwrap());
-    ops.extend(world.apply(ada_session, "north").unwrap().ops);
+    ops.extend(fringe_walk_for_tests(&mut world, ada_session));
+    let pos = WildernessPos::parse(&world.location_key(ada_session).unwrap()).unwrap();
+    ops.push(
+        world
+            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "pad", ada_id)
+            .unwrap(),
+    );
     ops.extend(world.apply(ada_session, "build cabin Haven").unwrap().ops);
     ops.extend(world.apply(ada_session, "sign Come visit").unwrap().ops);
     store.commit(&ops).await.unwrap();
@@ -1560,8 +1595,13 @@ async fn public_sign_survives_reopen_for_a_late_discoverer() {
     for line in ["go up", "outskirts"] {
         ops.extend(world.apply(ada_session, line).unwrap().ops);
     }
-    world.apply_terrain_mod(gate_identity(), 8, 9, Terrain::Grass, "camp", ada_id).unwrap();
-    ops.extend(world.apply(ada_session, "north").unwrap().ops);
+    ops.extend(fringe_walk_for_tests(&mut world, ada_session));
+    let pos = WildernessPos::parse(&world.location_key(ada_session).unwrap()).unwrap();
+    ops.push(
+        world
+            .apply_terrain_mod(pos.identity, pos.local_x, pos.local_y, Terrain::Grass, "camp", ada_id)
+            .unwrap(),
+    );
     ops.extend(world.apply(ada_session, "sign Found a quiet cut-through").unwrap().ops);
     let sign_place = world.location_key(ada_session).unwrap();
     store.commit(&ops).await.unwrap();

@@ -181,6 +181,11 @@ impl SimulationRunner {
     }
 
     pub fn run(&self) -> Result<RunReport, SimulationError> {
+        self.run_with_world().map(|(report, _world)| report)
+    }
+
+    /// Same as [`Self::run`], but returns the final authoritative world (for structure audits).
+    pub fn run_with_world(&self) -> Result<(RunReport, WorldState), SimulationError> {
         let started = Instant::now();
         let mut rng = StdRng::seed_from_u64(self.config.seed);
         let mut world = WorldState::for_simulation(self.schedule.virtual_start_ms);
@@ -516,7 +521,7 @@ impl SimulationRunner {
         let (interaction_metrics, story_transcript) =
             interaction.finalize(&world, &agents, &player_map);
 
-        Ok(assemble_report(ReportInputs {
+        let report = assemble_report(ReportInputs {
             config: &self.config,
             schedule: &self.schedule,
             world: &world,
@@ -544,7 +549,8 @@ impl SimulationRunner {
             inactive_by_index,
             interaction: interaction_metrics,
             story_transcript,
-        }))
+        });
+        Ok((report, world))
     }
 }
 
@@ -807,6 +813,12 @@ fn snapshot_metrics<'a>(
 /// Test and instrumentation helper exposed for integration tests.
 pub fn run_with_config(config: RunConfig) -> Result<RunReport, SimulationError> {
     SimulationRunner::new(config)?.run()
+}
+
+pub fn run_with_config_and_world(
+    config: RunConfig,
+) -> Result<(RunReport, WorldState), SimulationError> {
+    SimulationRunner::new(config)?.run_with_world()
 }
 
 /// Extension for session location lookup without making `WorldState` fields public.

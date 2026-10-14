@@ -14,6 +14,7 @@ pub mod feed_memory;
 pub mod interaction;
 pub mod memory;
 pub mod multi_seed;
+pub mod newcomer_burst;
 pub mod navigation;
 pub mod population;
 pub mod profile;
@@ -39,6 +40,9 @@ pub use experiment::{
     PopulationScaleRequest, MAX_SCALE_EXPERIMENT_RUNS,
 };
 pub use interaction::{InteractionMetrics, StoryLine, StoryTranscript};
+pub use newcomer_burst::{
+    format_newcomer_burst, run_newcomer_burst, NewcomerBurstReport,
+};
 pub use multi_seed::{
     run_multi_seed_experiment, ConditionAggregate, ConditionMeanComparison, ConditionResult,
     ExperimentCondition, MultiSeedExperimentReport, MultiSeedExperimentRequest, ReplicateMetrics,

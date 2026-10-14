@@ -124,12 +124,13 @@ impl Store {
                     settlement_id,
                     share,
                     created_at,
+                    expires_at,
                 } => {
                     sqlx::query(
                         "INSERT INTO world_structures (
                             id, region_id, local_x, local_y, kind, name, owner_id, access,
-                            interior_place, settlement_id, share, created_at
-                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                            interior_place, settlement_id, share, created_at, expires_at
+                         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                     )
                     .bind(id.to_string())
                     .bind(region_id.to_string())
@@ -143,8 +144,16 @@ impl Store {
                     .bind(settlement_id.map(|id| id.to_string()))
                     .bind(share)
                     .bind(*created_at as i64)
+                    .bind(expires_at.map(|t| t as i64))
                     .execute(&mut *tx)
                     .await?;
+                }
+                PersistOp::PatchStructureExpiry { id, expires_at } => {
+                    sqlx::query("UPDATE world_structures SET expires_at = ?1 WHERE id = ?2")
+                        .bind(*expires_at as i64)
+                        .bind(id.to_string())
+                        .execute(&mut *tx)
+                        .await?;
                 }
                 PersistOp::UpdateStructure { id, name, access, interior_place, share } => {
                     sqlx::query(
