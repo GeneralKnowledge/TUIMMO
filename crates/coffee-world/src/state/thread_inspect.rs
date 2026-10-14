@@ -6,7 +6,7 @@ use terminus_core::{GameError, PlayerId, SessionId};
 
 use crate::geography::{Discovery, WildernessPos, FIELD_KIND};
 use crate::model::PersistOp;
-use crate::threads::{best_reveal_text, ClueSite, KnowledgeContext};
+use crate::threads::{best_reveal_text, ClueSite, KnowledgeContext, USED_SUBWAY_FLAG};
 
 use super::WorldState;
 
@@ -20,11 +20,8 @@ impl WorldState {
         wild: Option<WildernessPos>,
         target: &str,
     ) -> Option<Result<(String, Vec<PersistOp>), GameError>> {
-        let clue_id = self.threads.clue_at_place(location, wild)?;
+        let clue_id = self.threads.clue_at_place_for_target(location, wild, target)?;
         let clue = self.threads.catalog.clue(&clue_id)?.clone();
-        if !clue.kind.matches_target(target) {
-            return None;
-        }
         Some(self.finish_thread_inspect(session_id, player, location, wild, &clue))
     }
 
@@ -124,18 +121,25 @@ impl WorldState {
             })
             .collect();
         let theory_authors = self.simulation_theory_authors_by_topic();
-        KnowledgeContext::build(&self.threads.catalog, player, &rows, &theory_authors)
+        let used_subway =
+            self.operators.get(&player).is_some_and(|op| op.flags.contains(USED_SUBWAY_FLAG));
+        KnowledgeContext::build(&self.threads.catalog, player, &rows, &theory_authors, used_subway)
     }
 
     /// Look-line object for a thread clue on this tile, if any.
-    pub(crate) fn thread_look_object(
+    pub(crate) fn thread_look_objects(
         &self,
         location: &str,
         wild: Option<WildernessPos>,
-    ) -> Option<(String, String)> {
-        let clue_id = self.threads.clue_at_place(location, wild)?;
-        let clue = self.threads.catalog.clue(&clue_id)?;
-        Some((clue.kind.keyword().to_string(), clue.kind.label().to_string()))
+    ) -> Vec<(String, String)> {
+        self.threads
+            .clue_ids_at_place(location, wild)
+            .into_iter()
+            .filter_map(|clue_id| {
+                let clue = self.threads.catalog.clue(&clue_id)?;
+                Some((clue.kind.keyword().to_string(), clue.kind.label().to_string()))
+            })
+            .collect()
     }
 }
 

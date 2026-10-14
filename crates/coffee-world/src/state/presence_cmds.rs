@@ -144,7 +144,7 @@ impl WorldState {
             scene.objects.push(("mark".to_string(), "repeated mark".to_string()));
         }
         let place_key = pos.key();
-        if let Some((keyword, label)) = self.thread_look_object(&place_key, Some(pos)) {
+        for (keyword, label) in self.thread_look_objects(&place_key, Some(pos)) {
             scene.objects.push((keyword, label));
         }
         if let Some(home) = self.homes.presentation_at(&place_key, self.now_ms) {
@@ -396,7 +396,7 @@ impl WorldState {
                 name: object.name.to_string(),
             })
             .collect();
-        if let Some((keyword, label)) = self.thread_look_object(&op.location_id, None) {
+        for (keyword, label) in self.thread_look_objects(&op.location_id, None) {
             objects.push(ObjectView { keyword, name: label });
         }
         let inventory = op

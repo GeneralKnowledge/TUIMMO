@@ -9,7 +9,8 @@ use crate::geography::frontier_epoch;
 use crate::model::{Item, Operator, PersistOp, STARTER_LOCATION};
 use crate::state::WorldState;
 use crate::store::Store;
-use crate::threads::{load_default_threads, placement_hash};
+use crate::subway::ASH_STATION;
+use crate::threads::{best_reveal_text, load_default_threads, placement_hash, USED_SUBWAY_FLAG};
 
 fn ada_operator() -> (PlayerId, Operator) {
     let id = PlayerId::new();
@@ -105,4 +106,54 @@ fn hash_placement_is_stable_for_region() {
     let one = placement_hash(seed, "the-tally", "tally-shutter-graffiti", 0, 1);
     let two = placement_hash(seed, "the-tally", "tally-shutter-graffiti", 0, 1);
     assert_eq!(one, two);
+}
+
+#[test]
+fn off_schedule_reveal_requires_subway_use() {
+    let mut world = WorldState::for_tests();
+    let (player, op) = ada_operator();
+    world.insert_operator(op);
+    let session = connect(&mut world, player, "Ada");
+    world.operators.get_mut(&player).unwrap().location_id = ASH_STATION.into();
+
+    world.apply(session, "inspect timetable").unwrap();
+    let before = world.findings.get(&session).cloned().unwrap_or_default();
+    assert!(before.contains("Meridian Cut"));
+    assert!(!before.contains("departure time"));
+
+    world.operators.get_mut(&player).unwrap().flags.insert(USED_SUBWAY_FLAG.into());
+    world.apply(session, "inspect timetable").unwrap();
+    let after = world.findings.get(&session).cloned().unwrap_or_default();
+    assert!(after.contains("departure time"));
+}
+
+#[test]
+fn two_maps_reveal_requires_corroborated_theories() {
+    let mut world = WorldState::for_tests();
+    let catalog = load_default_threads();
+    world.threads.catalog = catalog;
+    let player = PlayerId::new();
+    let clue = world.threads.catalog.clue("map-hand-third").unwrap().clone();
+    let ctx = world.knowledge_context(player);
+    assert!(best_reveal_text(&clue.reveals, &ctx).is_none());
+
+    world.theories.entries.push(crate::theories::TheoryEntry {
+        id: 1,
+        topic: "two-maps".into(),
+        author_id: PlayerId::new(),
+        kind: crate::theories::TheoryKind::Theory,
+        body: "Older layout.".into(),
+        created_at: 1,
+    });
+    world.theories.entries.push(crate::theories::TheoryEntry {
+        id: 2,
+        topic: "two-maps".into(),
+        author_id: PlayerId::new(),
+        kind: crate::theories::TheoryKind::Theory,
+        body: "They redraw after floods.".into(),
+        created_at: 2,
+    });
+    let ctx = world.knowledge_context(player);
+    let text = best_reveal_text(&clue.reveals, &ctx).unwrap();
+    assert!(text.contains("different period"));
 }
