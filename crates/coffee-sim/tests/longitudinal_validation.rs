@@ -61,6 +61,9 @@ fn snapshots_do_not_change_gameplay_outcomes() {
         report.config.snapshots = SnapshotConfig::disabled();
         report.timing.observation_events_processed = 0;
         report.timing.last_scheduler_slot_ms = report.timing.last_event_slot_ms;
+        report.coverage_metrics = None;
+        report.long_thread_progress = None;
+        report.clue_discovery = None;
         report
     }
     assert_eq!(gameplay_core(without), gameplay_core(with));

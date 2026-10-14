@@ -3,7 +3,10 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use coffee_world::{ThreadSimReport, WorldOutcomeSnapshot};
+use coffee_world::{
+    ClueDiscoveryReport, LongThreadProgressReport, ThreadCoverageReport, ThreadSimReport,
+    WorldOutcomeSnapshot,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::config::SnapshotConfig;
@@ -44,6 +47,12 @@ pub struct RunReport {
     pub story_transcript: StoryTranscript,
     #[serde(default)]
     pub thread_reports: Vec<ThreadSimReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_metrics: Option<ThreadCoverageReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long_thread_progress: Option<LongThreadProgressReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clue_discovery: Option<ClueDiscoveryReport>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

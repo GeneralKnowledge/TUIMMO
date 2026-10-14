@@ -80,6 +80,13 @@ struct RequireFile {
     corroborated_theory: Option<CorroboratedFile>,
     used_subway: Option<bool>,
     all: Option<Vec<RequireFile>>,
+    any_of: Option<AnyOfCluesFile>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnyOfCluesFile {
+    n: u32,
+    clues: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -236,9 +243,12 @@ fn parse_require(row: &RequireFile) -> Result<KnowledgeRequirement, LoadError> {
     if row.all.is_some() {
         parts += 1;
     }
+    if row.any_of.is_some() {
+        parts += 1;
+    }
     if parts != 1 {
         return Err(LoadError::Parse(
-            "each requirement must set exactly one of seen_tag, seen_clue, corroborated_theory, used_subway, or all"
+            "each requirement must set exactly one of seen_tag, seen_clue, corroborated_theory, used_subway, all, or any_of"
                 .into(),
         ));
     }
@@ -259,6 +269,9 @@ fn parse_require(row: &RequireFile) -> Result<KnowledgeRequirement, LoadError> {
     }
     if row.used_subway == Some(true) {
         return Ok(KnowledgeRequirement::UsedSubway);
+    }
+    if let Some(any) = &row.any_of {
+        return Ok(KnowledgeRequirement::AnyOfClues { n: any.n, clue_ids: any.clues.clone() });
     }
     let items = row
         .all
@@ -334,6 +347,43 @@ mod tests {
     #[test]
     fn shipped_catalog_loads() {
         let _ = load_default_threads();
+    }
+
+    #[test]
+    fn any_of_requirement_loads() {
+        let raw = r#"
+[[threads]]
+id = "test-any"
+tags = ["t"]
+
+[[threads.clues]]
+id = "a"
+kind = "graffiti"
+surface_text = "A"
+site = { static = "coffee-shop" }
+
+[[threads.clues]]
+id = "b"
+kind = "graffiti"
+surface_text = "B"
+site = { static = "roof-array" }
+
+[[threads.clues]]
+id = "c"
+kind = "graffiti"
+surface_text = "C"
+site = { static = "coffee-shop" }
+
+[[threads.clues.reveals]]
+text = "Together."
+
+[threads.clues.reveals.requires.any_of]
+n = 2
+clues = ["a", "b", "c"]
+"#;
+        let catalog = load_threads_from_str(raw).expect("fixture");
+        let clue = catalog.clue("c").expect("c");
+        assert!(matches!(clue.reveals[0].requires, KnowledgeRequirement::AnyOfClues { n: 2, .. }));
     }
 
     #[test]

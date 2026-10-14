@@ -121,6 +121,7 @@ fn additive_world_metrics_reconcile_with_per_profile_sums() {
         follower: 0,
         social_player: 20,
         occasional_visitor: 20,
+        ..Default::default()
     };
     let report = run_with_config(config).expect("mixed run");
 

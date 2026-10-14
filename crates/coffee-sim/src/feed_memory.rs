@@ -25,6 +25,12 @@ pub fn absorb_command_outcome(
     if command.starts_with("look") {
         absorb_look_text(&view.description, &location_key, memory);
     }
+    if let Some(keyword) = command.strip_prefix("inspect ") {
+        let keyword = keyword.split_whitespace().next().unwrap_or(keyword).to_ascii_lowercase();
+        if !keyword.is_empty() {
+            memory.record_inspected_keyword(&location_key, &keyword);
+        }
+    }
     if let Some(overlay) = &view.overlay {
         if command.starts_with("theory") {
             absorb_theory_overlay(overlay, memory);

@@ -12,7 +12,11 @@ use crate::geography::{DensityBand, UrbanContext, WildernessPos, OUTSKIRTS_FROM,
 use crate::home::Habitation;
 use crate::model::STARTER_LOCATION;
 use crate::state::WorldState;
-use crate::threads::{simulation_thread_reports, ThreadSimReport};
+use crate::threads::{
+    measure_coverage_report, simulation_clue_discovery_reports, simulation_long_thread_progress,
+    simulation_thread_reports, ClueDiscoveryReport, CoverageParams, LongThreadProgressReport,
+    ThreadCoverageReport, ThreadSimReport,
+};
 
 /// Stable world-generation label recorded in simulation reports.
 pub const WORLD_GENERATION_VERSION: u16 = GENERATION_V1;
@@ -169,6 +173,40 @@ impl WorldState {
         let names: std::collections::HashMap<PlayerId, String> =
             self.operators.values().map(|op| (op.id, op.name.clone())).collect();
         simulation_thread_reports(&self.threads, &names, sim_start_ms)
+    }
+
+    pub fn simulation_coverage_report(&self) -> ThreadCoverageReport {
+        measure_coverage_report(self.threads.world_seed(), self.threads.coverage_params())
+    }
+
+    pub fn simulation_long_thread_progress(&self) -> LongThreadProgressReport {
+        let names: std::collections::HashMap<PlayerId, String> =
+            self.operators.values().map(|op| (op.id, op.name.clone())).collect();
+        simulation_long_thread_progress(&self.threads, &names)
+    }
+
+    pub fn simulation_clue_discovery_reports(&self, sim_start_ms: u64) -> ClueDiscoveryReport {
+        let names: std::collections::HashMap<PlayerId, String> =
+            self.operators.values().map(|op| (op.id, op.name.clone())).collect();
+        simulation_clue_discovery_reports(&self.threads, &names, sim_start_ms)
+    }
+
+    pub fn simulation_set_coverage_params(&mut self, params: CoverageParams) {
+        self.threads.set_coverage_params(params);
+    }
+
+    /// Thread clue keywords visible on the operator's tile (sim / curious profile).
+    pub fn simulation_thread_keywords_at(
+        &self,
+        session_id: SessionId,
+    ) -> Result<Vec<String>, GameError> {
+        let location = self.location_key_for_sim(session_id)?;
+        let wild = WildernessPos::parse(&location);
+        Ok(self
+            .thread_look_objects(&location, wild)
+            .into_iter()
+            .map(|(keyword, _)| keyword)
+            .collect())
     }
 
     pub fn simulation_theory_authors_by_topic(

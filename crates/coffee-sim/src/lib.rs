@@ -6,6 +6,7 @@
 pub mod agent;
 pub mod compare;
 pub mod config;
+pub mod coverage_experiment;
 pub mod execute;
 pub mod experiment;
 pub mod feed_memory;
@@ -25,6 +26,9 @@ pub mod trace;
 
 pub use compare::{compare_populations, ComparisonReport, ComparisonRequest};
 pub use config::SnapshotConfig;
+pub use coverage_experiment::{
+    format_coverage_report, run_density_experiment, DensityExperimentReport,
+};
 pub use experiment::{
     run_population_scale_experiment, PopulationAllocation, PopulationScaleReport,
     PopulationScaleRequest, MAX_SCALE_EXPERIMENT_RUNS,

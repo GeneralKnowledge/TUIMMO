@@ -254,6 +254,7 @@ fn profile_totals_reconcile_with_global_execution() {
         follower: 0,
         social_player: 5,
         occasional_visitor: 5,
+        ..Default::default()
     };
     let report = run_with_config(config).expect("run");
     let profile_attempted: u64 = report.per_profile.values().map(|p| p.attempted).sum();

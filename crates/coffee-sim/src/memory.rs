@@ -23,6 +23,7 @@ pub struct AgentMemory {
     last_locations: VecDeque<String>,
     last_move_from: Option<String>,
     last_exit: Option<String>,
+    inspected_keywords: BTreeMap<String, BTreeSet<String>>,
 }
 
 impl AgentMemory {
@@ -64,6 +65,21 @@ impl AgentMemory {
 
     pub fn inspected_here(&self, location: &str) -> bool {
         self.inspected_locations.contains(location)
+    }
+
+    pub fn inspected_keyword_at(&self, location: &str, keyword: &str) -> bool {
+        self.inspected_keywords.get(location).is_some_and(|set| set.contains(keyword))
+    }
+
+    pub fn record_inspected_keyword(&mut self, location: &str, keyword: &str) {
+        self.inspected_keywords
+            .entry(location.to_string())
+            .or_default()
+            .insert(keyword.to_string());
+    }
+
+    pub fn knows_region(&self, region_key: &str) -> bool {
+        self.region_keys_visited.contains(region_key)
     }
 
     pub fn record_theory_subject_hint(&mut self, subject: &str) {

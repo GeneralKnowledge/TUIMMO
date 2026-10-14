@@ -15,6 +15,7 @@ pub struct NumericSummary {
     pub median: Option<f64>,
     pub p25: Option<f64>,
     pub p75: Option<f64>,
+    pub p95: Option<f64>,
 }
 
 /// Summary of an optional rate across replicates (undefined rates excluded from distribution).
@@ -41,6 +42,7 @@ pub fn numeric_summary(values: &[f64]) -> NumericSummary {
             median: None,
             p25: None,
             p75: None,
+            p95: None,
         };
     }
     let n_u32 = u32::try_from(n).unwrap_or(u32::MAX);
@@ -57,6 +59,7 @@ pub fn numeric_summary(values: &[f64]) -> NumericSummary {
         median: Some(percentile_nearest(&sorted, 0.5)),
         p25: Some(percentile_nearest(&sorted, 0.25)),
         p75: Some(percentile_nearest(&sorted, 0.75)),
+        p95: Some(percentile_nearest(&sorted, 0.95)),
     }
 }
 

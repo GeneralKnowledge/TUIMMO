@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::time::Instant;
 
-use coffee_world::{WorldOutcomeSnapshot, WorldState, WORLD_GENERATION_VERSION};
+use coffee_world::{CoverageParams, WorldOutcomeSnapshot, WorldState, WORLD_GENERATION_VERSION};
 use rand::rngs::StdRng;
 use rand::SeedableRng;
 use terminus_core::SessionId;
@@ -44,6 +44,8 @@ pub struct RunConfig {
     pub record_action_trace: bool,
     pub action_trace_limit: u32,
     pub snapshots: SnapshotConfig,
+    pub coverage_params: CoverageParams,
+    pub include_coverage_metrics: bool,
 }
 
 impl Default for RunConfig {
@@ -59,6 +61,8 @@ impl Default for RunConfig {
             record_action_trace: false,
             action_trace_limit: DEFAULT_TRACE_LIMIT,
             snapshots: SnapshotConfig::disabled(),
+            coverage_params: CoverageParams::default(),
+            include_coverage_metrics: true,
         }
     }
 }
@@ -180,6 +184,7 @@ impl SimulationRunner {
         let started = Instant::now();
         let mut rng = StdRng::seed_from_u64(self.config.seed);
         let mut world = WorldState::for_simulation(self.schedule.virtual_start_ms);
+        world.simulation_set_coverage_params(self.config.coverage_params);
         let profiles =
             assign_profiles(self.config.seed, self.config.agent_count, &self.config.population)?;
         let allocated_profile_counts = profile_count_map(&profiles);
@@ -729,6 +734,13 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         interaction,
         story_transcript,
         thread_reports: world.simulation_thread_reports(schedule.virtual_start_ms),
+        coverage_metrics: if config.include_coverage_metrics {
+            Some(world.simulation_coverage_report())
+        } else {
+            None
+        },
+        long_thread_progress: Some(world.simulation_long_thread_progress()),
+        clue_discovery: Some(world.simulation_clue_discovery_reports(schedule.virtual_start_ms)),
     }
 }
 

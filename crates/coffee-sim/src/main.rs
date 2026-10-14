@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use coffee_sim::compare::{compare_populations, ComparisonRequest};
 use coffee_sim::config::{SnapshotConfig, DEFAULT_SNAPSHOT_MAX};
+use coffee_sim::coverage_experiment::{format_coverage_report, run_density_experiment};
 use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleRequest};
 use coffee_sim::multi_seed::{
     run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
@@ -15,6 +16,7 @@ use coffee_sim::scheduler::SchedulerConfig;
 use coffee_sim::seeds::ReplicateSeedSchedule;
 use coffee_sim::Profile;
 use coffee_sim::SimulationRunner;
+use coffee_world::CoverageParams;
 
 #[derive(Parser)]
 #[command(
@@ -68,6 +70,9 @@ struct Cli {
     #[arg(long, global = true, default_value_t = 0)]
     follower_weight: u32,
 
+    #[arg(long, global = true, default_value_t = 0)]
+    curious_weight: u32,
+
     /// Record a bounded action trace in the JSON report.
     #[arg(long, global = true)]
     trace: bool,
@@ -120,6 +125,20 @@ enum Commands {
         /// Include full per-run reports in JSON (default: compact replicate summaries only).
         #[arg(long)]
         include_runs: bool,
+    },
+    /// Offline coverage gap/density report for the current grid settings.
+    CoverageReport {
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+        #[arg(long, default_value_t = 4)]
+        grid_step: u8,
+        #[arg(long, default_value_t = 4)]
+        max_gap: u8,
+    },
+    /// Compare coverage params (4,4), (8,8), (12,12), (6,6) with short sim runs.
+    DensityExperiment {
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
     },
 }
 
@@ -246,6 +265,36 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Some(Commands::CoverageReport { seed, grid_step, max_gap }) => {
+            let params = CoverageParams::new(grid_step, max_gap);
+            println!("{}", format_coverage_report(seed, params));
+            ExitCode::SUCCESS
+        }
+        Some(Commands::DensityExperiment { seed }) => match run_density_experiment(seed) {
+            Ok(report) => {
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                } else {
+                    for setting in &report.settings {
+                        println!(
+                            "grid {} gap {}: p95 near-hub {:.1} max {:.1} clues/hr(near) {:.2} median_ttf_ms {:?}",
+                            setting.grid_step,
+                            setting.max_gap,
+                            setting.gap_p95_by_bucket.first().map(|(_, v)| *v).unwrap_or(0.0),
+                            setting.gap_max_by_bucket.first().map(|(_, v)| *v).unwrap_or(0.0),
+                            setting.clues_per_hour_near_hub,
+                            setting.median_time_to_first_clue_ms,
+                        );
+                    }
+                    println!("\n{}", report.recommendation);
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("density experiment failed: {err}");
+                ExitCode::from(1)
+            }
+        },
         None => {
             let config = base_config(&cli);
             match SimulationRunner::new(config).and_then(|runner| runner.run()) {
@@ -312,6 +361,7 @@ fn base_config(cli: &Cli) -> RunConfig {
             follower: cli.follower_weight,
             social_player: cli.social_weight,
             occasional_visitor: cli.visitor_weight,
+            curious: cli.curious_weight,
         },
         virtual_days: cli.days,
         scheduler: SchedulerConfig {

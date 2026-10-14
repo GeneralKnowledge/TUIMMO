@@ -16,16 +16,18 @@ pub enum Profile {
     Follower,
     SocialPlayer,
     OccasionalVisitor,
+    Curious,
 }
 
 impl Profile {
-    pub const ALL: [Profile; 6] = [
+    pub const ALL: [Profile; 7] = [
         Profile::Wanderer,
         Profile::Investigator,
         Profile::Homebody,
         Profile::Follower,
         Profile::SocialPlayer,
         Profile::OccasionalVisitor,
+        Profile::Curious,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -36,6 +38,7 @@ impl Profile {
             Self::Follower => "follower",
             Self::SocialPlayer => "social_player",
             Self::OccasionalVisitor => "occasional_visitor",
+            Self::Curious => "curious",
         }
     }
 }
@@ -195,8 +198,44 @@ fn wilderness_choices(
                 choices.push(WeightedCommand { command: "inspect ground".into(), weight: 15 });
             }
         }
+        Profile::Curious => {
+            for keyword in &ctx.thread_keywords {
+                if !memory.inspected_keyword_at(&ctx.location, keyword) {
+                    choices.push(WeightedCommand {
+                        command: format!("inspect {keyword}"),
+                        weight: 50,
+                    });
+                }
+            }
+            if choices.is_empty() {
+                push_cardinals_toward_novel(&mut choices, ctx, memory, 35);
+                choices.push(WeightedCommand { command: "look".into(), weight: 25 });
+            } else {
+                push_cardinals_toward_novel(&mut choices, ctx, memory, 15);
+            }
+        }
     }
     choices
+}
+
+fn push_cardinals_toward_novel(
+    choices: &mut Vec<WeightedCommand>,
+    ctx: &ActionContext,
+    memory: &AgentMemory,
+    base_weight: u32,
+) {
+    for exit in &ctx.cardinal_exits {
+        let mut weight = base_weight;
+        if let Some(region) = &ctx.region_key {
+            if !memory.knows_region(region) {
+                weight += 15;
+            }
+        }
+        if !memory.knows_location(&ctx.location) {
+            weight += 10;
+        }
+        choices.push(WeightedCommand { command: exit.clone(), weight });
+    }
 }
 
 fn push_cardinals(

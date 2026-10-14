@@ -4,8 +4,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::geography::{generate_region, thread_placement_hash, RegionIdentity, WildernessPos};
 
-use super::coverage::coverage_anchors_for_region;
+use super::coverage::coverage_anchors_for_region_with_params;
+use super::coverage_params::CoverageParams;
 use super::distance_tier::DistanceTier;
+use super::long_procession::materialize_long_procession_for_region;
 use super::template_load::{
     fill_slots, template_reveal_defs, TemplateCatalog, TemplateDef, TemplateTier,
 };
@@ -23,8 +25,17 @@ pub fn generate_for_region(
     identity: RegionIdentity,
     templates: &TemplateCatalog,
 ) -> Result<ProceduralRegion, crate::geography::GenerateError> {
+    generate_for_region_with_params(world_seed, identity, templates, CoverageParams::default())
+}
+
+pub fn generate_for_region_with_params(
+    world_seed: u64,
+    identity: RegionIdentity,
+    templates: &TemplateCatalog,
+    params: CoverageParams,
+) -> Result<ProceduralRegion, crate::geography::GenerateError> {
     let _region = generate_region(identity)?;
-    let anchors = coverage_anchors_for_region(world_seed, identity)?;
+    let anchors = coverage_anchors_for_region_with_params(world_seed, identity, params)?;
     let tier = DistanceTier::from_absolute(
         i64::from(identity.origin_x) * 16 + 8,
         i64::from(identity.origin_y) * 16 + 8,
@@ -52,8 +63,8 @@ pub fn generate_for_region(
             }
             TemplateTier::Long => {
                 if template.id == "long-procession" {
-                    instantiate_long_procession(
-                        world_seed, identity, template, tier, &anchors, &mut out, &mut used,
+                    materialize_long_procession_for_region(
+                        world_seed, identity, &mut out, &mut used, params,
                     )?;
                 }
             }
@@ -102,6 +113,14 @@ fn region_spawn(
     h.is_multiple_of(modulus)
 }
 
+fn absent_keeper_anchor_index(slot: Option<&str>, fallback: usize) -> usize {
+    match slot {
+        Some(s) if s.starts_with("branch_a") => 3 + (fallback % 2),
+        Some(s) if s.starts_with("branch_b") => 5,
+        _ => fallback.min(2),
+    }
+}
+
 fn pick_anchor<'a>(
     anchors: &'a [WildernessPos],
     used: &HashSet<WildernessPos>,
@@ -141,6 +160,7 @@ fn instantiate_residue(
     let tag = fill_slots(&template.tags[0], &slots);
     let mut clue_ids = Vec::new();
     let mut built = Vec::new();
+    let mut reserved_anchors = Vec::new();
     for (i, slot) in template.clues.iter().enumerate() {
         let clue_id = format!("{instance}:{i}");
         clue_ids.push(clue_id.clone());
@@ -148,6 +168,7 @@ fn instantiate_residue(
             break;
         };
         used.insert(anchor);
+        reserved_anchors.push(anchor);
         built.push(ClueDef {
             id: clue_id.clone(),
             kind: slot.kind,
@@ -170,6 +191,9 @@ fn instantiate_residue(
         for id in &clue_ids {
             out.clues.remove(id);
             out.sites.remove(id);
+        }
+        for anchor in reserved_anchors {
+            used.remove(&anchor);
         }
         return Ok(());
     }
@@ -201,13 +225,16 @@ fn instantiate_absent_keeper(
     slots.insert("object".into(), object);
     let tag = fill_slots(&template.tags[0], &slots);
     let mut clue_ids = Vec::new();
+    let mut reserved_anchors = Vec::new();
     for (i, slot) in template.clues.iter().enumerate() {
         let clue_id = format!("{instance}:{i}");
         clue_ids.push(clue_id.clone());
-        let Some(anchor) = pick_anchor(anchors, used, i).copied() else {
+        let anchor_index = absent_keeper_anchor_index(slot.slot.as_deref(), i);
+        let Some(anchor) = pick_anchor(anchors, used, anchor_index).copied() else {
             break;
         };
         used.insert(anchor);
+        reserved_anchors.push(anchor);
         let reveals = if i + 1 == template.clues.len() {
             template_reveal_defs(template, &slots, &clue_ids)
         } else {
@@ -237,77 +264,9 @@ fn instantiate_absent_keeper(
             out.clues.remove(id);
             out.sites.remove(id);
         }
-        return Ok(());
-    }
-    out.threads.push(ThreadDef {
-        id: instance,
-        tags: vec![tag],
-        clues: clue_ids.iter().filter_map(|id| out.clues.get(id).cloned()).collect(),
-    });
-    Ok(())
-}
-
-fn instantiate_long_procession(
-    world_seed: u64,
-    identity: RegionIdentity,
-    template: &TemplateDef,
-    tier: DistanceTier,
-    anchors: &[WildernessPos],
-    out: &mut ProceduralRegion,
-    used: &mut HashSet<WildernessPos>,
-) -> Result<(), crate::geography::GenerateError> {
-    let instance = format!("{}:{}:{}:0", template.id, identity.origin_x, identity.origin_y);
-    let tag = template.tags.first().cloned().unwrap_or_else(|| "procession".into());
-    let mut clue_ids = Vec::new();
-    let mut clue_index = 0usize;
-    for (chapter_idx, chapter) in template.chapters.iter().enumerate() {
-        if !tier.allows_chapter(&chapter.tiers.iter().map(String::as_str).collect::<Vec<_>>()) {
-            continue;
+        for anchor in reserved_anchors {
+            used.remove(&anchor);
         }
-        let pool = template.pools.entries.get(&chapter.pool).cloned().unwrap_or_default();
-        if pool.is_empty() {
-            continue;
-        }
-        for c in 0..chapter.clues {
-            let clue_id = format!("{instance}:{clue_index}");
-            clue_index += 1;
-            let Some(anchor) = pick_anchor(anchors, used, clue_index).copied() else {
-                break;
-            };
-            used.insert(anchor);
-            let text_idx = (thread_placement_hash(
-                world_seed,
-                "long-procession",
-                &format!("{chapter_idx}:{c}"),
-                identity.origin_x,
-                identity.origin_y,
-            ) as usize)
-                % pool.len();
-            let mut text = pool[text_idx].clone();
-            if chapter.breadcrumb {
-                text.push(' ');
-                text.push_str(&breadcrumb(world_seed, identity, anchor));
-            }
-            clue_ids.push(clue_id.clone());
-            let reveals = if c + 1 == chapter.clues && chapter_idx + 1 == template.chapters.len() {
-                template_reveal_defs(template, &HashMap::new(), &clue_ids)
-            } else {
-                vec![]
-            };
-            let clue = ClueDef {
-                id: clue_id.clone(),
-                kind: ClueKind::Graffiti,
-                surface_text: text,
-                tags: vec![tag.clone()],
-                journal_title: "Procession mark".into(),
-                site: SiteRule::Wild(WildSiteFilter { band: tier.density_band(), district: None }),
-                reveals,
-            };
-            out.clues.insert(clue_id.clone(), clue);
-            out.sites.insert(clue_id, ClueSite::Wild(anchor));
-        }
-    }
-    if clue_ids.is_empty() {
         return Ok(());
     }
     out.threads.push(ThreadDef {
@@ -377,27 +336,4 @@ fn coverage_blurb(
         identity.origin_y,
     );
     pool[h as usize % pool.len()].to_string()
-}
-
-fn breadcrumb(world_seed: u64, identity: RegionIdentity, anchor: WildernessPos) -> String {
-    let east = identity.origin_x + 1;
-    let h = thread_placement_hash(
-        world_seed,
-        "breadcrumb",
-        &format!("{}", anchor.local_x),
-        identity.origin_x,
-        identity.origin_y,
-    );
-    if h & 1 == 0 {
-        format!(
-            "The same mark continues far to the east, toward region ({east}, {}).",
-            identity.origin_y
-        )
-    } else {
-        format!(
-            "The count continues far to the north, toward region ({}, {}).",
-            identity.origin_x,
-            identity.origin_y + 1
-        )
-    }
 }
