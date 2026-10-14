@@ -344,6 +344,7 @@ async fn migration_applies_to_fresh_and_preexisting_databases() {
     assert!(tables.iter().any(|name| name == "shared_theory_seq"));
     assert!(tables.iter().any(|name| name == "personal_homes"));
     assert!(tables.iter().any(|name| name == "account_invites"));
+    assert!(tables.iter().any(|name| name == "clue_seen"));
     let home_returns: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM pragma_table_info('personal_homes') WHERE name = 'meaningful_returns'",
         )
