@@ -20,8 +20,17 @@ impl WorldState {
         wild: Option<WildernessPos>,
         target: &str,
     ) -> Option<Result<(String, Vec<PersistOp>), GameError>> {
+        if self.threads.clue_at_place_for_target_static(location, wild, target).is_none() {
+            if let Some(pos) = wild {
+                if let Err(err) = self.threads.ensure_procedural(pos.identity) {
+                    return Some(Err(GameError::Rejected(crate::state::unreadable_wilderness(
+                        &err,
+                    ))));
+                }
+            }
+        }
         let clue_id = self.threads.clue_at_place_for_target(location, wild, target)?;
-        let clue = self.threads.catalog.clue(&clue_id)?.clone();
+        let clue = self.threads.clue_def(&clue_id)?;
         Some(self.finish_thread_inspect(session_id, player, location, wild, &clue))
     }
 
@@ -123,7 +132,15 @@ impl WorldState {
         let theory_authors = self.simulation_theory_authors_by_topic();
         let used_subway =
             self.operators.get(&player).is_some_and(|op| op.flags.contains(USED_SUBWAY_FLAG));
-        KnowledgeContext::build(&self.threads.catalog, player, &rows, &theory_authors, used_subway)
+        let tags_for = |id: &str| self.threads.clue_def(id).map(|clue| clue.tags.clone());
+        KnowledgeContext::build(
+            &self.threads.catalog,
+            player,
+            &rows,
+            &theory_authors,
+            used_subway,
+            tags_for,
+        )
     }
 
     /// Look-line object for a thread clue on this tile, if any.
@@ -132,11 +149,14 @@ impl WorldState {
         location: &str,
         wild: Option<WildernessPos>,
     ) -> Vec<(String, String)> {
+        if let Some(pos) = wild {
+            let _ = self.threads.ensure_procedural(pos.identity);
+        }
         self.threads
             .clue_ids_at_place(location, wild)
             .into_iter()
             .filter_map(|clue_id| {
-                let clue = self.threads.catalog.clue(&clue_id)?;
+                let clue = self.threads.clue_def(&clue_id)?;
                 Some((clue.kind.keyword().to_string(), clue.kind.label().to_string()))
             })
             .collect()

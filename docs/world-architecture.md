@@ -128,6 +128,14 @@ Player knowledge stays opt-in. Materializing a remote region records an `entered
 
 The remote-world acceptance scenario locks birth `(62, 0)` in `geography::remote` and a SQLite reopen path in the store tests.
 
+## Thread clues (authored and procedural)
+
+Authored threads live in `crates/coffee-world/data/threads.toml` and are placed once per world seed via `threads/placement.rs`. Procedural threads are defined in `data/thread_templates.toml`, instantiated lazily per birth cell when a player looks or inspects in that region (`ThreadState::ensure_procedural`). Instances are deterministic from `(world_seed, RegionIdentity)` and are **not** stored in SQLite; only `clue_seen` rows persist, keyed by stable clue ids such as `residue:0:0:0:1`.
+
+**Coverage.** Small inspectables and thread clues share a jittered grid per region (`threads/coverage.rs`). `COVERAGE_GRID_STEP` is 4 tiles; `INSPECTABLE_MAX_GAP` is 4 (Chebyshev). Any walkable tile in a 16×16 region is within that gap of at least one anchor; gap-fill adds anchors where a cell had no walkable jitter point. Density does not fall off with distance from the Hub.
+
+**Distance tiers** (`threads/distance_tier.rs`) are config boundaries from the gate: `TIER_NEAR_MAX_CHEB` 20, `TIER_MID_MAX_CHEB` 48, `TIER_FAR_MAX_CHEB` 128 (near / mid / far / deep). Far and deep tiers select older text pools and host later chapters of long templates. Knowledge gates may use `AnyOfClues` so a reveal needs any *n* of a set of clue ids; reveals add text only and never unlock commands or access.
+
 ## Persistence and migrations
 
 `0001_init.sql` is unchanged. `0002_world.sql` adds:

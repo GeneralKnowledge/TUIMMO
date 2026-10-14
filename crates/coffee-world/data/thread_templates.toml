@@ -1,0 +1,165 @@
+# Procedural thread templates — instantiated per region from world seed.
+
+[[template]]
+id = "residue"
+tier = "local"
+shape = "chain"
+tags = ["{mark}-count"]
+
+[[template.clue]]
+kind = "graffiti"
+text = "{count} {mark} scratched into the {surface}, deep and even."
+
+[[template.clue]]
+kind = "record"
+text = "A margin of small {mark}. The last entry is smudged."
+
+[[template.clue]]
+kind = "sign"
+text = "Someone has scored the placard by hand: {count_minus_two}."
+
+[[template.reveal]]
+text = "The counts fall as you go in. Each place is one short of the last."
+requires = { seen_tag = { tag = "{mark}-count", distinct_sites = 3 } }
+
+[template.pools.mark]
+values = [
+  "notches",
+  "strokes",
+  "dots",
+  "ticks",
+  "scores",
+  "nicks",
+  "lines",
+  "cuts",
+]
+
+[template.pools.surface]
+values = [
+  "shutter",
+  "rail",
+  "doorframe",
+  "pipe",
+  "lintel",
+  "panel",
+  "sill",
+  "beam",
+]
+
+[[template]]
+id = "absent-keeper"
+tier = "regional"
+shape = "fork"
+tags = ["tended-{object}"]
+
+[[template.clue]]
+slot = "spine.0"
+kind = "object"
+text = "A {object} kept clean in a ruined stairwell."
+
+[[template.clue]]
+slot = "spine.1"
+kind = "graffiti"
+text = "A small repair that is newer than the soot around it."
+
+[[template.clue]]
+slot = "spine.2"
+kind = "sign"
+text = "A note left for 'whoever comes next'."
+
+[[template.clue]]
+slot = "branch_a.0"
+kind = "graffiti"
+text = "Traces of a daily route worn into the dust."
+
+[[template.clue]]
+slot = "branch_a.1"
+kind = "object"
+text = "A worn chair at a window that no longer has glass."
+
+[[template.clue]]
+slot = "branch_b.0"
+kind = "object"
+text = "A second {object}, tended by different hands."
+
+[[template.reveal]]
+text = "More than one keeper. They never overlap."
+requires = { any_of = { n = 3, tags = ["tended-{object}"] } }
+
+[template.pools.object]
+values = [
+  "lamp",
+  "stove",
+  "cup",
+  "bench",
+  "kettle",
+  "lantern",
+  "mat",
+  "bowl",
+]
+
+[[template]]
+id = "long-procession"
+tier = "long"
+shape = "chain+branches"
+tags = ["procession"]
+
+[[template.chapter]]
+tiers = ["near", "mid"]
+clues = 5
+pool = "procession_early"
+breadcrumb = false
+
+[[template.chapter]]
+tiers = ["mid", "far"]
+clues = 8
+pool = "procession_mid"
+breadcrumb = true
+
+[[template.chapter]]
+tiers = ["far", "deep"]
+clues = 8
+pool = "procession_late"
+breadcrumb = true
+
+[[template.reveal]]
+text = "The same procession passed here more than once. The marks do not agree on when."
+requires = { any_of = { n = 3, tags = ["procession"] } }
+
+[template.pools.procession_early]
+values = [
+  "A chalk hash at ankle height, as if counting steps.",
+  "A smear of wax on the wall where a shoulder would pass.",
+  "Three small nails driven in a row, still holding nothing.",
+  "A strip of fabric caught on a nail, faded but not rotted.",
+  "A handprint in dust, smaller than the last you saw.",
+  "A notch in the stair rail, fresh enough to catch a splinter.",
+  "A coin pressed into wet mortar that dried around it.",
+  "A string tied to a pipe, knotted at regular intervals.",
+]
+
+[template.pools.procession_mid]
+values = [
+  "The same string continues, but the knots are closer together.",
+  "A second handprint, higher, as if the wall had shifted.",
+  "Scuffs on the landing that point onward, not into any door.",
+  "A bundle of sticks left in a corner, tied with wire.",
+  "A painted arrow under grime, pointing east.",
+  "A row of chalk ticks that stops mid-wall.",
+  "A dent in the metal doorframe, repeated at the next landing.",
+  "A scrap of timetable paper glued to brick, dates crossed out.",
+  "A line of salt on the threshold, undisturbed by feet.",
+  "A candle stub in a tin, burned down to the wick.",
+]
+
+[template.pools.procession_late]
+values = [
+  "The chalk line climbs above head height, as if the floor had been higher once.",
+  "A procession of nail holes with no nails, evenly spaced.",
+  "A groove worn into stone where no one walks anymore.",
+  "A nameless token in a niche: smooth from handling.",
+  "A braid of wire hanging from a pipe, ends sealed.",
+  "A patch of wall replastered over older marks.",
+  "A footprint in concrete that does not match any boot here.",
+  "A final tick in chalk, and beside it, room for one more that was never drawn.",
+]

@@ -316,6 +316,13 @@ fn validate_require(
         }
         KnowledgeRequirement::CorroboratedTheory { .. } => {}
         KnowledgeRequirement::UsedSubway => {}
+        KnowledgeRequirement::AnyOfClues { clue_ids: need, .. } => {
+            for id in need {
+                if !clue_ids.contains(id.as_str()) {
+                    return Err(LoadError::UnknownClue(id.clone()));
+                }
+            }
+        }
     }
     Ok(())
 }

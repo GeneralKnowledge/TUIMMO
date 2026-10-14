@@ -57,36 +57,39 @@ impl WorldState {
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
         let wild = WildernessPos::parse(&location);
-        if let Some(result) =
-            self.try_inspect_thread_clue(session_id, player, &location, wild, &target)
-        {
-            let (mut text, mut ops) = result?;
-            let clue_id = self.threads.clue_at_place_for_target(&location, wild, &target);
-            let thread_subject = clue_id.as_deref().and_then(|id| {
-                self.threads.catalog.thread_for_clue(id).map(|thread| thread.id.as_str())
-            });
-            text = self.with_corroboration(text, thread_subject);
-            if let Some(pos) = wild {
-                text = self.append_wilderness_history(
-                    player,
-                    pos,
-                    text,
-                    &target,
-                    clue_id.as_deref(),
-                    &mut ops,
-                );
-            } else if let Some(subject) = thread_subject {
-                if let Some(line) = self.theories_summary_line(subject) {
-                    text.push('\n');
-                    text.push_str(&line);
+        let defer_thread_for_sign = wild.is_some() && target == "sign";
+        if !defer_thread_for_sign {
+            if let Some(result) =
+                self.try_inspect_thread_clue(session_id, player, &location, wild, &target)
+            {
+                let (mut text, mut ops) = result?;
+                let clue_id = self.threads.clue_at_place_for_target(&location, wild, &target);
+                let thread_subject = clue_id
+                    .as_deref()
+                    .and_then(|id| self.threads.thread_for_clue(id).map(|thread| thread.id));
+                text = self.with_corroboration(text, thread_subject.as_deref());
+                if let Some(pos) = wild {
+                    text = self.append_wilderness_history(
+                        player,
+                        pos,
+                        text,
+                        &target,
+                        clue_id.as_deref(),
+                        &mut ops,
+                    );
+                } else if let Some(ref subject) = thread_subject {
+                    if let Some(line) = self.theories_summary_line(subject) {
+                        text.push('\n');
+                        text.push_str(&line);
+                    }
                 }
+                let (event, op) = self.inspect_note(session_id, player, text);
+                ops.push(op);
+                return Ok(Transition {
+                    outcome: CommandOutcome { events: vec![event], quit: false },
+                    ops,
+                });
             }
-            let (event, op) = self.inspect_note(session_id, player, text);
-            ops.push(op);
-            return Ok(Transition {
-                outcome: CommandOutcome { events: vec![event], quit: false },
-                ops,
-            });
         }
         if let Some(pos) = wild {
             return self.inspect_wild(session_id, player, pos, &target);

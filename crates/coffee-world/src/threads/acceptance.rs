@@ -109,6 +109,26 @@ fn hash_placement_is_stable_for_region() {
 }
 
 #[test]
+fn procedural_residue_clue_is_inspectable_in_origin_region() {
+    let mut world = WorldState::for_tests();
+    let (player, op) = ada_operator();
+    world.insert_operator(op);
+    let session = connect(&mut world, player, "Ada");
+    let identity = crate::geography::gate_identity();
+    world.threads.ensure_procedural(identity).unwrap();
+    let anchors = crate::threads::coverage_anchors_for_region(
+        crate::geography::frontier_epoch().world_seed,
+        identity,
+    )
+    .unwrap();
+    let pos = anchors[0];
+    world.operators.get_mut(&player).unwrap().location_id = pos.key();
+    world.apply(session, "inspect graffiti").unwrap();
+    let text = world.findings.get(&session).cloned().unwrap_or_default();
+    assert!(text.contains("scratched") || text.contains("margin") || text.contains("scuff"));
+}
+
+#[test]
 fn off_schedule_reveal_requires_subway_use() {
     let mut world = WorldState::for_tests();
     let (player, op) = ada_operator();
