@@ -12,6 +12,7 @@ use crate::model::Operator;
 use crate::settlement::SettlementState;
 use crate::social::SocialState;
 use crate::theories::TheoryBoard;
+use crate::threads::ThreadState;
 use crate::waypoint::Waypoint;
 
 use super::WorldState;
@@ -28,6 +29,7 @@ pub struct CommandRollback {
     homes: HomeState,
     mailbox: Mailbox,
     theories: TheoryBoard,
+    threads: ThreadState,
     invites: InviteBook,
     overlays: HashMap<SessionId, String>,
 }
@@ -44,6 +46,7 @@ impl WorldState {
             homes: self.homes.clone(),
             mailbox: self.mailbox.clone(),
             theories: self.theories.clone(),
+            threads: self.threads.clone(),
             invites: self.invites.clone(),
             overlays: self.overlays.clone(),
         }
@@ -59,6 +62,7 @@ impl WorldState {
         self.restore_homes(snap.homes);
         self.restore_mail(snap.mailbox);
         self.restore_theories(snap.theories);
+        self.restore_threads(snap.threads);
         self.restore_invites(snap.invites);
         self.restore_overlays(snap.overlays);
     }

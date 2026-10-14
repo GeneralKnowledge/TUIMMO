@@ -502,6 +502,7 @@ impl SimulationRunner {
         Ok(assemble_report(ReportInputs {
             config: &self.config,
             schedule: &self.schedule,
+            world: &world,
             agents: &agents,
             allocated_profile_counts,
             snapshot,
@@ -618,6 +619,7 @@ fn is_social_command(line: &str) -> bool {
 struct ReportInputs<'a> {
     config: &'a RunConfig,
     schedule: &'a ValidatedSchedule,
+    world: &'a WorldState,
     agents: &'a [SimAgent],
     allocated_profile_counts: std::collections::BTreeMap<String, u32>,
     snapshot: WorldOutcomeSnapshot,
@@ -637,6 +639,7 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
     let ReportInputs {
         config,
         schedule,
+        world,
         agents,
         allocated_profile_counts,
         snapshot,
@@ -725,6 +728,7 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         snapshot_sampling,
         interaction,
         story_transcript,
+        thread_reports: world.simulation_thread_reports(schedule.virtual_start_ms),
     }
 }
 

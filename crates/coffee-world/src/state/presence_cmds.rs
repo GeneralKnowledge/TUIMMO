@@ -144,6 +144,9 @@ impl WorldState {
             scene.objects.push(("mark".to_string(), "repeated mark".to_string()));
         }
         let place_key = pos.key();
+        if let Some((keyword, label)) = self.thread_look_object(&place_key, Some(pos)) {
+            scene.objects.push((keyword, label));
+        }
         if let Some(home) = self.homes.presentation_at(&place_key, self.now_ms) {
             let viewer_is_owner = viewer == Some(home.operator_id);
             // Exploration traits for look prose: owner traits for distinctive public
@@ -385,7 +388,7 @@ impl WorldState {
             .map(|name| PresenceView { name })
             .collect::<Vec<_>>();
         present.sort_by(|a, b| a.name.cmp(&b.name));
-        let objects = loc
+        let mut objects: Vec<ObjectView> = loc
             .objects
             .iter()
             .map(|object| ObjectView {
@@ -393,6 +396,9 @@ impl WorldState {
                 name: object.name.to_string(),
             })
             .collect();
+        if let Some((keyword, label)) = self.thread_look_object(&op.location_id, None) {
+            objects.push(ObjectView { keyword, name: label });
+        }
         let inventory = op
             .items
             .iter()

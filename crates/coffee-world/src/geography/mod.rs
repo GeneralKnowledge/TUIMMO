@@ -36,8 +36,9 @@ pub use field::{
 };
 pub use generate::{
     derive_region_seed, epoch_spec, fingerprint, format_seed, frontier_epoch, frontier_identity,
-    generate_region, parse_seed, sample_baseline, EpochSpec, GenerateError, GeneratedRegion,
-    LandmarkKind, RegionCache, Terrain, Tile, EPOCH1_WORLD_SEED, EPOCH_1, GENERATION_V1,
+    generate_region, parse_seed, sample_baseline, thread_placement_hash, EpochSpec, GenerateError,
+    GeneratedRegion, LandmarkKind, RegionCache, Terrain, Tile, EPOCH1_WORLD_SEED, EPOCH_1,
+    GENERATION_V1,
 };
 pub use identity::{
     gate_identity, gate_position, origins_for_absolute, shift, IdentityError, Place,

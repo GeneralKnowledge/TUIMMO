@@ -56,7 +56,36 @@ impl WorldState {
         let target = cmd.args.first().map(|word| word.to_ascii_lowercase()).unwrap_or_default();
         let player = self.player(session_id)?;
         let location = self.location_id(session_id)?;
-        if let Some(pos) = WildernessPos::parse(&location) {
+        let wild = WildernessPos::parse(&location);
+        if let Some(result) =
+            self.try_inspect_thread_clue(session_id, player, &location, wild, &target)
+        {
+            let (mut text, mut ops) = result?;
+            text = self
+                .with_corroboration(text, self.threads.clue_at_place(&location, wild).as_deref());
+            if let Some(pos) = wild {
+                text = self.append_wilderness_history(
+                    player,
+                    pos,
+                    text,
+                    &target,
+                    self.threads.clue_at_place(&location, Some(pos)).as_deref(),
+                    &mut ops,
+                );
+            } else if let Some(subject) = self.threads.clue_at_place(&location, wild) {
+                if let Some(line) = self.theories_summary_line(&subject) {
+                    text.push('\n');
+                    text.push_str(&line);
+                }
+            }
+            let (event, op) = self.inspect_note(session_id, player, text);
+            ops.push(op);
+            return Ok(Transition {
+                outcome: CommandOutcome { events: vec![event], quit: false },
+                ops,
+            });
+        }
+        if let Some(pos) = wild {
             return self.inspect_wild(session_id, player, pos, &target);
         }
         if let Some(object) = find_object(&location, &target) {
