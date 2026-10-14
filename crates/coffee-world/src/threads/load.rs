@@ -78,6 +78,7 @@ struct RequireFile {
     seen_tag: Option<SeenTagFile>,
     seen_clue: Option<String>,
     corroborated_theory: Option<CorroboratedFile>,
+    used_subway: Option<bool>,
     all: Option<Vec<RequireFile>>,
 }
 
@@ -229,12 +230,15 @@ fn parse_require(row: &RequireFile) -> Result<KnowledgeRequirement, LoadError> {
     if row.corroborated_theory.is_some() {
         parts += 1;
     }
+    if row.used_subway == Some(true) {
+        parts += 1;
+    }
     if row.all.is_some() {
         parts += 1;
     }
     if parts != 1 {
         return Err(LoadError::Parse(
-            "each requirement must set exactly one of seen_tag, seen_clue, corroborated_theory, or all"
+            "each requirement must set exactly one of seen_tag, seen_clue, corroborated_theory, used_subway, or all"
                 .into(),
         ));
     }
@@ -252,6 +256,9 @@ fn parse_require(row: &RequireFile) -> Result<KnowledgeRequirement, LoadError> {
             subject: theory.subject.clone(),
             min: theory.min,
         });
+    }
+    if row.used_subway == Some(true) {
+        return Ok(KnowledgeRequirement::UsedSubway);
     }
     let items = row
         .all
@@ -308,6 +315,7 @@ fn validate_require(
             }
         }
         KnowledgeRequirement::CorroboratedTheory { .. } => {}
+        KnowledgeRequirement::UsedSubway => {}
     }
     Ok(())
 }

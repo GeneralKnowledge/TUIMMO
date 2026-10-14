@@ -12,6 +12,7 @@ pub enum Knowledge {
     SeenTag { tag: String, distinct_sites: u32 },
     SeenClue(String),
     CorroboratedTheory { subject: String, min: u32 },
+    UsedSubway,
     All(Vec<Knowledge>),
 }
 
@@ -28,6 +29,7 @@ impl Knowledge {
             KnowledgeRequirement::All(items) => {
                 Self::All(items.iter().map(Self::from_requirement).collect())
             }
+            KnowledgeRequirement::UsedSubway => Self::UsedSubway,
         }
     }
 
@@ -38,6 +40,7 @@ impl Knowledge {
             Self::SeenClue(_) => 100,
             Self::SeenTag { distinct_sites, .. } => 50 + *distinct_sites,
             Self::CorroboratedTheory { min, .. } => 40 + *min,
+            Self::UsedSubway => 55,
         }
     }
 }
@@ -47,6 +50,7 @@ pub struct KnowledgeContext<'a> {
     pub seen_clues: HashSet<String>,
     pub seen_sites_by_tag: HashMap<String, HashSet<ClueSite>>,
     pub theory_authors_by_subject: BTreeMap<String, HashSet<PlayerId>>,
+    pub used_subway: bool,
 }
 
 impl<'a> KnowledgeContext<'a> {
@@ -55,6 +59,7 @@ impl<'a> KnowledgeContext<'a> {
         operator: PlayerId,
         seen_clue_rows: &[(PlayerId, String, ClueSite)],
         theory_authors: &BTreeMap<String, HashSet<PlayerId>>,
+        used_subway: bool,
     ) -> Self {
         let mut seen_clues = HashSet::new();
         let mut seen_sites_by_tag: HashMap<String, HashSet<ClueSite>> = HashMap::new();
@@ -74,6 +79,7 @@ impl<'a> KnowledgeContext<'a> {
             seen_clues,
             seen_sites_by_tag,
             theory_authors_by_subject: theory_authors.clone(),
+            used_subway,
         }
     }
 
@@ -88,6 +94,7 @@ impl<'a> KnowledgeContext<'a> {
                 .theory_authors_by_subject
                 .get(subject)
                 .is_some_and(|authors| authors.len() >= *min as usize),
+            Knowledge::UsedSubway => self.used_subway,
             Knowledge::All(items) => items.iter().all(|item| self.satisfies(item)),
         }
     }

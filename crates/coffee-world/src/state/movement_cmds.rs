@@ -14,6 +14,7 @@ use crate::geography::{
 use crate::model::PersistOp;
 use crate::state::{Transition, WorldState};
 use crate::subway;
+use crate::threads::USED_SUBWAY_FLAG;
 
 const SQUALOR_ALIAS: &str = "squalor";
 
@@ -54,6 +55,12 @@ impl WorldState {
         let name = self.name_of(session_id)?;
         if let Some(op) = self.operators.get_mut(&player) {
             op.location_id.clone_from(&target.to);
+            if subway::is_station(&target.to) && op.flags.insert(USED_SUBWAY_FLAG.to_string()) {
+                ops.push(PersistOp::Flag {
+                    operator_id: player,
+                    flag: USED_SUBWAY_FLAG.to_string(),
+                });
+            }
         }
         let home_travel = self.note_home_travel(player, &from, &target.to);
         ops.extend(home_travel.ops);

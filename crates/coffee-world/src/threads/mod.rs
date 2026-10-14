@@ -1,5 +1,8 @@
 //! Hidden clue threads scattered across the Squalor and Hub.
 
+/// Set when this operator has entered the municipal subway (station platform).
+pub const USED_SUBWAY_FLAG: &str = "used-subway";
+
 mod knowledge;
 mod load;
 mod placement;
@@ -75,12 +78,56 @@ impl ClueKind {
             Self::Graffiti => {
                 matches!(
                     t.as_str(),
-                    "mark" | "writing" | "scratch" | "shutter" | "circle" | "chalk"
+                    "mark"
+                        | "writing"
+                        | "scratch"
+                        | "shutter"
+                        | "circle"
+                        | "chalk"
+                        | "stain"
+                        | "line"
+                        | "water"
+                        | "wall"
+                        | "wear"
+                        | "groove"
                 )
             }
-            Self::Object => matches!(t.as_str(), "cup" | "tin" | "dent"),
-            Self::Record => matches!(t.as_str(), "margin" | "ledger" | "strokes" | "column"),
-            Self::Sign => matches!(t.as_str(), "note" | "placard" | "notice" | "letter"),
+            Self::Object => {
+                matches!(
+                    t.as_str(),
+                    "cup"
+                        | "tin"
+                        | "dent"
+                        | "locker"
+                        | "groove"
+                        | "floor"
+                        | "threshold"
+                        | "stub"
+                        | "ticket"
+                        | "map"
+                )
+            }
+            Self::Record => {
+                matches!(t.as_str(), "margin" | "ledger" | "strokes" | "column" | "map")
+            }
+            Self::Sign => {
+                matches!(
+                    t.as_str(),
+                    "note"
+                        | "placard"
+                        | "notice"
+                        | "letter"
+                        | "doorbell"
+                        | "label"
+                        | "board"
+                        | "noticeboard"
+                        | "timetable"
+                        | "schedule"
+                        | "scratch"
+                        | "scratched"
+                        | "map"
+                )
+            }
         }
     }
 }
@@ -109,6 +156,7 @@ pub enum KnowledgeRequirement {
     SeenTag { tag: String, distinct_sites: u32 },
     SeenClue(String),
     CorroboratedTheory { subject: String, min: u32 },
+    UsedSubway,
     All(Vec<KnowledgeRequirement>),
 }
 
@@ -164,9 +212,39 @@ impl ThreadState {
     }
 
     pub fn clue_at_place(&self, location: &str, wild: Option<WildernessPos>) -> Option<String> {
-        if let Some(pos) = wild {
-            return clue_at_wild_pos(&self.sites, pos);
+        self.clue_ids_at_place(location, wild).into_iter().next()
+    }
+
+    pub fn clue_ids_at_place(&self, location: &str, wild: Option<WildernessPos>) -> Vec<String> {
+        self.sites
+            .iter()
+            .filter(|(_, site)| site_matches_place(site, location, wild))
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    pub fn clue_at_place_for_target(
+        &self,
+        location: &str,
+        wild: Option<WildernessPos>,
+        target: &str,
+    ) -> Option<String> {
+        for clue_id in self.clue_ids_at_place(location, wild) {
+            let Some(clue) = self.catalog.clue(&clue_id) else {
+                continue;
+            };
+            if clue.kind.matches_target(target) {
+                return Some(clue_id);
+            }
         }
-        clue_at_static(&self.sites, location)
+        None
+    }
+}
+
+fn site_matches_place(site: &ClueSite, location: &str, wild: Option<WildernessPos>) -> bool {
+    match (wild, site) {
+        (Some(pos), ClueSite::Wild(p)) => *p == pos,
+        (None, ClueSite::Static(loc)) => loc == location,
+        _ => false,
     }
 }

@@ -135,3 +135,340 @@ journal_title = "Stair chalk circle"
 
 [threads.clues.site]
 metro_entrance = "ash"
+
+[[threads]]
+id = "second-names"
+tags = ["struck-name"]
+
+[[threads.clues]]
+id = "names-locker-label"
+kind = "object"
+surface_text = "A locker tag: one name crossed out hard enough to tear the metal, another written beside it in a different hand."
+tags = ["struck-name"]
+journal_title = "Locker tag"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "The struck-out name is the same each time. The replacement never is."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "struck-name"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "names-ledger-strike"
+kind = "record"
+surface_text = "A ledger line: the debtor's name struck through twice, a stranger's initial pencilled above it."
+tags = ["struck-name"]
+journal_title = "Struck ledger line"
+
+[threads.clues.site]
+wild = { band = "fringe", district = "commercial" }
+
+[[threads.clues.reveals]]
+text = "The struck-out name is the same each time. The replacement never is."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "struck-name"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "names-doorbell-tape"
+kind = "sign"
+surface_text = "A doorbell card taped over the old one. The name beneath the tape is still legible where the corner lifts."
+tags = ["struck-name"]
+journal_title = "Taped doorbell"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "The struck-out name is the same each time. The replacement never is."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "struck-name"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "names-hub-notice"
+kind = "sign"
+surface_text = "On the noticeboard, a fresh slip lists a first name only — the ink is still wet at the edges."
+tags = ["struck-name"]
+journal_title = "Hub name slip"
+
+[threads.clues.site]
+static = "coffee-shop"
+
+[[threads.clues.reveals]]
+text = "The struck-out name is the same each time. The replacement never is."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "struck-name"
+distinct_sites = 3
+
+[[threads]]
+id = "wrong-weather"
+tags = ["damp-line"]
+
+[[threads.clues]]
+id = "damp-wall-line"
+kind = "graffiti"
+surface_text = "A water-stain line runs along the plaster, straight and dry, far from any pipe."
+tags = ["damp-line"]
+journal_title = "Dry water line"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "All the lines sit at the same height off the floor, as if one flood stood level across the whole district."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "damp-line"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "damp-stair-line"
+kind = "graffiti"
+surface_text = "The same stain line cuts across the stairwell, as high on the landing as it is in the alley."
+tags = ["damp-line"]
+journal_title = "Stairwell line"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "All the lines sit at the same height off the floor, as if one flood stood level across the whole district."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "damp-line"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "damp-sealed-shop"
+kind = "graffiti"
+surface_text = "Inside a sealed shopfront, the line is visible through the grime — no door has opened here in years."
+tags = ["damp-line"]
+journal_title = "Sealed shop line"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "All the lines sit at the same height off the floor, as if one flood stood level across the whole district."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "damp-line"
+distinct_sites = 3
+
+[[threads.clues]]
+id = "damp-hub-high"
+kind = "graffiti"
+surface_text = "The same line continues up the Hub wall, well above anyone's head — the stain ends only where the old ceiling used to be."
+tags = ["damp-line"]
+journal_title = "High Hub line"
+
+[threads.clues.site]
+static = "roof-array"
+
+[[threads.clues.reveals]]
+text = "All the lines sit at the same height off the floor, as if one flood stood level across the whole district."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "damp-line"
+distinct_sites = 3
+
+[[threads.clues.reveals]]
+text = "Whatever happened was deeper here. The Hub line sits far above the marks in the Squalor."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "damp-line"
+distinct_sites = 4
+
+[[threads]]
+id = "long-way"
+tags = ["worn-path"]
+
+[[threads.clues]]
+id = "path-floor-grooves"
+kind = "object"
+surface_text = "Grooves worn into the floorboards, all pointing the same way, as if a crowd kept choosing one route."
+tags = ["worn-path"]
+journal_title = "Floor grooves"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "The wear points toward a single blank wall."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "worn-path"
+distinct_sites = 2
+
+[[threads.clues]]
+id = "path-stair-hollow"
+kind = "graffiti"
+surface_text = "A stair nosing rubbed hollow by feet that no longer come this way."
+tags = ["worn-path"]
+journal_title = "Hollow stair edge"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "The wear points toward a single blank wall."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "worn-path"
+distinct_sites = 2
+
+[[threads.clues]]
+id = "path-threshold-polish"
+kind = "object"
+surface_text = "A threshold polished smooth where there is no door — only brick."
+tags = ["worn-path"]
+journal_title = "Polished threshold"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "The wear points toward a single blank wall."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "worn-path"
+distinct_sites = 2
+
+[[threads.clues]]
+id = "path-blank-wall"
+kind = "graffiti"
+surface_text = "A blank wall of newer brick. The mortar is pale beside the street's soot-dark joints."
+tags = ["worn-path"]
+journal_title = "Newer wall"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "The wear points toward a single blank wall."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "worn-path"
+distinct_sites = 2
+
+[[threads.clues.reveals]]
+text = "The wall is newer than the street. Someone stopped using this way, and someone else closed it."
+
+[threads.clues.reveals.requires.seen_tag]
+tag = "worn-path"
+distinct_sites = 3
+
+[[threads]]
+id = "off-schedule"
+tags = ["timetable"]
+
+[[threads.clues]]
+id = "schedule-platform-timetable"
+kind = "sign"
+surface_text = "A pasted timetable lists Ash Plaza, Ward West, and a third stop — Meridian Cut — in faded type."
+tags = ["timetable"]
+journal_title = "Three-stop timetable"
+
+[threads.clues.site]
+static = "metro-ash-plaza"
+
+[[threads.clues.reveals]]
+text = "Both stations you know are on the sheet. The third has a departure time but no arrival."
+
+[threads.clues.reveals.requires]
+used_subway = true
+
+[[threads.clues]]
+id = "schedule-ticket-stub"
+kind = "object"
+surface_text = "A ticket stub punched for Meridian Cut. The date is recent; the ink is already fading."
+tags = ["timetable"]
+journal_title = "Meridian stub"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "Both stations you know are on the sheet. The third has a departure time but no arrival."
+
+[threads.clues.reveals.requires]
+used_subway = true
+
+[[threads.clues]]
+id = "schedule-scratched-sign"
+kind = "sign"
+surface_text = "A platform sign for Meridian Cut has been scratched out so hard the metal shows through."
+tags = ["timetable"]
+journal_title = "Scratched platform sign"
+
+[threads.clues.site]
+static = "metro-ward-west"
+
+[[threads.clues.reveals]]
+text = "Both stations you know are on the sheet. The third has a departure time but no arrival."
+
+[threads.clues.reveals.requires]
+used_subway = true
+
+[[threads]]
+id = "two-maps"
+tags = ["hand-map"]
+
+[[threads.clues]]
+id = "map-hand-east"
+kind = "sign"
+surface_text = "A hand-drawn map of the district. The alley you know is shown as a through road."
+tags = ["hand-map"]
+journal_title = "Hand map (east)"
+
+[threads.clues.site]
+wild = { band = "near_hub" }
+
+[[threads.clues.reveals]]
+text = "Each map is accurate — just for a different period. Compare them with someone who has seen the others."
+
+[threads.clues.reveals.requires.corroborated_theory]
+subject = "two-maps"
+min = 2
+
+[[threads.clues]]
+id = "map-hand-west"
+kind = "sign"
+surface_text = "Another hand map of the same blocks. The through road is walled off; a yard stands where the alley was."
+tags = ["hand-map"]
+journal_title = "Hand map (west)"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "Each map is accurate — just for a different period. Compare them with someone who has seen the others."
+
+[threads.clues.reveals.requires.corroborated_theory]
+subject = "two-maps"
+min = 2
+
+[[threads.clues]]
+id = "map-hand-third"
+kind = "record"
+surface_text = "A third map, folded in a ledger. It matches neither of the others, but every line is drawn with care."
+tags = ["hand-map"]
+journal_title = "Third hand map"
+
+[threads.clues.site]
+wild = { band = "fringe" }
+
+[[threads.clues.reveals]]
+text = "Each map is accurate — just for a different period. Compare them with someone who has seen the others."
+
+[threads.clues.reveals.requires.corroborated_theory]
+subject = "two-maps"
+min = 2
