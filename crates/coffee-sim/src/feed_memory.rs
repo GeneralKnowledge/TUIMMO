@@ -25,6 +25,12 @@ pub fn absorb_command_outcome(
     if command.starts_with("look") {
         absorb_look_text(&view.description, &location_key, memory);
     }
+    if let Some(keyword) = command.strip_prefix("inspect ") {
+        let keyword = keyword.split_whitespace().next().unwrap_or(keyword).to_ascii_lowercase();
+        if !keyword.is_empty() {
+            memory.record_inspected_keyword(&location_key, &keyword);
+        }
+    }
     if let Some(overlay) = &view.overlay {
         if command.starts_with("theory") {
             absorb_theory_overlay(overlay, memory);
@@ -33,6 +39,9 @@ pub fn absorb_command_outcome(
 }
 
 fn absorb_inspection_text(text: &str, location: &str, memory: &mut AgentMemory) {
+    if let Some(target) = parse_breadcrumb_region(text) {
+        memory.breadcrumb_target_region = Some(target);
+    }
     if text.contains("first charted") {
         memory.record_public_trace_at(location, "charting");
     }
@@ -60,6 +69,20 @@ fn absorb_look_text(description: &str, location: &str, memory: &mut AgentMemory)
     if description.contains("Trail post") {
         memory.record_public_trace_at(location, "trail");
     }
+}
+
+fn parse_breadcrumb_region(text: &str) -> Option<(i32, i32)> {
+    let needle = "region (";
+    let start = text.find(needle)? + needle.len();
+    let rest = &text[start..];
+    let end = rest.find(')')?;
+    let parts: Vec<_> = rest[..end].split(',').map(str::trim).collect();
+    if parts.len() != 2 {
+        return None;
+    }
+    let ox = parts[0].parse().ok()?;
+    let oy = parts[1].parse().ok()?;
+    Some((ox, oy))
 }
 
 fn absorb_theory_overlay(overlay: &str, memory: &mut AgentMemory) {

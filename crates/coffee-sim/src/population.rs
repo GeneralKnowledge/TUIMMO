@@ -15,6 +15,9 @@ pub struct PopulationMix {
     pub follower: u32,
     pub social_player: u32,
     pub occasional_visitor: u32,
+    pub curious: u32,
+    pub tracker: u32,
+    pub newcomer: u32,
 }
 
 impl PopulationMix {
@@ -49,12 +52,28 @@ impl PopulationMix {
             follower: 20,
             social_player: 10,
             occasional_visitor: 10,
+            curious: 0,
+            tracker: 0,
+            newcomer: 0,
         }
     }
 
     /// Weights tuned for cross-operator traces and theories in offline runs.
     pub fn story_emergence() -> Self {
         Self { wanderer: 25, investigator: 25, homebody: 15, follower: 35, ..Default::default() }
+    }
+
+    /// Half wanderers, half curious — for thread discovery comparison runs.
+    pub fn wanderer_vs_curious() -> Self {
+        Self { wanderer: 50, curious: 50, ..Default::default() }
+    }
+
+    pub fn monolithic_newcomer() -> Self {
+        Self::monolithic(Profile::Newcomer)
+    }
+
+    pub fn monolithic_tracker() -> Self {
+        Self::monolithic(Profile::Tracker)
     }
 
     /// Single-profile population (all agents share one behavioural profile).
@@ -67,6 +86,9 @@ impl PopulationMix {
             Profile::Follower => mix.follower = 100,
             Profile::SocialPlayer => mix.social_player = 100,
             Profile::OccasionalVisitor => mix.occasional_visitor = 100,
+            Profile::Curious => mix.curious = 100,
+            Profile::Tracker => mix.tracker = 100,
+            Profile::Newcomer => mix.newcomer = 100,
         }
         mix
     }
@@ -77,7 +99,10 @@ impl PopulationMix {
             + self.homebody
             + self.follower
             + self.social_player
-            + self.occasional_visitor;
+            + self.occasional_visitor
+            + self.curious
+            + self.tracker
+            + self.newcomer;
         if sum == 0 {
             return Err(SimulationError::InvalidPopulationMix(
                 "at least one profile weight must be non-zero".into(),
@@ -92,16 +117,19 @@ impl PopulationMix {
         if agent_count == 0 {
             return Err(SimulationError::NoAgents);
         }
-        let entries: [(Profile, u32); 6] = [
+        let entries: [(Profile, u32); 9] = [
             (Profile::Wanderer, self.wanderer),
             (Profile::Investigator, self.investigator),
             (Profile::Homebody, self.homebody),
             (Profile::Follower, self.follower),
             (Profile::SocialPlayer, self.social_player),
             (Profile::OccasionalVisitor, self.occasional_visitor),
+            (Profile::Curious, self.curious),
+            (Profile::Tracker, self.tracker),
+            (Profile::Newcomer, self.newcomer),
         ];
         let sum: u32 = entries.iter().map(|(_, w)| w).sum();
-        let mut counts = [0u32; 6];
+        let mut counts = [0u32; 9];
         let mut assigned = 0u32;
         let mut remainders = Vec::new();
         for (idx, (_, weight)) in entries.iter().enumerate() {

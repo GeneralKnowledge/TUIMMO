@@ -23,6 +23,12 @@ pub struct AgentMemory {
     last_locations: VecDeque<String>,
     last_move_from: Option<String>,
     last_exit: Option<String>,
+    inspected_keywords: BTreeMap<String, BTreeSet<String>>,
+    pub counted_clue_ids: BTreeSet<String>,
+    pub actions_at_first_thread_clue: Option<u64>,
+    pub thread_clues_found: u32,
+    pub breadcrumb_target_region: Option<(i32, i32)>,
+    pub newcomer_actions_remaining: Option<u32>,
 }
 
 impl AgentMemory {
@@ -66,6 +72,21 @@ impl AgentMemory {
         self.inspected_locations.contains(location)
     }
 
+    pub fn inspected_keyword_at(&self, location: &str, keyword: &str) -> bool {
+        self.inspected_keywords.get(location).is_some_and(|set| set.contains(keyword))
+    }
+
+    pub fn record_inspected_keyword(&mut self, location: &str, keyword: &str) {
+        self.inspected_keywords
+            .entry(location.to_string())
+            .or_default()
+            .insert(keyword.to_string());
+    }
+
+    pub fn knows_region(&self, region_key: &str) -> bool {
+        self.region_keys_visited.contains(region_key)
+    }
+
     pub fn record_theory_subject_hint(&mut self, subject: &str) {
         self.theory_subject_hints.insert(subject.to_string());
     }
@@ -87,5 +108,15 @@ impl AgentMemory {
             .get(location)
             .map(|set| set.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub fn note_thread_clue_found(&mut self, clue_id: &str, actions: u64) {
+        if !self.counted_clue_ids.insert(clue_id.to_string()) {
+            return;
+        }
+        self.thread_clues_found += 1;
+        if self.actions_at_first_thread_clue.is_none() {
+            self.actions_at_first_thread_clue = Some(actions);
+        }
     }
 }

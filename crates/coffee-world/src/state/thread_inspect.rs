@@ -157,7 +157,7 @@ impl WorldState {
             .into_iter()
             .filter_map(|clue_id| {
                 let clue = self.threads.clue_def(&clue_id)?;
-                Some((clue.kind.keyword().to_string(), clue.kind.label().to_string()))
+                Some((clue.kind.keyword().to_string(), crate::threads::look_object_label(&clue)))
             })
             .collect()
     }

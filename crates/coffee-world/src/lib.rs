@@ -55,4 +55,8 @@ pub use sim::{SimulationOccupancySummary, WorldOutcomeSnapshot, WORLD_GENERATION
 pub use social::SocialState;
 pub use state::{starter_operator, Transition, WorldState};
 pub use store::{AccountInvitePolicy, AccountRow, LoadedWorld, NewAccount, Store, StoreError};
-pub use threads::ThreadSimReport;
+pub use threads::{
+    is_thread_clue, measure_coverage_report, measure_placement_inventory, ActionDiscoveryReport,
+    ClueDiscoveryReport, CoverageParams, LongThreadProgressReport, PlacementInventoryReport,
+    ThreadCoverageReport, ThreadSimReport,
+};

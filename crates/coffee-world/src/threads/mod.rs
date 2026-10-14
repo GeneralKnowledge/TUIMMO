@@ -3,24 +3,41 @@
 /// Set when this operator has entered the municipal subway (station platform).
 pub const USED_SUBWAY_FLAG: &str = "used-subway";
 
+mod clue_class;
 mod coverage;
+mod coverage_metrics;
+mod coverage_params;
 mod distance_tier;
 mod knowledge;
 mod load;
+mod long_procession;
 mod placement;
 mod procedural;
 mod sim_report;
+mod starter_thread;
 mod template_load;
 
+pub use clue_class::{is_coverage_flavor, is_thread_clue, look_object_label};
 pub use coverage::{coverage_anchors_for_region, COVERAGE_GRID_STEP, INSPECTABLE_MAX_GAP};
+pub use coverage_metrics::{
+    chebyshev_from_gate, max_gap_guarantee_holds, measure_coverage_report,
+    measure_placement_inventory, procedural_feature_sites, sample_regions_for_measurement,
+    DensityBucketStats, GapBucketStats, HubDistanceBucket, PlacementBucketStats,
+    PlacementInventoryReport, ThreadCoverageReport,
+};
+pub use coverage_params::CoverageParams;
 pub use distance_tier::{DistanceTier, TIER_FAR_MAX_CHEB, TIER_MID_MAX_CHEB, TIER_NEAR_MAX_CHEB};
 pub use knowledge::{best_reveal_text, thread_final_clue_id, Knowledge, KnowledgeContext};
 pub use load::{load_default_threads, load_threads_from_str, LoadError};
 pub use placement::{
     build_placement_map, clue_at_static, clue_at_wild_pos, placement_hash, resolve_all_sites,
 };
-pub use procedural::{generate_for_region, ProceduralRegion};
-pub use sim_report::{simulation_thread_reports, ThreadSimReport};
+pub use procedural::{generate_for_region, generate_for_region_with_params, ProceduralRegion};
+pub use sim_report::{
+    simulation_action_discovery_reports, simulation_clue_discovery_reports,
+    simulation_long_thread_progress, simulation_thread_reports, ActionDiscoveryReport,
+    ClueDiscoveryReport, LongThreadProgressReport, OperatorActionDiscovery, ThreadSimReport,
+};
 pub use template_load::{load_default_templates, TemplateCatalog};
 
 use std::cell::RefCell;
@@ -77,6 +94,20 @@ impl ClueKind {
             Self::Record => "ledger margin",
             Self::Object => "discarded object",
             Self::Sign => "handwritten sign",
+        }
+    }
+
+    /// `look` object label: thread clues use distinct phrasing from coverage flavor.
+    pub fn look_label_for(self, thread_clue: bool) -> &'static str {
+        if thread_clue {
+            match self {
+                Self::Graffiti => "counted mark",
+                Self::Record => "notched record",
+                Self::Object => "placed object",
+                Self::Sign => "posted notice",
+            }
+        } else {
+            self.label()
         }
     }
 
@@ -192,6 +223,7 @@ pub struct ThreadState {
     pub sites: HashMap<String, ClueSite>,
     procedural: RefCell<HashMap<RegionCoordKey, ProceduralRegion>>,
     world_seed: u64,
+    coverage_params: CoverageParams,
     pub seen: Vec<ClueSeen>,
 }
 
@@ -212,8 +244,22 @@ impl ClueCatalog {
 #[cfg(test)]
 mod acceptance;
 
+#[cfg(test)]
+#[cfg(test)]
+mod clue_class_tests;
+#[cfg(test)]
+mod long_procession_tests;
+
 impl ThreadState {
     pub fn new(catalog: ClueCatalog, world_seed: u64) -> Self {
+        Self::with_coverage_params(catalog, world_seed, CoverageParams::default())
+    }
+
+    pub fn with_coverage_params(
+        catalog: ClueCatalog,
+        world_seed: u64,
+        coverage_params: CoverageParams,
+    ) -> Self {
         let sites = build_placement_map(&catalog, world_seed);
         Self {
             catalog,
@@ -221,8 +267,35 @@ impl ThreadState {
             sites,
             procedural: RefCell::new(HashMap::new()),
             world_seed,
+            coverage_params,
             seen: Vec::new(),
         }
+    }
+
+    pub fn world_seed(&self) -> u64 {
+        self.world_seed
+    }
+
+    pub fn coverage_params(&self) -> CoverageParams {
+        self.coverage_params
+    }
+
+    pub fn set_coverage_params(&mut self, params: CoverageParams) {
+        self.coverage_params = params;
+        self.procedural.borrow_mut().clear();
+    }
+
+    pub fn all_thread_defs(&self) -> Vec<ThreadDef> {
+        let mut out = self.catalog.threads.clone();
+        for region in self.procedural.borrow().values() {
+            for thread in &region.threads {
+                if !out.iter().any(|t| t.id == thread.id) {
+                    out.push(thread.clone());
+                }
+            }
+        }
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
     }
 
     pub fn ensure_procedural(&self, identity: RegionIdentity) -> Result<(), GenerateError> {
@@ -230,7 +303,12 @@ impl ThreadState {
         if self.procedural.borrow().contains_key(&key) {
             return Ok(());
         }
-        let generated = generate_for_region(self.world_seed, identity, &self.templates)?;
+        let generated = generate_for_region_with_params(
+            self.world_seed,
+            identity,
+            &self.templates,
+            self.coverage_params,
+        )?;
         self.procedural.borrow_mut().insert(key, generated);
         Ok(())
     }

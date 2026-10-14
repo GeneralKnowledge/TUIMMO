@@ -19,6 +19,8 @@ pub struct ActionContext {
     pub first_other_present: Option<String>,
     pub agent_display_name: String,
     pub cardinal_exits: Vec<String>,
+    /// Thread clue inspect keywords on this tile (procedural + authored).
+    pub thread_keywords: Vec<String>,
 }
 
 pub fn build_context(
@@ -32,6 +34,7 @@ pub fn build_context(
     let others_present = view.present.len();
     let first_other_present = view.present.first().map(|p| p.name.clone());
     let cardinal_exits = cardinal_exits_from_view(&view.exits);
+    let thread_keywords = world.simulation_thread_keywords_at(agent.session_id).unwrap_or_default();
     Ok(ActionContext {
         location,
         region_key,
@@ -40,6 +43,7 @@ pub fn build_context(
         first_other_present,
         agent_display_name: agent.display_name.clone(),
         cardinal_exits,
+        thread_keywords,
     })
 }
 

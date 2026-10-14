@@ -136,6 +136,8 @@ Authored threads live in `crates/coffee-world/data/threads.toml` and are placed 
 
 **Distance tiers** (`threads/distance_tier.rs`) are config boundaries from the gate: `TIER_NEAR_MAX_CHEB` 20, `TIER_MID_MAX_CHEB` 48, `TIER_FAR_MAX_CHEB` 128 (near / mid / far / deep). Far and deep tiers select older text pools and host later chapters of long templates. Knowledge gates may use `AnyOfClues` so a reveal needs any *n* of a set of clue ids; reveals add text only and never unlock commands or access.
 
+**Long-procession** uses a single spine id per world seed (`long-procession:spine:<hash>:<index>`). Clue tiles are chosen on absolute coordinates; each birth cell materializes only clues that fall inside it. Chapter-ending breadcrumbs point toward the true region of the next chapter’s first clue. `CoverageParams` (`grid_step`, `max_gap`) override the default 4×4 grid for offline measurement; production defaults are unchanged.
+
 ## Persistence and migrations
 
 `0001_init.sql` is unchanged. `0002_world.sql` adds:
