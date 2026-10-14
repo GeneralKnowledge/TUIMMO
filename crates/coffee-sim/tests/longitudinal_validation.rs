@@ -64,6 +64,8 @@ fn snapshots_do_not_change_gameplay_outcomes() {
         report.coverage_metrics = None;
         report.long_thread_progress = None;
         report.clue_discovery = None;
+        report.action_discovery = None;
+        report.placement_inventory = None;
         report
     }
     assert_eq!(gameplay_core(without), gameplay_core(with));

@@ -14,7 +14,10 @@ pub struct DensitySettingResult {
     pub gap_p95_by_bucket: Vec<(String, f64)>,
     pub gap_max_by_bucket: Vec<(String, f64)>,
     pub median_time_to_first_clue_ms: Option<u64>,
-    pub clues_per_hour_near_hub: f64,
+    /// Sum of near-hub thread clue discoveries divided by virtual_days (not wall-clock hours).
+    pub near_hub_clues_per_sim_day: f64,
+    pub median_actions_to_first_thread_clue: Option<u64>,
+    pub median_clues_per_100_actions: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -43,6 +46,7 @@ pub fn run_density_experiment(seed: u64) -> Result<DensityExperimentReport, Simu
             include_coverage_metrics: false,
             ..RunConfig::default()
         };
+        let virtual_days = config.virtual_days;
         let sim = run_with_config(config)?;
         let median_ttf = sim.clue_discovery.as_ref().and_then(|d| {
             let mut times: Vec<u64> =
@@ -50,7 +54,7 @@ pub fn run_density_experiment(seed: u64) -> Result<DensityExperimentReport, Simu
             times.sort();
             times.get(times.len() / 2).copied()
         });
-        let clues_per_hour = sim
+        let near_hub_clues_per_sim_day = sim
             .clue_discovery
             .as_ref()
             .map(|d| {
@@ -60,9 +64,21 @@ pub fn run_density_experiment(seed: u64) -> Result<DensityExperimentReport, Simu
                     .flat_map(|o| o.clues_per_hour_by_bucket.get("0-100"))
                     .flat_map(|hours| hours.values())
                     .sum();
-                near as f64 / 3.0
+                near as f64 / virtual_days
             })
             .unwrap_or(0.0);
+
+        let median_actions_to_first_thread_clue = sim.action_discovery.as_ref().and_then(|d| {
+            let mut xs: Vec<u64> =
+                d.operators.iter().filter_map(|o| o.actions_to_first_thread_clue).collect();
+            xs.sort();
+            xs.get(xs.len() / 2).copied()
+        });
+        let median_clues_per_100_actions = sim.action_discovery.as_ref().and_then(|d| {
+            let mut xs: Vec<f64> = d.operators.iter().map(|o| o.clues_per_100_actions).collect();
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            xs.get(xs.len() / 2).copied()
+        });
 
         settings.push(DensitySettingResult {
             grid_step,
@@ -78,7 +94,9 @@ pub fn run_density_experiment(seed: u64) -> Result<DensityExperimentReport, Simu
                 .map(|b| (b.bucket.label().to_string(), b.max))
                 .collect(),
             median_time_to_first_clue_ms: median_ttf,
-            clues_per_hour_near_hub: clues_per_hour,
+            near_hub_clues_per_sim_day,
+            median_actions_to_first_thread_clue,
+            median_clues_per_100_actions,
         });
     }
 
@@ -90,13 +108,15 @@ fn recommend(settings: &[DensitySettingResult]) -> String {
     let default = settings.first();
     let sparse = settings.iter().find(|s| s.grid_step == 8);
     match (default, sparse) {
-        (Some(d), Some(eight)) if eight.clues_per_hour_near_hub < d.clues_per_hour_near_hub * 0.6 => {
+        (Some(d), Some(eight))
+            if eight.near_hub_clues_per_sim_day < d.near_hub_clues_per_sim_day * 0.6 =>
+        {
             format!(
-                "Default (4,4) yields {:.1} near-hub clue discoveries/hour vs (8,8) at {:.1}; \
+                "Default (4,4) yields {:.1} near-hub thread clue discoveries/sim-day vs (8,8) at {:.1}; \
                  p95 gap remains ≤{:.0} tiles on (4,4). Consider (8,8) if inspect density feels like confetti — \
                  defaults unchanged in code.",
-                d.clues_per_hour_near_hub,
-                eight.clues_per_hour_near_hub,
+                d.near_hub_clues_per_sim_day,
+                eight.near_hub_clues_per_sim_day,
                 d.gap_p95_by_bucket.first().map(|(_, v)| *v).unwrap_or(0.0)
             )
         }

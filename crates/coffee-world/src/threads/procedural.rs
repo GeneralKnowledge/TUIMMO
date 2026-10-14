@@ -8,6 +8,7 @@ use super::coverage::coverage_anchors_for_region_with_params;
 use super::coverage_params::CoverageParams;
 use super::distance_tier::DistanceTier;
 use super::long_procession::materialize_long_procession_for_region;
+use super::starter_thread::materialize_starter_thread_for_region;
 use super::template_load::{
     fill_slots, template_reveal_defs, TemplateCatalog, TemplateDef, TemplateTier,
 };
@@ -43,6 +44,8 @@ pub fn generate_for_region_with_params(
     let mut out = ProceduralRegion::default();
     let mut used: HashSet<WildernessPos> = HashSet::new();
 
+    materialize_starter_thread_for_region(world_seed, identity, templates, &mut out, &mut used)?;
+
     for template in &templates.templates {
         match template.tier {
             TemplateTier::Local => {
@@ -54,7 +57,12 @@ pub fn generate_for_region_with_params(
             }
             TemplateTier::Regional => {
                 if template.id == "absent-keeper"
-                    && region_spawn(world_seed, identity, &template.id, 3)
+                    && region_spawn(
+                        world_seed,
+                        identity,
+                        &template.id,
+                        if near_hub_region(identity) { 2 } else { 3 },
+                    )
                 {
                     instantiate_absent_keeper(
                         world_seed, identity, template, &anchors, &mut out, &mut used,
@@ -95,6 +103,14 @@ pub fn generate_for_region_with_params(
     }
 
     Ok(out)
+}
+
+fn near_hub_region(identity: RegionIdentity) -> bool {
+    let ax = i64::from(identity.origin_x) * 16 + 8;
+    let ay = i64::from(identity.origin_y) * 16 + 8;
+    let gx = 8_i64;
+    let gy = 8_i64;
+    (ax - gx).abs().max((ay - gy).abs()) <= 100
 }
 
 fn region_spawn(
