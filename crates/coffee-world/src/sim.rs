@@ -13,9 +13,10 @@ use crate::home::Habitation;
 use crate::model::STARTER_LOCATION;
 use crate::state::WorldState;
 use crate::threads::{
-    measure_coverage_report, simulation_clue_discovery_reports, simulation_long_thread_progress,
-    simulation_thread_reports, ClueDiscoveryReport, CoverageParams, LongThreadProgressReport,
-    ThreadCoverageReport, ThreadSimReport,
+    measure_coverage_report, measure_placement_inventory, simulation_action_discovery_reports,
+    simulation_clue_discovery_reports, simulation_long_thread_progress, simulation_thread_reports,
+    ActionDiscoveryReport, ClueDiscoveryReport, CoverageParams, LongThreadProgressReport,
+    PlacementInventoryReport, ThreadCoverageReport, ThreadSimReport,
 };
 
 /// Stable world-generation label recorded in simulation reports.
@@ -189,6 +190,44 @@ impl WorldState {
         let names: std::collections::HashMap<PlayerId, String> =
             self.operators.values().map(|op| (op.id, op.name.clone())).collect();
         simulation_clue_discovery_reports(&self.threads, &names, sim_start_ms)
+    }
+
+    pub fn simulation_action_discovery_reports(
+        &self,
+        actions_attempted: &std::collections::HashMap<PlayerId, u64>,
+        first_thread_clue_action: &std::collections::HashMap<PlayerId, u64>,
+    ) -> ActionDiscoveryReport {
+        let names: std::collections::HashMap<PlayerId, String> =
+            self.operators.values().map(|op| (op.id, op.name.clone())).collect();
+        simulation_action_discovery_reports(
+            &self.threads,
+            &names,
+            actions_attempted,
+            first_thread_clue_action,
+        )
+    }
+
+    pub fn simulation_placement_inventory(&self) -> PlacementInventoryReport {
+        measure_placement_inventory(self.threads.world_seed(), self.threads.coverage_params())
+    }
+
+    /// Thread clue ids newly seen by `player` excluding `already_counted` and coverage flavor.
+    pub fn simulation_new_thread_clue_ids_for(
+        &self,
+        player: PlayerId,
+        already_counted: &std::collections::BTreeSet<String>,
+    ) -> Vec<String> {
+        use crate::threads::is_thread_clue;
+        self.threads
+            .seen
+            .iter()
+            .filter(|row| row.operator_id == player)
+            .filter(|row| !already_counted.contains(&row.clue_id))
+            .filter_map(|row| {
+                let clue = self.threads.clue_def(&row.clue_id)?;
+                is_thread_clue(&clue).then(|| row.clue_id.clone())
+            })
+            .collect()
     }
 
     pub fn simulation_set_coverage_params(&mut self, params: CoverageParams) {

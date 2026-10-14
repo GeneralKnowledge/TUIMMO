@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use coffee_world::{CoverageParams, WorldOutcomeSnapshot, WorldState, WORLD_GENERATION_VERSION};
 use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand::{RngExt, SeedableRng};
 use terminus_core::SessionId;
 use thiserror::Error;
 
@@ -191,7 +191,13 @@ impl SimulationRunner {
         let mut agents: Vec<SimAgent> = profiles
             .into_iter()
             .enumerate()
-            .map(|(index, profile)| SimAgent::new(self.config.seed, index as u32, profile))
+            .map(|(index, profile)| {
+                let mut agent = SimAgent::new(self.config.seed, index as u32, profile);
+                if profile == Profile::Newcomer {
+                    agent.memory.newcomer_actions_remaining = Some(rng.random_range(150..=300));
+                }
+                agent
+            })
             .collect();
         agents.sort_by_key(|agent| agent.index);
 
@@ -376,6 +382,12 @@ impl SimulationRunner {
                     &choice.command,
                     &mut agent.memory,
                 );
+                for clue_id in world.simulation_new_thread_clue_ids_for(
+                    agent.player_id,
+                    &agent.memory.counted_clue_ids,
+                ) {
+                    agent.memory.note_thread_clue_found(&clue_id, agent.attempted);
+                }
                 if is_inspect {
                     metrics.successful_inspections += 1;
                     agent.memory.successful_inspections += 1;
@@ -741,7 +753,28 @@ fn assemble_report(input: ReportInputs<'_>) -> RunReport {
         },
         long_thread_progress: Some(world.simulation_long_thread_progress()),
         clue_discovery: Some(world.simulation_clue_discovery_reports(schedule.virtual_start_ms)),
+        action_discovery: Some(build_action_discovery(world, agents)),
+        placement_inventory: if config.include_coverage_metrics {
+            Some(world.simulation_placement_inventory())
+        } else {
+            None
+        },
     }
+}
+
+fn build_action_discovery(
+    world: &WorldState,
+    agents: &[SimAgent],
+) -> coffee_world::ActionDiscoveryReport {
+    let mut actions = std::collections::HashMap::new();
+    let mut first = std::collections::HashMap::new();
+    for agent in agents {
+        actions.insert(agent.player_id, agent.attempted);
+        if let Some(n) = agent.memory.actions_at_first_thread_clue {
+            first.insert(agent.player_id, n);
+        }
+    }
+    world.simulation_action_discovery_reports(&actions, &first)
 }
 
 fn profile_count_map(profiles: &[Profile]) -> std::collections::BTreeMap<String, u32> {

@@ -5,6 +5,9 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 
 use crate::memory::AgentMemory;
+use coffee_world::geography::ROOF_LOCATION;
+use coffee_world::model::STARTER_LOCATION;
+
 use crate::navigation::{hub_navigation_choice, in_wilderness, ActionContext};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -17,10 +20,12 @@ pub enum Profile {
     SocialPlayer,
     OccasionalVisitor,
     Curious,
+    Tracker,
+    Newcomer,
 }
 
 impl Profile {
-    pub const ALL: [Profile; 7] = [
+    pub const ALL: [Profile; 9] = [
         Profile::Wanderer,
         Profile::Investigator,
         Profile::Homebody,
@@ -28,6 +33,8 @@ impl Profile {
         Profile::SocialPlayer,
         Profile::OccasionalVisitor,
         Profile::Curious,
+        Profile::Tracker,
+        Profile::Newcomer,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -39,6 +46,8 @@ impl Profile {
             Self::SocialPlayer => "social_player",
             Self::OccasionalVisitor => "occasional_visitor",
             Self::Curious => "curious",
+            Self::Tracker => "tracker",
+            Self::Newcomer => "newcomer",
         }
     }
 }
@@ -67,6 +76,10 @@ pub fn choose_action(
     visitor_actions_remaining: &mut u32,
     rng: &mut StdRng,
 ) -> ActionChoice {
+    if profile == Profile::Newcomer && memory.newcomer_actions_remaining.is_some_and(|n| n == 0) {
+        return ActionChoice { command: String::new(), idle: true, offline_gap_ms: None };
+    }
+
     if profile == Profile::OccasionalVisitor && *visitor_actions_remaining == 0 {
         *visitor_actions_remaining = rng.random_range(2..=5);
         return ActionChoice {
@@ -77,7 +90,11 @@ pub fn choose_action(
     }
 
     if !in_wilderness(&ctx.location) {
-        let cmd = hub_navigation_choice(ctx, rng);
+        let cmd = if profile == Profile::Newcomer {
+            newcomer_hub_choice(ctx)
+        } else {
+            hub_navigation_choice(ctx, rng)
+        };
         return ActionChoice { command: cmd, idle: false, offline_gap_ms: None };
     }
 
@@ -88,6 +105,11 @@ pub fn choose_action(
     let command = pick_weighted(rng, &choices);
     if profile == Profile::OccasionalVisitor {
         *visitor_actions_remaining = visitor_actions_remaining.saturating_sub(1);
+    }
+    if profile == Profile::Newcomer {
+        if let Some(n) = memory.newcomer_actions_remaining.as_mut() {
+            *n = n.saturating_sub(1);
+        }
     }
     ActionChoice { command, idle: false, offline_gap_ms: None }
 }
@@ -214,8 +236,115 @@ fn wilderness_choices(
                 push_cardinals_toward_novel(&mut choices, ctx, memory, 15);
             }
         }
+        Profile::Tracker => {
+            for keyword in &ctx.thread_keywords {
+                if !memory.inspected_keyword_at(&ctx.location, keyword) {
+                    choices.push(WeightedCommand {
+                        command: format!("inspect {keyword}"),
+                        weight: 70,
+                    });
+                }
+            }
+            if choices.is_empty() {
+                push_cardinals_toward_breadcrumb(&mut choices, ctx, memory, 55);
+                push_cardinals_toward_novel(&mut choices, ctx, memory, 10);
+            }
+            choices.push(WeightedCommand { command: "look".into(), weight: 20 });
+        }
+        Profile::Newcomer => {
+            if !in_wilderness(&ctx.location) {
+                return choices;
+            }
+            choices.push(WeightedCommand { command: "look".into(), weight: 45 });
+            for keyword in &ctx.thread_keywords {
+                if !memory.inspected_keyword_at(&ctx.location, keyword) {
+                    choices.push(WeightedCommand {
+                        command: format!("inspect {keyword}"),
+                        weight: 40,
+                    });
+                }
+            }
+            if !memory.inspected_here(&ctx.location) {
+                choices.push(WeightedCommand { command: "inspect ground".into(), weight: 15 });
+            }
+            push_cardinals_short(&mut choices, ctx, memory, 12);
+        }
     }
     choices
+}
+
+fn push_cardinals_short(
+    choices: &mut Vec<WeightedCommand>,
+    ctx: &ActionContext,
+    memory: &AgentMemory,
+    base_weight: u32,
+) {
+    for exit in &ctx.cardinal_exits {
+        let mut weight = base_weight;
+        if memory.repeats_last_exit(&ctx.location, exit) {
+            weight = weight.saturating_div(3).max(1);
+        }
+        choices.push(WeightedCommand { command: exit.clone(), weight });
+    }
+}
+
+fn push_cardinals_toward_breadcrumb(
+    choices: &mut Vec<WeightedCommand>,
+    ctx: &ActionContext,
+    memory: &AgentMemory,
+    base_weight: u32,
+) {
+    let Some((target_ox, target_oy)) = memory.breadcrumb_target_region else {
+        return;
+    };
+    let Some(region) = &ctx.region_key else {
+        return;
+    };
+    let current = parse_region_origin(region);
+    let Some((cur_ox, cur_oy)) = current else {
+        return;
+    };
+    let preferred = if target_ox > cur_ox {
+        "east"
+    } else if target_ox < cur_ox {
+        "west"
+    } else if target_oy > cur_oy {
+        "north"
+    } else if target_oy < cur_oy {
+        "south"
+    } else {
+        return;
+    };
+    for exit in &ctx.cardinal_exits {
+        let mut weight = base_weight;
+        if exit == preferred {
+            weight += 40;
+        }
+        if memory.repeats_last_exit(&ctx.location, exit) {
+            weight = weight.saturating_div(4).max(1);
+        }
+        choices.push(WeightedCommand { command: exit.clone(), weight });
+    }
+}
+
+fn newcomer_hub_choice(ctx: &ActionContext) -> String {
+    if ctx.location == STARTER_LOCATION {
+        "go up".into()
+    } else if ctx.location == ROOF_LOCATION {
+        "outskirts".into()
+    } else {
+        "look".into()
+    }
+}
+
+fn parse_region_origin(region_key: &str) -> Option<(i32, i32)> {
+    let parts: Vec<_> = region_key.split(':').collect();
+    if parts.len() < 5 {
+        return None;
+    }
+    let ox = parts[3].parse().ok()?;
+    let oy = parts[4].parse().ok()?;
+    Some((ox, oy))
 }
 
 fn push_cardinals_toward_novel(

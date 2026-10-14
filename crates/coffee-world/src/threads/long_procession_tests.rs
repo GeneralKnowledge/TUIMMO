@@ -105,3 +105,33 @@ fn full_region_generation_is_deterministic() {
         assert_eq!(b.clues.get(key).map(|c| &c.surface_text), Some(&clue.surface_text));
     }
 }
+
+#[test]
+fn breadcrumb_walk_spine_across_regions() {
+    let seed = frontier_epoch().world_seed;
+    let schedule = build_spine_schedule(seed);
+    let mut region_steps = std::collections::HashSet::new();
+    for chapter in 1..=3 {
+        let last_idx = match chapter {
+            1 => CHAPTER_1_CLUES - 1,
+            2 => CHAPTER_1_CLUES + 8 - 1,
+            _ => schedule.len() as u32 - 1,
+        };
+        let last = schedule.iter().find(|p| p.index == last_idx).expect("chapter last");
+        let next = first_clue_of_chapter(&schedule, chapter + 1);
+        if chapter == 3 {
+            break;
+        }
+        let next = next.expect("next chapter");
+        let text = breadcrumb_text(last.abs_x, last.abs_y, next.abs_x, next.abs_y);
+        assert!(text.contains("region ("), "breadcrumb text: {text}");
+        let (target_ox, target_oy, _, _) =
+            origins_for_absolute(next.abs_x, next.abs_y).expect("next clue region");
+        assert!(
+            text.contains(&format!("({target_ox}, {target_oy})")),
+            "breadcrumb must name next region: {text}"
+        );
+        region_steps.insert((target_ox, target_oy));
+    }
+    assert!(region_steps.len() >= 2, "breadcrumb trail references multiple regions");
+}

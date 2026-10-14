@@ -6,6 +6,7 @@ use terminus_core::PlayerId;
 
 use serde::{Deserialize, Serialize};
 
+use super::clue_class::is_thread_clue;
 use super::coverage_metrics::{chebyshev_from_gate, HubDistanceBucket};
 use super::{thread_final_clue_id, ClueSite, ThreadState};
 
@@ -34,6 +35,21 @@ pub struct OperatorClueDiscovery {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClueDiscoveryReport {
     pub operators: Vec<OperatorClueDiscovery>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OperatorActionDiscovery {
+    pub operator_name: String,
+    pub actions_attempted: u64,
+    pub actions_to_first_thread_clue: Option<u64>,
+    pub thread_clues_found: u32,
+    pub clues_per_100_actions: f64,
+    pub found_any_thread_clue: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ActionDiscoveryReport {
+    pub operators: Vec<OperatorActionDiscovery>,
 }
 
 fn long_procession_chapter(clue_id: &str) -> Option<u8> {
@@ -165,4 +181,39 @@ pub fn simulation_clue_discovery_reports(
     }
     operators.sort_by(|a, b| a.operator_name.cmp(&b.operator_name));
     ClueDiscoveryReport { operators }
+}
+
+/// Primary discovery metrics: actions-based, counting thread clues only (not coverage flavor).
+pub fn simulation_action_discovery_reports(
+    threads: &ThreadState,
+    operator_names: &HashMap<PlayerId, String>,
+    actions_attempted: &HashMap<PlayerId, u64>,
+    first_thread_clue_action: &HashMap<PlayerId, u64>,
+) -> ActionDiscoveryReport {
+    let mut operators = Vec::new();
+    for (operator, name) in operator_names {
+        let actions = actions_attempted.get(operator).copied().unwrap_or(0);
+        let thread_clues_found = u32::try_from(
+            threads
+                .seen
+                .iter()
+                .filter(|r| r.operator_id == *operator)
+                .filter(|r| threads.clue_def(&r.clue_id).is_some_and(|c| is_thread_clue(&c)))
+                .count(),
+        )
+        .unwrap_or(u32::MAX);
+        let actions_to_first_thread_clue = first_thread_clue_action.get(operator).copied();
+        let clues_per_100 =
+            if actions == 0 { 0.0 } else { f64::from(thread_clues_found) / actions as f64 * 100.0 };
+        operators.push(OperatorActionDiscovery {
+            operator_name: name.clone(),
+            actions_attempted: actions,
+            actions_to_first_thread_clue,
+            thread_clues_found,
+            clues_per_100_actions: clues_per_100,
+            found_any_thread_clue: thread_clues_found > 0,
+        });
+    }
+    operators.sort_by(|a, b| a.operator_name.cmp(&b.operator_name));
+    ActionDiscoveryReport { operators }
 }

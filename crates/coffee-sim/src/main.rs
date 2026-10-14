@@ -6,6 +6,9 @@ use clap::{Parser, Subcommand};
 use coffee_sim::compare::{compare_populations, ComparisonRequest};
 use coffee_sim::config::{SnapshotConfig, DEFAULT_SNAPSHOT_MAX};
 use coffee_sim::coverage_experiment::{format_coverage_report, run_density_experiment};
+use coffee_sim::discovery_metrics::{
+    format_discovery_benchmark, run_discovery_benchmark, DISCOVERY_BENCHMARK_SEEDS,
+};
 use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleRequest};
 use coffee_sim::multi_seed::{
     run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
@@ -73,6 +76,12 @@ struct Cli {
     #[arg(long, global = true, default_value_t = 0)]
     curious_weight: u32,
 
+    #[arg(long, global = true, default_value_t = 0)]
+    tracker_weight: u32,
+
+    #[arg(long, global = true, default_value_t = 0)]
+    newcomer_weight: u32,
+
     /// Record a bounded action trace in the JSON report.
     #[arg(long, global = true)]
     trace: bool,
@@ -139,6 +148,13 @@ enum Commands {
     DensityExperiment {
         #[arg(long, default_value_t = 42)]
         seed: u64,
+    },
+    /// Multi-seed discovery benchmark (action-based metrics, placement inventory).
+    DiscoveryBenchmark {
+        #[arg(long, value_delimiter = ',', default_value = "42,1000,4242,7777,31415")]
+        seeds: Vec<u64>,
+        #[arg(long, default_value_t = 16)]
+        agents: u32,
     },
 }
 
@@ -270,6 +286,23 @@ fn main() -> ExitCode {
             println!("{}", format_coverage_report(seed, params));
             ExitCode::SUCCESS
         }
+        Some(Commands::DiscoveryBenchmark { seeds, agents }) => {
+            let seeds = if seeds.is_empty() { DISCOVERY_BENCHMARK_SEEDS.to_vec() } else { seeds };
+            match run_discovery_benchmark(&seeds, agents) {
+                Ok(report) => {
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                    } else {
+                        println!("{}", format_discovery_benchmark(&report));
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("discovery benchmark failed: {err}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Some(Commands::DensityExperiment { seed }) => match run_density_experiment(seed) {
             Ok(report) => {
                 if cli.json {
@@ -277,13 +310,14 @@ fn main() -> ExitCode {
                 } else {
                     for setting in &report.settings {
                         println!(
-                            "grid {} gap {}: p95 near-hub {:.1} max {:.1} clues/hr(near) {:.2} median_ttf_ms {:?}",
+                            "grid {} gap {}: p95 near-hub {:.1} max {:.1} near_clues/sim-day {:.2} median_actions_to_first_clue {:?} median_clues/100_actions {:?}",
                             setting.grid_step,
                             setting.max_gap,
                             setting.gap_p95_by_bucket.first().map(|(_, v)| *v).unwrap_or(0.0),
                             setting.gap_max_by_bucket.first().map(|(_, v)| *v).unwrap_or(0.0),
-                            setting.clues_per_hour_near_hub,
-                            setting.median_time_to_first_clue_ms,
+                            setting.near_hub_clues_per_sim_day,
+                            setting.median_actions_to_first_thread_clue,
+                            setting.median_clues_per_100_actions,
                         );
                     }
                     println!("\n{}", report.recommendation);
@@ -362,6 +396,8 @@ fn base_config(cli: &Cli) -> RunConfig {
             social_player: cli.social_weight,
             occasional_visitor: cli.visitor_weight,
             curious: cli.curious_weight,
+            tracker: cli.tracker_weight,
+            newcomer: cli.newcomer_weight,
         },
         virtual_days: cli.days,
         scheduler: SchedulerConfig {

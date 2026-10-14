@@ -7,9 +7,10 @@ use crate::geography::{
     WildernessPos, WorldId, GATE_LOCAL_X, GATE_LOCAL_Y, REGION_SIZE,
 };
 
+use super::clue_class::{is_coverage_flavor, is_thread_clue};
 use super::coverage_params::CoverageParams;
-use super::procedural::generate_for_region_with_params;
 use super::template_load::load_default_templates;
+use super::{procedural::generate_for_region_with_params, ClueSite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +67,24 @@ pub struct ThreadCoverageReport {
     pub world_seed: u64,
     pub gap_by_bucket: Vec<GapBucketStats>,
     pub density_by_bucket: Vec<DensityBucketStats>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlacementBucketStats {
+    pub bucket: HubDistanceBucket,
+    pub walkable_tiles: u32,
+    /// All inspectable sites (coverage flavor + thread clues).
+    pub inspectable_features: u32,
+    /// Authored + procedural thread clues (excludes coverage flavor).
+    pub thread_clue_sites: u32,
+    pub thread_clues_per_1000_walkable: f64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PlacementInventoryReport {
+    pub coverage_params: CoverageParams,
+    pub world_seed: u64,
+    pub by_bucket: Vec<PlacementBucketStats>,
 }
 
 pub fn chebyshev_from_gate(abs_x: i64, abs_y: i64) -> i64 {
@@ -146,6 +165,90 @@ pub fn procedural_feature_sites(
             super::ClueSite::Static(_) => None,
         })
         .collect())
+}
+
+pub fn measure_placement_inventory(
+    world_seed: u64,
+    params: CoverageParams,
+) -> PlacementInventoryReport {
+    let templates = load_default_templates();
+    let mut inspectable: std::collections::HashMap<HubDistanceBucket, u32> =
+        std::collections::HashMap::new();
+    let mut thread_sites: std::collections::HashMap<HubDistanceBucket, u32> =
+        std::collections::HashMap::new();
+    let mut walkable: std::collections::HashMap<HubDistanceBucket, u32> =
+        std::collections::HashMap::new();
+
+    for identity in sample_regions_for_measurement() {
+        let Ok(region) = generate_region(identity) else {
+            continue;
+        };
+        for ly in 0..REGION_SIZE {
+            for lx in 0..REGION_SIZE {
+                let lx = u8::try_from(lx).expect("REGION_SIZE fits in u8");
+                let ly = u8::try_from(ly).expect("REGION_SIZE fits in u8");
+                let Some(tile) = region.tile(lx, ly) else {
+                    continue;
+                };
+                if !tile.terrain.traversable() {
+                    continue;
+                }
+                let pos = WildernessPos { identity, local_x: lx, local_y: ly };
+                if pos == gate_position() {
+                    continue;
+                }
+                let (ax, ay) = pos.absolute();
+                let bucket =
+                    HubDistanceBucket::from_chebyshev_from_gate(chebyshev_from_gate(ax, ay));
+                *walkable.entry(bucket).or_default() += 1;
+            }
+        }
+        let Ok(proc) = generate_for_region_with_params(world_seed, identity, &templates, params)
+        else {
+            continue;
+        };
+        for (clue_id, site) in &proc.sites {
+            let ClueSite::Wild(pos) = site else {
+                continue;
+            };
+            let Some(clue) = proc.clues.get(clue_id) else {
+                continue;
+            };
+            let (ax, ay) = pos.absolute();
+            let bucket = HubDistanceBucket::from_chebyshev_from_gate(chebyshev_from_gate(ax, ay));
+            *inspectable.entry(bucket).or_default() += 1;
+            if is_thread_clue(clue) {
+                *thread_sites.entry(bucket).or_default() += 1;
+            } else if is_coverage_flavor(clue) {
+                let _ = clue;
+            }
+        }
+    }
+
+    let by_bucket = [
+        HubDistanceBucket::Tiles0To100,
+        HubDistanceBucket::Tiles100To500,
+        HubDistanceBucket::Tiles500To1000,
+        HubDistanceBucket::Tiles1000Plus,
+    ]
+    .into_iter()
+    .map(|bucket| {
+        let walk = *walkable.get(&bucket).unwrap_or(&0);
+        let features = *inspectable.get(&bucket).unwrap_or(&0);
+        let thread = *thread_sites.get(&bucket).unwrap_or(&0);
+        let thread_clues_per_1000_walkable =
+            if walk == 0 { 0.0 } else { f64::from(thread) / f64::from(walk) * 1000.0 };
+        PlacementBucketStats {
+            bucket,
+            walkable_tiles: walk,
+            inspectable_features: features,
+            thread_clue_sites: thread,
+            thread_clues_per_1000_walkable,
+        }
+    })
+    .collect();
+
+    PlacementInventoryReport { coverage_params: params, world_seed, by_bucket }
 }
 
 pub fn measure_coverage_report(world_seed: u64, params: CoverageParams) -> ThreadCoverageReport {

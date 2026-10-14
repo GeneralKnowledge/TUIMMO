@@ -3,6 +3,7 @@
 /// Set when this operator has entered the municipal subway (station platform).
 pub const USED_SUBWAY_FLAG: &str = "used-subway";
 
+mod clue_class;
 mod coverage;
 mod coverage_metrics;
 mod coverage_params;
@@ -13,13 +14,16 @@ mod long_procession;
 mod placement;
 mod procedural;
 mod sim_report;
+mod starter_thread;
 mod template_load;
 
+pub use clue_class::{is_coverage_flavor, is_thread_clue, look_object_label};
 pub use coverage::{coverage_anchors_for_region, COVERAGE_GRID_STEP, INSPECTABLE_MAX_GAP};
 pub use coverage_metrics::{
     chebyshev_from_gate, max_gap_guarantee_holds, measure_coverage_report,
-    procedural_feature_sites, sample_regions_for_measurement, DensityBucketStats, GapBucketStats,
-    HubDistanceBucket, ThreadCoverageReport,
+    measure_placement_inventory, procedural_feature_sites, sample_regions_for_measurement,
+    DensityBucketStats, GapBucketStats, HubDistanceBucket, PlacementBucketStats,
+    PlacementInventoryReport, ThreadCoverageReport,
 };
 pub use coverage_params::CoverageParams;
 pub use distance_tier::{DistanceTier, TIER_FAR_MAX_CHEB, TIER_MID_MAX_CHEB, TIER_NEAR_MAX_CHEB};
@@ -30,8 +34,9 @@ pub use placement::{
 };
 pub use procedural::{generate_for_region, generate_for_region_with_params, ProceduralRegion};
 pub use sim_report::{
-    simulation_clue_discovery_reports, simulation_long_thread_progress, simulation_thread_reports,
-    ClueDiscoveryReport, LongThreadProgressReport, ThreadSimReport,
+    simulation_action_discovery_reports, simulation_clue_discovery_reports,
+    simulation_long_thread_progress, simulation_thread_reports, ActionDiscoveryReport,
+    ClueDiscoveryReport, LongThreadProgressReport, OperatorActionDiscovery, ThreadSimReport,
 };
 pub use template_load::{load_default_templates, TemplateCatalog};
 
@@ -89,6 +94,20 @@ impl ClueKind {
             Self::Record => "ledger margin",
             Self::Object => "discarded object",
             Self::Sign => "handwritten sign",
+        }
+    }
+
+    /// `look` object label: thread clues use distinct phrasing from coverage flavor.
+    pub fn look_label_for(self, thread_clue: bool) -> &'static str {
+        if thread_clue {
+            match self {
+                Self::Graffiti => "counted mark",
+                Self::Record => "notched record",
+                Self::Object => "placed object",
+                Self::Sign => "posted notice",
+            }
+        } else {
+            self.label()
         }
     }
 
@@ -225,6 +244,9 @@ impl ClueCatalog {
 #[cfg(test)]
 mod acceptance;
 
+#[cfg(test)]
+#[cfg(test)]
+mod clue_class_tests;
 #[cfg(test)]
 mod long_procession_tests;
 

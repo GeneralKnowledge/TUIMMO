@@ -24,6 +24,11 @@ pub struct AgentMemory {
     last_move_from: Option<String>,
     last_exit: Option<String>,
     inspected_keywords: BTreeMap<String, BTreeSet<String>>,
+    pub counted_clue_ids: BTreeSet<String>,
+    pub actions_at_first_thread_clue: Option<u64>,
+    pub thread_clues_found: u32,
+    pub breadcrumb_target_region: Option<(i32, i32)>,
+    pub newcomer_actions_remaining: Option<u32>,
 }
 
 impl AgentMemory {
@@ -103,5 +108,15 @@ impl AgentMemory {
             .get(location)
             .map(|set| set.iter().cloned().collect())
             .unwrap_or_default()
+    }
+
+    pub fn note_thread_clue_found(&mut self, clue_id: &str, actions: u64) {
+        if !self.counted_clue_ids.insert(clue_id.to_string()) {
+            return;
+        }
+        self.thread_clues_found += 1;
+        if self.actions_at_first_thread_clue.is_none() {
+            self.actions_at_first_thread_clue = Some(actions);
+        }
     }
 }
