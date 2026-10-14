@@ -217,3 +217,84 @@ pub fn simulation_action_discovery_reports(
     operators.sort_by(|a, b| a.operator_name.cmp(&b.operator_name));
     ActionDiscoveryReport { operators }
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DiscoveryRunSummary {
+    pub configured_authored_clues: u32,
+    pub placed_authored_clues: u32,
+    pub distinct_authored_reachable_sites: u32,
+    pub thread_clues_inspected: u32,
+    pub threads_with_any_discovery: u32,
+    pub clue_to_clue_same_thread_transitions: u32,
+    pub threads_reaching_configured_final: u32,
+    pub invalid_or_unreachable_authored_clues: u32,
+}
+
+/// Aggregate discovery outcomes from simulation `clue_seen` rows (not static placement alone).
+pub fn simulation_discovery_run_summary(threads: &ThreadState) -> DiscoveryRunSummary {
+    use super::thread_audit::measure_thread_coverage_audit;
+
+    let audit = measure_thread_coverage_audit(threads.world_seed());
+    let configured_authored_clues: u32 =
+        audit.authored_threads.iter().map(|row| row.configured_clues).sum();
+    let placed_authored_clues: u32 =
+        audit.authored_threads.iter().map(|row| row.placed_clues).sum();
+    let distinct_authored_reachable_sites: u32 =
+        audit.authored_threads.iter().map(|row| row.distinct_reachable_locations).sum();
+    let invalid_or_unreachable_authored_clues: u32 =
+        audit.authored_threads.iter().map(|row| row.invalid_or_unreachable_clues).sum();
+
+    let mut thread_clues_inspected = 0_u32;
+    let mut threads_with_discovery = HashSet::new();
+    let mut transitions = 0_u32;
+    let mut finals = 0_u32;
+
+    let mut by_operator: HashMap<PlayerId, Vec<(u64, String)>> = HashMap::new();
+    for row in &threads.seen {
+        let Some(clue) = threads.clue_def(&row.clue_id) else {
+            continue;
+        };
+        if !is_thread_clue(&clue) {
+            continue;
+        }
+        thread_clues_inspected += 1;
+        if let Some(thread) = threads.catalog.thread_for_clue(&row.clue_id) {
+            threads_with_discovery.insert(thread.id.clone());
+        }
+        by_operator
+            .entry(row.operator_id)
+            .or_default()
+            .push((row.first_seen_at, row.clue_id.clone()));
+    }
+
+    for rows in by_operator.values_mut() {
+        rows.sort_by_key(|(at, _)| *at);
+        let mut seen_in_thread: HashMap<String, Vec<String>> = HashMap::new();
+        for (_, clue_id) in rows.iter() {
+            let Some(thread) = threads.catalog.thread_for_clue(clue_id) else {
+                continue;
+            };
+            let bucket = seen_in_thread.entry(thread.id.clone()).or_default();
+            if let Some(prev) = bucket.last() {
+                if prev != clue_id {
+                    transitions += 1;
+                }
+            }
+            bucket.push(clue_id.clone());
+            if thread_final_clue_id(thread).is_some_and(|final_id| final_id == *clue_id) {
+                finals += 1;
+            }
+        }
+    }
+
+    DiscoveryRunSummary {
+        configured_authored_clues,
+        placed_authored_clues,
+        distinct_authored_reachable_sites,
+        thread_clues_inspected,
+        threads_with_any_discovery: u32::try_from(threads_with_discovery.len()).unwrap_or(u32::MAX),
+        clue_to_clue_same_thread_transitions: transitions,
+        threads_reaching_configured_final: finals,
+        invalid_or_unreachable_authored_clues,
+    }
+}

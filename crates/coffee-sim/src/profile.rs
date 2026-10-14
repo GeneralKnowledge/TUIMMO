@@ -260,7 +260,7 @@ fn wilderness_choices(
                 if !memory.inspected_keyword_at(&ctx.location, keyword) {
                     choices.push(WeightedCommand {
                         command: format!("inspect {keyword}"),
-                        weight: 40,
+                        weight: 55,
                     });
                 }
             }
@@ -332,6 +332,8 @@ fn newcomer_hub_choice(ctx: &ActionContext) -> String {
         "go up".into()
     } else if ctx.location == ROOF_LOCATION {
         "outskirts".into()
+    } else if ctx.location == coffee_world::geography::OUTSKIRTS_FROM {
+        "go squalor".into()
     } else {
         "look".into()
     }
