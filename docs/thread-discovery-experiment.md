@@ -14,7 +14,12 @@ cargo run -p coffee-sim -- discovery-benchmark --agents 8
 # Repeatability tests
 cargo test -p coffee-sim --test discovery_determinism
 cargo test -p coffee-world -- discovery_journey
+
+# Near-hub UGC policy (10 Newcomer agents, shared seed)
+cargo run -p coffee-sim -- newcomer-burst --agents 10 --seed 42
 ```
+
+Traversal, chalk, listen, and survey commands are documented in [traversal-trailblazing.md](traversal-trailblazing.md).
 
 Production defaults unchanged: `COVERAGE_GRID_STEP=4`, `INSPECTABLE_MAX_GAP=4`.
 

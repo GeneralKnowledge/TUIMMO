@@ -3,12 +3,15 @@
 //! The gate tile is an authored seam back to the Undernet. It does not alter the
 //! baseline the generator returns.
 
+use super::atmosphere::{exit_clarity_note, fogged_map_symbol, Atmosphere};
 use super::density::UrbanContext;
 use super::generate::{GeneratedRegion, LandmarkKind, Terrain, Tile};
 use super::identity::{shift, IdentityError, WildernessPos, REGION_SIZE};
 use super::records::{
-    GeographyState, Structure, CABIN_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
+    GeographyState, Structure, CABIN_KIND, CHALK_KIND, MARKER_KIND, SIGN_KIND, TRAIL_KIND,
+    WORKSHOP_KIND,
 };
+use super::ugc::age_suffix;
 use crate::subway;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -138,12 +141,26 @@ pub struct TileScene {
     pub status: Vec<String>,
 }
 
+#[derive(Clone, Debug)]
+pub struct TileLookOptions {
+    pub now_ms: u64,
+    pub atmosphere: Atmosphere,
+    pub hidden_trace_count: u32,
+}
+
+impl Default for TileLookOptions {
+    fn default() -> Self {
+        Self { now_ms: 0, atmosphere: Atmosphere::clear(), hidden_trace_count: 0 }
+    }
+}
+
 pub fn describe_tile(
     pos: WildernessPos,
     generated: &GeneratedRegion,
     geo: &GeographyState,
     markers_here: &[MarkerSight],
     markers_in_region: &[(u8, u8, char)],
+    opts: &TileLookOptions,
 ) -> TileScene {
     let baseline = generated
         .tile(pos.local_x, pos.local_y)
@@ -157,7 +174,7 @@ pub fn describe_tile(
     } else {
         format!("{} — {}", tile.terrain.label(), urban.title_suffix())
     };
-    let mut lines = vec![terrain_prose(pos, tile, generated, geo, urban)];
+    let mut lines = vec![terrain_prose(pos, tile, generated, geo, urban, opts.atmosphere)];
     if tile.metro {
         if let Some(entrance) = subway::entrance_at(pos) {
             lines.push(format!(
@@ -196,6 +213,9 @@ pub fn describe_tile(
             TRAIL_KIND => {
                 format!("A trail post marks \"{}\". {} set it.", sight.name, sight.owner_name)
             }
+            CHALK_KIND => {
+                format!("Chalk reads \"{}\". {} left it.", sight.name, sight.owner_name)
+            }
             _ => format!("A marker reads \"{}\". {} left it.", sight.name, sight.owner_name),
         };
         if let Some(note) = &sight.settlement_note {
@@ -203,6 +223,12 @@ pub fn describe_tile(
             line.push_str(note);
         }
         lines.push(line);
+    }
+    if opts.hidden_trace_count > 0 {
+        lines.push("Other marks have faded from view.".to_string());
+    }
+    if let Some(note) = exit_clarity_note(opts.atmosphere) {
+        lines.push(note.to_string());
     }
     let (placement_x, placement_y) = geo
         .region(pos.identity.coord_key())
@@ -239,20 +265,39 @@ pub fn describe_tile(
     if markers_here.iter().any(|sight| sight.kind == TRAIL_KIND) {
         objects.push(("trail".to_string(), "trail post".to_string()));
     }
+    if markers_here.iter().any(|sight| sight.kind == CHALK_KIND) {
+        objects.push(("chalk".to_string(), "chalk mark".to_string()));
+    }
     for sight in markers_here {
         let label = match sight.kind.as_str() {
             CABIN_KIND => format!("cabin \"{}\"", sight.name),
             WORKSHOP_KIND => format!("workshop \"{}\"", sight.name),
             SIGN_KIND => format!("sign \"{}\"", sight.name),
             TRAIL_KIND => format!("trail \"{}\"", sight.name),
+            CHALK_KIND => format!("chalk \"{}\"", sight.name),
             _ => format!("marker \"{}\"", sight.name),
         };
-        objects.push((sight.name.to_ascii_lowercase(), label));
+        let keyword = match sight.kind.as_str() {
+            CHALK_KIND => "chalk".to_string(),
+            SIGN_KIND => "sign".to_string(),
+            TRAIL_KIND => "trail".to_string(),
+            _ => sight.name.to_ascii_lowercase(),
+        };
+        objects.push((keyword, label));
     }
     TileScene {
         title,
         description: lines.join("\n"),
-        map: render_map(pos, generated, geo, markers_in_region, placement_x, placement_y, &urban),
+        map: render_map(
+            pos,
+            generated,
+            geo,
+            markers_in_region,
+            placement_x,
+            placement_y,
+            &urban,
+            opts.atmosphere,
+        ),
         objects,
         status,
     }
@@ -264,13 +309,14 @@ fn terrain_prose(
     generated: &GeneratedRegion,
     geo: &GeographyState,
     urban: UrbanContext,
+    atmosphere: Atmosphere,
 ) -> String {
     if tile.gate {
         let mut text = format!(
             "Broken paving where the Hub fence fails. The Roof Array is a dark shape behind you. \
 Beyond it, abandoned towers stretch without an end you can trust. \
 {} `city` returns to the roof.",
-            gate_opening(pos, generated, geo)
+            gate_opening(pos, generated, geo, atmosphere)
         );
         if tile.modified {
             text.push_str(
@@ -294,6 +340,7 @@ Beyond it, abandoned towers stretch without an end you can trust. \
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_map(
     pos: WildernessPos,
     generated: &GeneratedRegion,
@@ -302,6 +349,7 @@ fn render_map(
     placement_x: i32,
     placement_y: i32,
     urban: &UrbanContext,
+    atmosphere: Atmosphere,
 ) -> String {
     let mut rows = Vec::with_capacity(EDGE_LINES);
     let height = usize::try_from(REGION_SIZE).unwrap_or(16);
@@ -321,7 +369,7 @@ fn render_map(
                     .tile(lx, ly)
                     .unwrap_or(Tile { terrain: Terrain::Rock, landmark: None });
                 let tile = effective_tile(here, baseline, geo);
-                if tile.landmark.is_some() {
+                let base = if tile.landmark.is_some() {
                     '*'
                 } else if tile.gate {
                     '+'
@@ -329,7 +377,8 @@ fn render_map(
                     'm'
                 } else {
                     tile.terrain.symbol()
-                }
+                };
+                fogged_map_symbol(base, pos, here, atmosphere)
             };
             row.push(symbol);
         }
@@ -354,7 +403,12 @@ epoch {}  birth ({}, {})  atlas ({placement_x}, {placement_y})  generator v{}  s
 const EDGE_LINES: usize = 20;
 
 /// What a step off the gate actually does, in the same terms movement uses.
-fn gate_opening(pos: WildernessPos, generated: &GeneratedRegion, geo: &GeographyState) -> String {
+fn gate_opening(
+    pos: WildernessPos,
+    generated: &GeneratedRegion,
+    geo: &GeographyState,
+    atmosphere: Atmosphere,
+) -> String {
     let mut open = Vec::new();
     let mut water = Vec::new();
     let mut rock = Vec::new();
@@ -398,6 +452,9 @@ fn gate_opening(pos: WildernessPos, generated: &GeneratedRegion, geo: &Geography
     }
     if !closed.is_empty() {
         parts.push(format!("You cannot go {}.", join_words(&closed)));
+    }
+    if atmosphere.exit_clarity < 0.75 && !open.is_empty() {
+        parts.push("The opening west is the one most operators trust first.".to_string());
     }
     parts.join(" ")
 }
@@ -470,6 +527,10 @@ pub fn is_reserved_word(word: &str) -> bool {
             | "workshop"
             | "sign"
             | "trail"
+            | "chalk"
+            | "listen"
+            | "traces"
+            | "survey"
             | "home"
             | "door"
             | "mark"
@@ -488,6 +549,7 @@ pub fn is_reserved_word(word: &str) -> bool {
 
 pub fn marker_sights<'a>(
     structures: impl IntoIterator<Item = &'a Structure>,
+    now_ms: u64,
     owner_name: impl Fn(Option<terminus_core::PlayerId>) -> String,
     settlement_note: impl Fn(&Structure) -> Option<String>,
 ) -> Vec<MarkerSight> {
@@ -496,14 +558,22 @@ pub fn marker_sights<'a>(
         .filter(|item| {
             matches!(
                 item.kind.as_str(),
-                MARKER_KIND | CABIN_KIND | WORKSHOP_KIND | SIGN_KIND | TRAIL_KIND
+                MARKER_KIND | CABIN_KIND | WORKSHOP_KIND | SIGN_KIND | TRAIL_KIND | CHALK_KIND
             )
         })
-        .map(|item| MarkerSight {
-            kind: item.kind.clone(),
-            name: item.name.clone(),
-            owner_name: owner_name(item.owner_id),
-            settlement_note: settlement_note(item),
+        .map(|item| {
+            let base = owner_name(item.owner_id);
+            let owner_name = if matches!(item.kind.as_str(), SIGN_KIND | TRAIL_KIND | CHALK_KIND) {
+                format!("{base} ({})", age_suffix(now_ms, item.created_at))
+            } else {
+                base
+            };
+            MarkerSight {
+                kind: item.kind.clone(),
+                name: item.name.clone(),
+                owner_name,
+                settlement_note: settlement_note(item),
+            }
         })
         .collect()
 }
@@ -517,6 +587,8 @@ pub fn map_symbol_for_structures(structures: &[&Structure]) -> Option<char> {
         Some('S')
     } else if structures.iter().any(|item| item.kind == TRAIL_KIND) {
         Some('T')
+    } else if structures.iter().any(|item| item.kind == CHALK_KIND) {
+        Some('k')
     } else if structures.iter().any(|item| item.kind == MARKER_KIND) {
         Some('M')
     } else {
@@ -557,8 +629,14 @@ mod tests {
     #[test]
     fn gate_look_matches_the_only_open_step() {
         let generated = generate_region(gate_identity()).unwrap();
-        let scene =
-            describe_tile(gate_position(), &generated, &GeographyState::default(), &[], &[]);
+        let scene = describe_tile(
+            gate_position(),
+            &generated,
+            &GeographyState::default(),
+            &[],
+            &[],
+            &Default::default(),
+        );
         assert!(scene.description.contains("Open: west"), "{}", scene.description);
         assert!(
             scene.description.contains("Floodwater blocks the way north, east, and south"),
@@ -657,7 +735,7 @@ mod tests {
                 discovered_at: 1,
             },
         );
-        let scene = describe_tile(gate_position(), &generated, &geo, &[], &[]);
+        let scene = describe_tile(gate_position(), &generated, &geo, &[], &[], &Default::default());
         assert!(scene.map.contains("birth (0, 0)"));
         assert!(scene.map.contains("atlas (40, -3)"));
         assert!(scene.map.contains('@'));
@@ -669,7 +747,14 @@ mod tests {
         let generated = generate_region(gate_identity()).unwrap();
         assert_eq!(fingerprint(&generated), 0x8812_F1DB_241C_39A1);
         let street = WildernessPos { identity: gate_identity(), local_x: 4, local_y: 4 };
-        let scene = describe_tile(street, &generated, &GeographyState::default(), &[], &[]);
+        let scene = describe_tile(
+            street,
+            &generated,
+            &GeographyState::default(),
+            &[],
+            &[],
+            &Default::default(),
+        );
         assert!(scene.title.contains('—'), "{}", scene.title);
         assert!(
             scene.title.contains("residential")
@@ -695,7 +780,14 @@ mod tests {
             local_x: CLINIC_DIRECTORY_LOCAL_X,
             local_y: CLINIC_DIRECTORY_LOCAL_Y,
         };
-        let scene = describe_tile(pos, &generated, &GeographyState::default(), &[], &[]);
+        let scene = describe_tile(
+            pos,
+            &generated,
+            &GeographyState::default(),
+            &[],
+            &[],
+            &Default::default(),
+        );
         assert!(scene.description.contains("Ward Clinic"), "{}", scene.description);
         assert!(scene.objects.iter().any(|(keyword, _)| keyword == "directory"));
     }

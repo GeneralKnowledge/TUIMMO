@@ -112,7 +112,7 @@ impl Store {
 
         let structures = sqlx::query_as::<_, StructureSql>(
             "SELECT id, region_id, local_x, local_y, kind, name, owner_id, access, interior_place,
-                    settlement_id, share, created_at
+                    settlement_id, share, created_at, expires_at
              FROM world_structures",
         )
         .fetch_all(&self.pool)
@@ -131,6 +131,7 @@ impl Store {
                 settlement_id: optional_uuid(row.settlement_id)?,
                 share: if row.share.is_empty() { SHARE_PRIVATE.to_string() } else { row.share },
                 created_at: u64_col(row.created_at)?,
+                expires_at: row.expires_at.map(u64_col).transpose()?,
             });
         }
 

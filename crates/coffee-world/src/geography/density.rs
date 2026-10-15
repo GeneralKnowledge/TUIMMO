@@ -1007,7 +1007,7 @@ mod tests {
             if tile.landmark.is_some() {
                 landmarks += 1;
             }
-            let _scene = describe_tile(pos, &generated, &geo, &[], &[]);
+            let _scene = describe_tile(pos, &generated, &geo, &[], &[], &Default::default());
             let prefer = dirs[step % dirs.len()];
             let mut order =
                 vec![prefer, Cardinal::West, Cardinal::North, Cardinal::East, Cardinal::South];

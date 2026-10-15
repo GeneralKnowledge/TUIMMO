@@ -5,6 +5,7 @@ use coffee_sim::execute::execute_line;
 use coffee_sim::feed_memory::absorb_command_outcome;
 use coffee_sim::interaction::{player_index_map, InteractionTracker};
 use coffee_sim::profile::Profile;
+use coffee_world::geography::{permanent_traces_allowed, WildernessPos};
 use coffee_world::WorldState;
 
 /// Deterministic acceptance: sign → travel → inspect sign → theory response.
@@ -26,16 +27,12 @@ fn scripted_sign_inspect_and_theory_response_counts_as_connected_sequence() {
             execute_line(&mut world, session, line);
         }
     }
-    for _ in 0..3 {
-        execute_line(&mut world, ada.session_id, "west");
-    }
+    walk_to_fringe(&mut world, ada.session_id);
     execute_line(&mut world, ada.session_id, "sign Relay gap this way.");
     let ada_loc = world.location_key_for_sim(ada.session_id).unwrap();
     tracker.record_trace_created(0, &ada_loc, "sign", None, slot);
 
-    for _ in 0..3 {
-        execute_line(&mut world, bob.session_id, "west");
-    }
+    walk_to_fringe(&mut world, bob.session_id);
     let (result, _) = execute_line(&mut world, bob.session_id, "inspect sign");
     assert!(result.is_success());
     absorb_command_outcome(&world, bob.session_id, "inspect sign", &mut bob.memory);
@@ -59,4 +56,19 @@ fn scripted_sign_inspect_and_theory_response_counts_as_connected_sequence() {
     assert_eq!(metrics.connected_sequences, 1);
     assert_eq!(metrics.follow_up_actions_after_encounter, 1);
     assert!(!transcript.lines.is_empty());
+}
+
+fn walk_to_fringe(world: &mut WorldState, session: terminus_core::SessionId) {
+    for _ in 0..96 {
+        let key = world.location_key_for_sim(session).expect("location");
+        let pos = WildernessPos::parse(&key).expect("wilderness");
+        if permanent_traces_allowed(pos) {
+            return;
+        }
+        if execute_line(world, session, "west").0.is_success() {
+            continue;
+        }
+        let _ = execute_line(world, session, "north");
+    }
+    panic!("could not reach a fringe tile for permanent traces");
 }

@@ -192,7 +192,8 @@ fn wilderness_exploration_is_measured_without_retuning_the_generator() {
     let gate = gate_position();
     let origin = probe(gate.identity, gate.local_x, gate.local_y);
     let generated = generate_region(gate.identity).expect("origin");
-    let scene = describe_tile(gate, &generated, &GeographyState::default(), &[], &[]);
+    let scene =
+        describe_tile(gate, &generated, &GeographyState::default(), &[], &[], &Default::default());
     assert!(
         scene.map.contains('*'),
         "reachable or not, landmarks in this region are marked on the chart"

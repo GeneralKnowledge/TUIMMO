@@ -6,8 +6,10 @@ use terminus_core::{
 use uuid::Uuid;
 
 use crate::geography::{
-    validate_marker_name, Structure, WildernessPos, ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC,
-    CABIN_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
+    count_operator_structures_in_region, reject_permanent_trace_reason, validate_marker_name,
+    Structure, WildernessPos, ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND,
+    MAX_SIGNS_PER_OPERATOR_REGION, MAX_TRAILS_PER_OPERATOR_REGION, SHARE_COMMUNAL, SHARE_PRIVATE,
+    SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
 };
 use crate::model::{PersistOp, STARTER_LOCATION};
 use crate::settlement::workshop_place_id;
@@ -99,6 +101,7 @@ impl WorldState {
             settlement_id,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         };
         self.geography.structures.push(structure.clone());
         ops.push(PersistOp::Structure {
@@ -114,6 +117,7 @@ impl WorldState {
             settlement_id,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         });
         let enter_kw = name.to_ascii_lowercase();
         let enter_op = self.link_places(&location, &enter_kw, &interior, &name, player)?;
@@ -694,8 +698,8 @@ impl WorldState {
         let Some(pos) = WildernessPos::parse(&location) else {
             return Err(GameError::Rejected("You can only place signs in the outskirts.".into()));
         };
-        if pos.is_gate() {
-            return Err(GameError::Rejected("Keep the city gate clear of signs.".into()));
+        if let Some(reason) = reject_permanent_trace_reason(pos) {
+            return Err(GameError::Rejected(reason.into()));
         }
         let tile = self.effective_at(pos)?;
         if !tile.traversable() {
@@ -707,6 +711,24 @@ impl WorldState {
             .region(pos.identity.coord_key())
             .map(|region| region.id)
             .ok_or_else(|| GameError::Rejected("This region is not open.".into()))?;
+        let sign_count = count_operator_structures_in_region(
+            &self.geography.structures,
+            region_id,
+            player,
+            SIGN_KIND,
+            self.now_ms,
+        );
+        if sign_count >= MAX_SIGNS_PER_OPERATOR_REGION
+            && self
+                .geography
+                .structure_of_kind_at(region_id, pos.local_x, pos.local_y, SIGN_KIND)
+                .is_none()
+        {
+            return Err(GameError::Rejected(
+                "You already have enough signs in this region. Remove one or move farther out."
+                    .into(),
+            ));
+        }
         if let Some(existing) =
             self.geography.structure_of_kind_at(region_id, pos.local_x, pos.local_y, SIGN_KIND)
         {
@@ -742,6 +764,7 @@ impl WorldState {
                 settlement_id: None,
                 share: SHARE_PRIVATE.into(),
                 created_at,
+                expires_at: None,
             });
             ops.push(PersistOp::Structure {
                 id,
@@ -756,6 +779,7 @@ impl WorldState {
                 settlement_id: None,
                 share: SHARE_PRIVATE.into(),
                 created_at,
+                expires_at: None,
             });
         }
         self.social.last_build_at.insert(player, self.now_ms);
@@ -845,8 +869,8 @@ impl WorldState {
         let Some(pos) = WildernessPos::parse(&location) else {
             return Err(GameError::Rejected("Trails belong in the outskirts.".into()));
         };
-        if pos.is_gate() {
-            return Err(GameError::Rejected("Keep the city gate clear.".into()));
+        if let Some(reason) = reject_permanent_trace_reason(pos) {
+            return Err(GameError::Rejected(reason.into()));
         }
         let tile = self.effective_at(pos)?;
         if !tile.traversable() {
@@ -860,6 +884,19 @@ impl WorldState {
             .region(pos.identity.coord_key())
             .map(|region| region.id)
             .ok_or_else(|| GameError::Rejected("This region is not open.".into()))?;
+        let trail_count = count_operator_structures_in_region(
+            &self.geography.structures,
+            region_id,
+            player,
+            TRAIL_KIND,
+            self.now_ms,
+        );
+        if trail_count >= MAX_TRAILS_PER_OPERATOR_REGION {
+            return Err(GameError::Rejected(
+                "You already have a trail post in this region. Remove it before setting another."
+                    .into(),
+            ));
+        }
         if self
             .geography
             .structure_of_kind_at(region_id, pos.local_x, pos.local_y, TRAIL_KIND)
@@ -882,6 +919,7 @@ impl WorldState {
             settlement_id: None,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         });
         ops.push(PersistOp::Structure {
             id,
@@ -896,6 +934,7 @@ impl WorldState {
             settlement_id: None,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         });
         self.social.last_build_at.insert(player, self.now_ms);
         let (event, note) = self.emit(
@@ -1193,7 +1232,7 @@ impl WorldState {
         })
     }
 
-    fn check_build_rate(&self, player: PlayerId) -> Result<(), GameError> {
+    pub(crate) fn check_build_rate(&self, player: PlayerId) -> Result<(), GameError> {
         if !self.use_system_clock {
             return Ok(());
         }

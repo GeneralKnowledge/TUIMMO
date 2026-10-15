@@ -271,6 +271,9 @@ impl WorldState {
         let Some(pos) = WildernessPos::parse(&location) else {
             return Err(GameError::Rejected("You can only mark a place in the outskirts.".into()));
         };
+        if let Some(reason) = crate::geography::reject_permanent_trace_reason(pos) {
+            return Err(GameError::Rejected(reason.into()));
+        }
         let raw = cmd.args.first().map(String::as_str).unwrap_or("");
         let name =
             validate_marker_name(raw).map_err(|message| GameError::Rejected(message.into()))?;
@@ -302,6 +305,7 @@ impl WorldState {
             settlement_id: None,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         });
         ops.push(PersistOp::Structure {
             id,
@@ -316,6 +320,7 @@ impl WorldState {
             settlement_id: None,
             share: SHARE_PRIVATE.into(),
             created_at,
+            expires_at: None,
         });
         let (event, op) = self.emit(
             Channel::System,

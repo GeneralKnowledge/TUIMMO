@@ -15,6 +15,7 @@ pub mod interaction;
 pub mod memory;
 pub mod multi_seed;
 pub mod navigation;
+pub mod newcomer_burst;
 pub mod population;
 pub mod profile;
 pub mod report;
@@ -45,6 +46,7 @@ pub use multi_seed::{
     ReplicateRecord, SnapshotSeriesPoint, MAX_MULTI_SEED_CONDITIONS, MAX_MULTI_SEED_REPLICATES,
     MAX_MULTI_SEED_TOTAL_RUNS,
 };
+pub use newcomer_burst::{format_newcomer_burst, run_newcomer_burst, NewcomerBurstReport};
 pub use population::PopulationMix;
 pub use profile::Profile;
 pub use report::{DerivedRates, RunReport, SimVersion};

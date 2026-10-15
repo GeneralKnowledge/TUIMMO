@@ -13,6 +13,7 @@ use coffee_sim::experiment::{run_population_scale_experiment, PopulationScaleReq
 use coffee_sim::multi_seed::{
     run_multi_seed_experiment, ExperimentCondition, MultiSeedExperimentRequest,
 };
+use coffee_sim::newcomer_burst::{format_newcomer_burst, run_newcomer_burst};
 use coffee_sim::population::PopulationMix;
 use coffee_sim::runner::RunConfig;
 use coffee_sim::scheduler::SchedulerConfig;
@@ -161,6 +162,13 @@ enum Commands {
         #[arg(long, default_value_t = 42)]
         world_seed: u64,
     },
+    /// Ten Newcomer agents on one seed; report near-hub UGC structure counts.
+    NewcomerBurst {
+        #[arg(long, default_value_t = 42)]
+        seed: u64,
+        #[arg(long, default_value_t = 10)]
+        agents: u32,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
@@ -300,6 +308,20 @@ fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Some(Commands::NewcomerBurst { seed, agents }) => match run_newcomer_burst(seed, agents) {
+            Ok(report) => {
+                if cli.json {
+                    println!("{}", serde_json::to_string_pretty(&report).expect("serialize"));
+                } else {
+                    println!("{}", format_newcomer_burst(&report));
+                }
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("newcomer burst failed: {err}");
+                ExitCode::from(1)
+            }
+        },
         Some(Commands::DiscoveryBenchmark { seeds, agents }) => {
             let seeds = if seeds.is_empty() { DISCOVERY_BENCHMARK_SEEDS.to_vec() } else { seeds };
             match run_discovery_benchmark(&seeds, agents) {

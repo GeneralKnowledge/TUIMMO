@@ -4,6 +4,7 @@
 //! generation version. Player changes live in [`GeographyState`] and are stored
 //! apart from that baseline. Nothing in this module knows about SSH or the TUI.
 
+mod atmosphere;
 mod density;
 mod field;
 mod generate;
@@ -11,12 +12,14 @@ mod identity;
 mod records;
 mod route;
 mod travel;
+mod ugc;
 
 #[cfg(test)]
 mod explore;
 #[cfg(test)]
 mod remote;
 
+pub use atmosphere::{atmosphere_at, exit_clarity_note, fogged_map_symbol, Atmosphere};
 pub use density::{
     density_band, district_at, story_aliases, story_finding, story_sight, trace_aliases,
     BlockPattern, DensityBand, DistrictKind, StorySite, TraceKind, UrbanContext,
@@ -47,11 +50,20 @@ pub use identity::{
 };
 pub use records::{
     Discovery, GeographyState, MaterializedRegion, Structure, TerrainMod, WorldConnection,
-    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, ENTERED_KIND, FIELD_KIND,
-    MARKER_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND, WORKSHOP_KIND,
+    ACCESS_FRIENDS, ACCESS_PRIVATE, ACCESS_PUBLIC, CABIN_KIND, CHALK_KIND, ENTERED_KIND,
+    FIELD_KIND, MARKER_KIND, SHARE_COMMUNAL, SHARE_PRIVATE, SHARE_SHARED, SIGN_KIND, TRAIL_KIND,
+    WORKSHOP_KIND,
 };
 pub(crate) use route::{cross_region_hint, distant_cell_hint, local_path, LocalPath};
 pub use travel::{
     describe_tile, effective_tile, is_reserved_word, map_symbol_for_structures, marker_sights,
-    step_origin, validate_marker_name, Cardinal, EffectiveTile, MarkerSight, TileScene,
+    step_origin, validate_marker_name, Cardinal, EffectiveTile, MarkerSight, TileLookOptions,
+    TileScene,
+};
+pub use ugc::{
+    age_suffix, band_label as ugc_band_label, chalk_ttl_ms, chebyshev_from_gate,
+    count_operator_structures_in_region, filter_traces_for_tile, permanent_traces_allowed,
+    reject_permanent_trace_reason, structure_is_active, validate_chalk_text, CHALK_FRINGE_TTL_MS,
+    CHALK_NEAR_HUB_TTL_MS, FRINGE_MAX_CHEB, MAX_SIGNS_PER_OPERATOR_REGION,
+    MAX_TRAILS_PER_OPERATOR_REGION, NEAR_HUB_MAX_CHEB,
 };

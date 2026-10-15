@@ -22,6 +22,16 @@ use crate::threads::{
 /// Stable world-generation label recorded in simulation reports.
 pub const WORLD_GENERATION_VERSION: u16 = GENERATION_V1;
 
+/// Player structure counts by near-hub vs fringe (offline UGC policy audits).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct UgcStructureAudit {
+    pub near_hub_signs: u32,
+    pub near_hub_trails: u32,
+    pub near_hub_markers: u32,
+    pub near_hub_chalk: u32,
+    pub fringe_or_deep_signs: u32,
+}
+
 /// Aggregate world outcomes after a simulation run (read-only; no gameplay effect).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorldOutcomeSnapshot {
@@ -209,6 +219,36 @@ impl WorldState {
             actions_attempted,
             first_thread_clue_action,
         )
+    }
+
+    /// Count wilderness structures by kind and distance from the gate (UGC policy smoke tests).
+    pub fn simulation_ugc_structure_audit(&self) -> UgcStructureAudit {
+        use crate::geography::{
+            chebyshev_from_gate, WildernessPos, CHALK_KIND, MARKER_KIND, NEAR_HUB_MAX_CHEB,
+            SIGN_KIND, TRAIL_KIND,
+        };
+
+        let mut audit = UgcStructureAudit::default();
+        for structure in &self.geography.structures {
+            let Some(region) = self.geography.region_by_id(structure.region_id) else {
+                continue;
+            };
+            let pos = WildernessPos {
+                identity: region.identity,
+                local_x: structure.local_x,
+                local_y: structure.local_y,
+            };
+            let near = chebyshev_from_gate(pos) <= NEAR_HUB_MAX_CHEB;
+            match structure.kind.as_str() {
+                SIGN_KIND if near => audit.near_hub_signs += 1,
+                SIGN_KIND => audit.fringe_or_deep_signs += 1,
+                TRAIL_KIND if near => audit.near_hub_trails += 1,
+                MARKER_KIND if near => audit.near_hub_markers += 1,
+                CHALK_KIND if near => audit.near_hub_chalk += 1,
+                _ => {}
+            }
+        }
+        audit
     }
 
     pub fn simulation_placement_inventory(&self) -> PlacementInventoryReport {

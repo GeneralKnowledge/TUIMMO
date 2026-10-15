@@ -230,8 +230,14 @@ fn explore_page() -> &'static str {
      home claim — designate this Squalor place as your only home. No building required.\n\
      home name <name> — give that home a public title.\n\
      inspect <thing> — read what is in front of you.\n\
+     listen — bearings in the Squalor (band, metro, nearby traces).\n\
+     chalk <text> — ephemeral mark (fades). Near the Hub, chalk only — no signs.\n\
+     sign / trail / mark — permanent traces; blocked near the Hub gate band.\n\
+     traces — your active signs, trails, and chalk in this region.\n\
+     survey status — private summary; survey publish — Coffee Shop board.\n\
      theory list — public interpretations by subject (discovery id or place).\n\
      A theory does not unlock anything, and it is not the journal.\n\
+     Counted marks on look are story clues, not player chalk.\n\
      \n\
      welcome — the arrival note again."
 }

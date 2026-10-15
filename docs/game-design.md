@@ -59,7 +59,12 @@ From the Roof Array, `outskirts` or `squalor` steps through a break in the fenci
 | `journal [recent\|read <id>\|record]` | | Private field journal of authored discoveries |
 | `theory [list [subject]\|read <id>\|post …\|remove <id>]` | | Shared observations and theories tied to a subject (discovery id or place key) |
 | `waypoint [add\|list\|show\|note\|remove]` | | Private name and note for where you are standing |
-| `mark <name>` | | Leave a named marker on the outskirts tile |
+| `listen` | | Wilderness bearings: band from gate, metro hint, nearest eligible trace (no clue spoilers) |
+| `chalk <message>` / `chalk refresh` | | Ephemeral tile note (TTL; near hub ≤ Cheb 20 only) |
+| `traces` | | List your active signs, trails, and chalk in this region |
+| `survey status` | | Private route summary (journal, clues seen, place key) |
+| `survey publish <text>` | | Post a durable survey note to the Coffee Shop noticeboard |
+| `mark <name>` | | Leave a named marker (not within Cheb 20 of the gate) |
 | `build <cabin\|workshop> <name>` | | Raise a cabin or workshop on walkable outskirts ground |
 | `enter <name>` / `leave` | | Enter or leave a cabin or workshop |
 | `home [claim\|name\|move\|abandon\|inspect\|access\|…]` | | Personal home, or cabin/workshop controls |
@@ -100,6 +105,7 @@ A personal home is a designation on an existing Squalor place key. It is not a c
 ### Homesteads and traces
 
 - Cabins and workshops need walkable outskirts ground that is not the city gate. One of each kind per tile; markers, signs, and trail posts may share that tile.
+- Within Chebyshev 20 of the gate (near hub): no permanent `sign`, `trail`, or `mark`; only `chalk` (short TTL). Fringe and deep allow signs and trails with per-operator caps. `look` shows at most two foreign trace lines per tile. See [traversal and trailblazing](traversal-trailblazing.md).
 - Enterable structures have an interior place (`i:<id>`) linked by validated `world_connections`. Cabin visitor access defaults to `public`; workshops default to `private`. Owners may set `public` / `private` / `friends`, grant named visitors, rename, or demolish with `home demolish confirm`.
 - Settlement sharing is separate from visitor access. `home share private|shared|communal` controls whether linked settlement members may enter. Joining a settlement never opens a private structure by itself.
 - Demolition removes connections and moves anyone inside to the exterior door tile. Reconnecting inside a demolished cabin relocates you safely.

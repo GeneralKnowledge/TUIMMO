@@ -358,6 +358,50 @@ pub(crate) fn coffee_commands() -> Vec<CoffeeCommand> {
         },
         CoffeeCommand {
             spec: CommandSpec {
+            name: "listen",
+            aliases: &[],
+            summary: "Listen for bearings — band, metro, nearby traces",
+            usage: "listen",
+            args: ArgMode::None,
+            },
+            access: CommandAccess::Open,
+            handler: WorldState::cmd_listen,
+        },
+        CoffeeCommand {
+            spec: CommandSpec {
+            name: "chalk",
+            aliases: &[],
+            summary: "Leave or refresh ephemeral chalk on this tile",
+            usage: "chalk <message>|refresh",
+            args: ArgMode::Rest { required: true },
+            },
+            access: CommandAccess::Play,
+            handler: WorldState::cmd_chalk,
+        },
+        CoffeeCommand {
+            spec: CommandSpec {
+            name: "traces",
+            aliases: &[],
+            summary: "List your active signs, trails, and chalk in this region",
+            usage: "traces",
+            args: ArgMode::None,
+            },
+            access: CommandAccess::Play,
+            handler: WorldState::cmd_traces,
+        },
+        CoffeeCommand {
+            spec: CommandSpec {
+            name: "survey",
+            aliases: &[],
+            summary: "Private survey summary or publish to the Coffee Shop board",
+            usage: "survey [status|publish <text>]",
+            args: ArgMode::Rest { required: false },
+            },
+            access: CommandAccess::Play,
+            handler: WorldState::cmd_survey,
+        },
+        CoffeeCommand {
+            spec: CommandSpec {
             name: "sign",
             aliases: &[],
             summary: "Leave, read, or remove a sign",

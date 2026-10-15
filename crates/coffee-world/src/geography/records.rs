@@ -13,6 +13,7 @@ pub const CABIN_KIND: &str = "cabin";
 pub const WORKSHOP_KIND: &str = "workshop";
 pub const SIGN_KIND: &str = "sign";
 pub const TRAIL_KIND: &str = "trail";
+pub const CHALK_KIND: &str = "chalk";
 
 /// First visit to a birth cell. Shared region history, not a personal note.
 pub const ENTERED_KIND: &str = "entered";
@@ -60,6 +61,8 @@ pub struct Structure {
     /// `private`, `shared`, or `communal`. Settlement membership never implies access when private.
     pub share: String,
     pub created_at: u64,
+    /// When set, the structure is removed after this timestamp (chalk).
+    pub expires_at: Option<u64>,
 }
 
 impl Structure {

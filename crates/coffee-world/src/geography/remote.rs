@@ -165,7 +165,8 @@ fn remote_boundary_matches_absolute_field_with_neighbour() {
 fn remote_look_carries_district_familiarity() {
     let pos = first_walkable(remote_identity());
     let generated = generate_region(pos.identity).unwrap();
-    let scene = describe_tile(pos, &generated, &GeographyState::default(), &[], &[]);
+    let scene =
+        describe_tile(pos, &generated, &GeographyState::default(), &[], &[], &Default::default());
     assert!(scene.title.contains('—'), "{}", scene.title);
     assert!(
         scene.title.contains("residential")

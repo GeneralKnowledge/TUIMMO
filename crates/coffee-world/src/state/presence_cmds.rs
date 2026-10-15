@@ -8,8 +8,9 @@ use terminus_core::{
 };
 
 use crate::geography::{
-    describe_tile, is_survey_tile, map_symbol_for_structures, marker_sights, survey_look_line,
-    GenerateError, Structure, WildernessPos, WORKSHOP_KIND,
+    atmosphere_at, describe_tile, filter_traces_for_tile, frontier_epoch, is_survey_tile,
+    map_symbol_for_structures, marker_sights, structure_is_active, survey_look_line, GenerateError,
+    Structure, TileLookOptions, WildernessPos, WORKSHOP_KIND,
 };
 use crate::state::{quiet, Transition, WorldState};
 use crate::subway::{self};
@@ -115,8 +116,23 @@ impl WorldState {
         let here = region_id
             .map(|id| self.geography.structures_at(id, pos.local_x, pos.local_y))
             .unwrap_or_default();
+        let (shown_traces, hidden_traces) =
+            filter_traces_for_tile(here.iter().copied(), self.now_ms, viewer);
+        let buildings: Vec<_> = here
+            .iter()
+            .copied()
+            .filter(|item| {
+                matches!(
+                    item.kind.as_str(),
+                    crate::geography::CABIN_KIND | crate::geography::WORKSHOP_KIND
+                )
+            })
+            .collect();
+        let mut visible: Vec<_> = buildings;
+        visible.extend(shown_traces);
         let sights = marker_sights(
-            here,
+            visible,
+            self.now_ms,
             |id| self.owner_name(id),
             |structure| self.settlement_note_for_structure(structure, viewer),
         );
@@ -125,7 +141,7 @@ impl WorldState {
                 let mut by_tile: std::collections::BTreeMap<(u8, u8), Vec<&Structure>> =
                     std::collections::BTreeMap::new();
                 for item in &self.geography.structures {
-                    if item.region_id == id {
+                    if item.region_id == id && structure_is_active(item, self.now_ms) {
                         by_tile.entry((item.local_x, item.local_y)).or_default().push(item);
                     }
                 }
@@ -137,7 +153,11 @@ impl WorldState {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut scene = describe_tile(pos, &generated, &self.geography, &sights, &marks);
+        let atmosphere = atmosphere_at(frontier_epoch().world_seed, pos, self.now_ms);
+        let look_opts =
+            TileLookOptions { now_ms: self.now_ms, atmosphere, hidden_trace_count: hidden_traces };
+        let mut scene =
+            describe_tile(pos, &generated, &self.geography, &sights, &marks, &look_opts);
         if is_survey_tile(pos) {
             scene.description.push('\n');
             scene.description.push_str(survey_look_line());

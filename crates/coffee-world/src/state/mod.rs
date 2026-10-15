@@ -27,6 +27,7 @@ use crate::undernet::{self, ExitDef};
 use crate::waypoint::Waypoint;
 
 mod building_cmds;
+mod chalk_cmds;
 pub(crate) mod commands;
 mod guide;
 mod home_cmds;
@@ -34,6 +35,7 @@ mod inspect_cmds;
 mod inventory_cmds;
 mod invite_cmds;
 mod journal_cmds;
+mod listen_cmds;
 mod mail_cmds;
 mod movement_cmds;
 mod presence_cmds;
@@ -42,6 +44,7 @@ mod snapshot;
 mod social_cmds;
 mod speech_cmds;
 mod subway_cmds;
+mod survey_cmds;
 mod theory_cmds;
 mod thread_inspect;
 mod waypoint_cmds;
@@ -377,13 +380,14 @@ impl WorldState {
 
     pub fn apply(&mut self, session_id: SessionId, line: &str) -> Result<Transition, GameError> {
         self.tick();
+        let purge_ops = self.purge_expired_chalk();
         if !self.sessions.contains_key(&session_id) {
             return Err(GameError::UnknownSession);
         }
         let parsed = match self.registry.parse(line) {
             Ok(parsed) => parsed,
             Err(ParseError::Empty) => {
-                return Ok(Transition { outcome: CommandOutcome::default(), ops: Vec::new() });
+                return Ok(Transition { outcome: CommandOutcome::default(), ops: purge_ops });
             }
             Err(ParseError::Unknown(word)) if self.matches_exit(session_id, &word) => {
                 ParsedCommand {
@@ -417,6 +421,7 @@ impl WorldState {
             _ => {}
         }
         let mut transition = (command.handler)(self, session_id, &parsed)?;
+        transition.ops.extend(purge_ops);
         if parsed.name == "inspect" {
             self.attach_inspect_hint(session_id, &mut transition);
         }
@@ -961,3 +966,7 @@ pub fn visible_feed(world: &WorldState, session_id: SessionId) -> Result<Vec<Fee
 #[cfg(test)]
 #[path = "world_rules_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ugc_policy_tests.rs"]
+mod ugc_policy_tests;

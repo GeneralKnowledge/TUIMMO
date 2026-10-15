@@ -146,13 +146,10 @@ fn outskirts_can_be_walked_marked_and_left() {
     assert_eq!(identity.origin_x, 0);
     assert_eq!(identity.origin_y, 0);
 
-    world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "trail", ada_id).unwrap();
-    world.apply(ada, "north").unwrap();
-    let moved = world.location_key(ada).unwrap();
-    assert!(moved.ends_with(":8:9"), "{moved}");
-    world.apply(ada, "mark camp").unwrap();
+    world.apply(ada, "west").unwrap();
+    world.apply(ada, "chalk camp").unwrap();
     let marked = world.view(ada).unwrap();
-    assert!(marked.objects.iter().any(|object| object.keyword == "camp"));
+    assert!(marked.objects.iter().any(|object| object.keyword == "chalk"));
     world.apply(ada, "map").unwrap();
     let mapped = world.view(ada).unwrap().overlay.unwrap_or_default();
     assert!(mapped.contains("birth (0, 0)"));
@@ -161,12 +158,12 @@ fn outskirts_can_be_walked_marked_and_left() {
     world.apply(bob, "go up").unwrap();
     world.apply(bob, "outskirts").unwrap();
     assert!(!world.view(ada).unwrap().present.iter().any(|person| person.name == "bob"));
-    world.apply(bob, "north").unwrap();
+    world.apply(bob, "west").unwrap();
     assert!(world.view(ada).unwrap().present.iter().any(|person| person.name == "bob"));
     world.apply(ada, "say quiet").unwrap();
     assert!(feed_text(&world, bob).contains("quiet"));
 
-    world.apply(ada, "south").unwrap();
+    world.apply(ada, "east").unwrap();
     world.apply(ada, "city").unwrap();
     assert_eq!(world.view(ada).unwrap().location_name, "Roof Array");
     assert_eq!(world.geography.structures.len(), 1);
@@ -252,6 +249,12 @@ fn wilderness_rejects_invalid_actions() {
     world.apply(ada, "outskirts").unwrap();
     assert!(world.apply(ada, "mark n").is_err());
     assert!(world.apply(ada, "mark north").is_err());
+    let near_hub_err = world.apply(ada, "mark camp").unwrap_err().to_string();
+    assert!(
+        near_hub_err.contains("chalk") || near_hub_err.contains("gate clear"),
+        "near-hub permanent traces blocked: {near_hub_err}"
+    );
+    walk_to_fringe(&mut world, ada);
     let before = world.geography_snapshot();
     world.apply(ada, "mark camp").unwrap();
     assert!(world.apply(ada, "mark camp").unwrap_err().to_string().contains("already"));
@@ -393,12 +396,40 @@ fn spectator_cannot_mark() {
     assert!(world.geography.structures.is_empty());
 }
 
+fn walk_to_fringe(world: &mut WorldState, session: SessionId) {
+    use crate::geography::{permanent_traces_allowed, WildernessPos};
+    for _ in 0..96 {
+        let key = world.location_key(session).expect("location");
+        let pos = WildernessPos::parse(&key).expect("wilderness");
+        if permanent_traces_allowed(pos)
+            && world.effective_at(pos).is_ok_and(|tile| tile.traversable())
+        {
+            return;
+        }
+        if world.apply(session, "west").is_err() {
+            let _ = world.apply(session, "north");
+        }
+    }
+    panic!("could not reach a fringe tile for permanent traces");
+}
+
+fn join_operator_at(world: &mut WorldState, guest: SessionId, host: SessionId, guest_id: PlayerId) {
+    world.apply(guest, "go up").unwrap();
+    world.apply(guest, "outskirts").unwrap();
+    let place = world.location_key(host).unwrap();
+    world.operators.get_mut(&guest_id).unwrap().location_id = place;
+}
+
 fn to_buildable_tile(world: &mut WorldState, session: SessionId, player: PlayerId) {
     world.apply(session, "go up").unwrap();
     world.apply(session, "outskirts").unwrap();
-    let identity = crate::geography::gate_identity();
-    world.apply_terrain_mod(identity, 8, 9, Terrain::Grass, "camp", player).unwrap();
-    world.apply(session, "north").unwrap();
+    walk_to_fringe(world, session);
+    let identity =
+        WildernessPos::parse(&world.location_key(session).unwrap()).expect("wild").identity;
+    let pos = WildernessPos::parse(&world.location_key(session).unwrap()).unwrap();
+    world
+        .apply_terrain_mod(identity, pos.local_x, pos.local_y, Terrain::Grass, "camp", player)
+        .unwrap();
 }
 
 #[test]
@@ -450,14 +481,7 @@ fn ignore_filters_chat_and_blocks_whisper() {
 #[test]
 fn public_sign_discovered_by_another_operator_without_private_leaks() {
     let (mut world, ada, bob, ada_id, bob_id) = pair();
-    world.apply(ada, "go up").unwrap();
-    world.apply(ada, "journal record").unwrap();
-    world.apply(ada, "outskirts").unwrap();
-    let identity = crate::geography::gate_identity();
-    world
-        .apply_terrain_mod(identity, 8, 9, crate::geography::Terrain::Grass, "camp", ada_id)
-        .unwrap();
-    world.apply(ada, "north").unwrap();
+    to_buildable_tile(&mut world, ada, ada_id);
     world.apply(ada, "sign Relay gap worth a look").unwrap();
     world.apply(ada, "waypoint add camp-watch").unwrap();
     world.apply(ada, "waypoint note camp-watch Ada-only ridge tally").unwrap();
@@ -500,7 +524,7 @@ fn inspect_sign_requires_a_public_sign() {
 
 #[test]
 fn cabin_build_enter_visit_and_private_access() {
-    let (mut world, ada, bob, ada_id, _) = pair();
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
     to_buildable_tile(&mut world, ada, ada_id);
     world.apply(ada, "build cabin Haven").unwrap();
     assert_eq!(world.geography.structures.iter().filter(|s| s.kind == "cabin").count(), 1);
@@ -509,10 +533,11 @@ fn cabin_build_enter_visit_and_private_access() {
     world.apply(ada, "leave").unwrap();
     assert!(!world.location_key(ada).unwrap().starts_with("i:"));
 
-    // Bob can visit a public cabin.
+    let place = world.location_key(ada).unwrap();
+    // Bob can visit a public cabin on the same fringe tile.
     world.apply(bob, "go up").unwrap();
     world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    world.operators.get_mut(&bob_id).unwrap().location_id = place.clone();
     world.apply(bob, "enter Haven").unwrap();
     assert!(world.view(bob).unwrap().location_name.contains("Haven"));
     world.apply(bob, "leave").unwrap();
@@ -546,12 +571,13 @@ fn cabin_build_enter_visit_and_private_access() {
 
 #[test]
 fn cabin_demolish_evacuates_occupants() {
-    let (mut world, ada, bob, ada_id, _) = pair();
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
     to_buildable_tile(&mut world, ada, ada_id);
     world.apply(ada, "build cabin Nest").unwrap();
+    let place = world.location_key(ada).unwrap();
     world.apply(bob, "go up").unwrap();
     world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    world.operators.get_mut(&bob_id).unwrap().location_id = place;
     world.apply(bob, "enter Nest").unwrap();
     assert!(world.location_key(bob).unwrap().starts_with("i:"));
     world.apply(ada, "home demolish confirm").unwrap();
@@ -597,9 +623,7 @@ fn settlement_create_invite_accept_and_duplicate_name() {
     assert!(err.to_string().contains("already belong"), "{err}");
 
     // Bob on same tile tries duplicate name.
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     let err = world.apply(bob, "settle create Haven").unwrap_err();
     assert!(err.to_string().contains("taken"), "{err}");
 
@@ -640,9 +664,7 @@ fn settlement_kick_transfer_leave_and_disband_preserve_structures() {
         .iter()
         .any(|s| s.kind == "cabin" && s.settlement_id == Some(settle_id)));
 
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     world.apply(ada, "settle invite bob").unwrap();
     world.apply(bob, "settle accept Nestland").unwrap();
 
@@ -672,12 +694,10 @@ fn settlement_kick_transfer_leave_and_disband_preserve_structures() {
 
 #[test]
 fn regional_chat_shares_exterior_and_cabin_isolates_rooms() {
-    let (mut world, ada, bob, ada_id, _) = pair();
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
     to_buildable_tile(&mut world, ada, ada_id);
     world.apply(ada, "build cabin Lookout").unwrap();
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
 
     world.apply(ada, "region ridge-call").unwrap();
     assert!(feed_text(&world, bob).contains("ridge-call"));
@@ -686,13 +706,12 @@ fn regional_chat_shares_exterior_and_cabin_isolates_rooms() {
     assert!(feed_text(&world, bob).contains("inside-call"));
 
     // Different Undernet rooms do not share region chat.
-    world.apply(bob, "south").unwrap();
-    let bob_loc = world.location_key(bob).unwrap();
-    assert!(bob_loc.contains(":8:8") || bob_loc.ends_with(":8:8"), "bob at {bob_loc}");
+    let gate = crate::geography::gate_position().key();
+    world.operators.get_mut(&bob_id).unwrap().location_id = gate.clone();
     world.apply(bob, "city").unwrap();
     world.apply(bob, "go down").unwrap();
     world.apply(ada, "leave").unwrap();
-    world.apply(ada, "south").unwrap();
+    world.operators.get_mut(&ada_id).unwrap().location_id = gate;
     world.apply(ada, "city").unwrap();
     world.apply(ada, "go down").unwrap();
     world.apply(ada, "go alley").unwrap();
@@ -718,13 +737,11 @@ fn regional_chat_respects_ignore_and_leaves_global() {
 
 #[test]
 fn settlement_discovery_and_board_permissions() {
-    let (mut world, ada, bob, ada_id, _) = pair();
+    let (mut world, ada, bob, ada_id, bob_id) = pair();
     to_buildable_tile(&mut world, ada, ada_id);
     world.apply(ada, "settle create PublicHold").unwrap();
     world.apply(ada, "settle describe A windy ridge").unwrap();
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     world.apply(bob, "settlements").unwrap();
     let overlay = world.view(bob).unwrap().overlay.unwrap_or_default();
     assert!(overlay.contains("PublicHold"), "{overlay}");
@@ -809,9 +826,7 @@ fn private_cabin_stays_private_until_shared_then_leave_revokes() {
     world.apply(ada, "build cabin Nest").unwrap();
     world.apply(ada, "home access private").unwrap();
     world.apply(ada, "settle create Nestland").unwrap();
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     world.apply(ada, "settle invite bob").unwrap();
     world.apply(bob, "settle accept Nestland").unwrap();
 
@@ -848,9 +863,7 @@ fn communal_workshop_board_and_disband_fallback() {
     assert_eq!(workshop.settlement_id, world.settlements.settlement_of(ada_id).map(|s| s.id));
 
     world.apply(ada, "home share communal").unwrap();
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     let err = world.apply(bob, "enter Anvil").unwrap_err();
     assert!(err.to_string().contains("private"), "{err}");
 
@@ -898,9 +911,7 @@ fn structure_access_precedence_owner_grant_share() {
 
     world.apply(ada, "settle create Keepstead").unwrap();
     world.apply(ada, "settle invite bob").unwrap();
-    world.apply(bob, "go up").unwrap();
-    world.apply(bob, "outskirts").unwrap();
-    world.apply(bob, "north").unwrap();
+    join_operator_at(&mut world, bob, ada, bob_id);
     world.apply(bob, "settle accept Keepstead").unwrap();
     world.apply(ada, "home share shared").unwrap();
     let cabin = world.geography.structures.iter().find(|s| s.kind == "cabin").cloned().unwrap();

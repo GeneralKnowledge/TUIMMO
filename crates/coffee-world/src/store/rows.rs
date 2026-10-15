@@ -236,6 +236,7 @@ pub(crate) struct StructureSql {
     pub(crate) settlement_id: Option<String>,
     pub(crate) share: String,
     pub(crate) created_at: i64,
+    pub(crate) expires_at: Option<i64>,
 }
 
 #[derive(sqlx::FromRow)]
